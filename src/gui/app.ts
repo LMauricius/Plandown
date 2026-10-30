@@ -114,11 +114,48 @@ async function run(op: Op, fromEditor = false) {
 
 function select(id: string) {
   if (dirty && id !== sel) return toast('Save or revert your changes first');
+  if (id !== sel) revealedLinkKinds = new Set();
   sel = id;
   tab = 'Tasks';
-  revealedLinkKinds = new Set();
+  go();
+}
+
+// ---- Routing ----
+
+/** Path naming the current view: `/view/<anchor>` (selected task), `/graph`, `/time`, or `/`. */
+function url(): string {
+  if (tab !== 'Tasks') return '/' + tab.toLowerCase();
+  const t = sel ? db.tasks[sel] : undefined;
+  return t ? '/view/' + encodeURIComponent(t.anchor) : '/';
+}
+
+/** The view `location` names. `sel` is absent for tab paths, which keep the current selection. */
+function route(): { tab: typeof tab; sel?: string | null } {
+  const p = location.pathname, m = /^\/view\/([^/]+)$/.exec(p);
+  if (p === '/graph') return { tab: 'Graph' };
+  if (p === '/time') return { tab: 'Time' };
+  let a = '';
+  try { a = m ? decodeURIComponent(m[1]) : ''; } catch { /* malformed %-escape: no task */ }
+  return { tab: 'Tasks', sel: a ? Object.values(db.tasks).find(t => t.anchor === a)?.id ?? null : null };
+}
+
+/** User navigation adds a history entry; state changes from data (renames, deletes, refreshes) only replace it in `render`. */
+function go() {
+  if (url() !== location.pathname) history.pushState(null, '', url());
   render();
 }
+
+/** Back/forward. Unsaved edits block leaving the task, as `select` does, by restoring the URL. */
+addEventListener('popstate', () => {
+  const r = route();
+  if (r.sel !== undefined && r.sel !== sel) {
+    if (dirty) { toast('Save or revert your changes first'); history.pushState(null, '', url()); return; }
+    sel = r.sel;
+    revealedLinkKinds = new Set();
+  }
+  tab = r.tab;
+  render();
+});
 
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (dirty) currentSubmit?.(); }
@@ -127,7 +164,7 @@ document.addEventListener('keydown', e => {
 // ---- Header ----
 
 function header() {
-  $('tabs').replaceChildren(...(['Tasks', 'Graph', 'Time'] as const).map(n => h('button', { className: n === tab ? 'on' : '', onclick: () => { tab = n; render(); } }, n)));
+  $('tabs').replaceChildren(...(['Tasks', 'Graph', 'Time'] as const).map(n => h('button', { className: n === tab ? 'on' : '', onclick: () => { tab = n; go(); } }, n)));
   $('timers').replaceChildren(...Object.values(db.tasks).filter(t => t.props.started).map(t => {
     const st = Date.parse(String(t.props.started));
     return h('button', { className: 'link', title: 'Running timer', onclick: () => select(t.id) }, `⏱ ${trunc(t.title, 30)} `, h('span', { 'data-started': st }, clock(Date.now() - st)));
@@ -451,6 +488,7 @@ function makeResizable(panel: HTMLElement, handle: HTMLElement) {
 }
 
 function render() {
+  if (url() !== location.pathname) history.replaceState(null, '', url());
   header();
   const main = $('main');
   if (tab === 'Graph') return main.replaceChildren(graph());
@@ -493,5 +531,6 @@ function render() {
 
 setInterval(() => document.querySelectorAll<HTMLElement>('[data-started]').forEach(el => { el.textContent = clock(Date.now() - Number(el.dataset.started)); }), 1000);
 db = await api.state();
+({ tab, sel = null } = route());
 render();
 api.subscribe(async () => { db = await api.state(); render(); });

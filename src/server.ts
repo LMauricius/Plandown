@@ -44,7 +44,9 @@ export function serve(mado: Mado, port = 4848): Promise<{ url: string; close(): 
       if (req.headers.host !== `127.0.0.1:${p}` && req.headers.host !== `localhost:${p}`) return send(res, 403, 'text/plain', 'Forbidden host');
       const path = new URL(req.url ?? '/', 'http://localhost').pathname;
 
-      if (req.method === 'GET' && STATIC[path]) return send(res, 200, STATIC[path][1], await readFile(GUI + STATIC[path][0]));
+      // GUI routes (see `url()` in gui/app.ts) all load the page, which reads the view from its location
+      const file = STATIC[path] ?? (/^\/(view\/[^/]+|graph|time)$/.test(path) ? STATIC['/'] : undefined);
+      if (req.method === 'GET' && file) return send(res, 200, file[1], await readFile(GUI + file[0]));
       if (req.method === 'GET' && path === '/api/state') return json(200, mado.db);
       if (req.method === 'GET' && path === '/api/events') {
         res.writeHead(200, { ...HEADERS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });

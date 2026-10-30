@@ -31,6 +31,17 @@ flowchart TB
 
 The **header** holds the three tabs, a button for every running timer (click it to jump to that task), and the diagnostics counter. Click the counter to show or hide the list of errors and warnings, each with its file and line number.
 
+The address bar follows what you look at, so you can bookmark a view, share it with someone working on the same folder, or use the browser's back and forward buttons:
+
+| Address | Shows |
+|---|---|
+| `/` | The Tasks tab with no task selected |
+| `/view/<task-id>` | The Tasks tab with that task open |
+| `/graph` | The Graph tab |
+| `/time` | The Time tab |
+
+A task's ID is the anchor a Markdown viewer gives its heading: `[Task] Animation system` becomes `task-animation-system`. If two tasks produce the same ID, later ones (in loading order) get `-1`, `-2` and so on appended. Renaming a task changes its ID, so old links to it stop selecting it.
+
 ## Tasks tab
 
 ### Sidebar

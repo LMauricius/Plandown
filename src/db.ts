@@ -14,6 +14,7 @@ export interface Task {
   title: string;
   props: Record<string, unknown>;
   description: string;
+  anchor: string;       // ID for URLs: the heading anchor Markdown viewers give `[Type] Title`, unique across tasks
   home: Loc;            // occurrence holding properties and description; edits go there
   occurrences: Loc[];
 }
@@ -36,6 +37,18 @@ export interface Db {
 export interface Occ { pf: ParsedFile; node: Node }
 
 export const taskId = (type: string, title: string) => `[${type}] ${title}`;
+
+/**
+ * GitHub-style heading anchor (`[Task] Fix login` → `task-fix-login`), so a task's URL matches its section link.
+ * Collisions get `-1`, `-2`, … in load order, as GitHub does for repeated headings.
+ */
+function anchor(text: string, taken: Set<string>): string {
+  const base = text.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, '').replace(/ /g, '-');
+  let a = base;
+  for (let i = 1; taken.has(a); i++) a = `${base}-${i}`;
+  taken.add(a);
+  return a;
+}
 
 /** Numeric property or 0; rollups must not break on missing or malformed values. */
 const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? v : 0;
@@ -88,7 +101,7 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
   }
 
   // Tasks: the first occurrence with content is home; its properties are validated against the schema
-  const tasks: Record<string, Task> = {};
+  const tasks: Record<string, Task> = {}, anchors = new Set<string>();
   for (const [tid, list] of occ) {
     const home = list.find(o => o.node.props || descText(o.pf, o.node)) ?? list.find(o => o.node.kind === 'heading') ?? list[0];
     const loc = (o: Occ): Loc => ({ file: o.pf.file, line: o.node.line });
@@ -100,7 +113,7 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
       if (!schema[k]) { if (type) diag(at, 'warning', `[${type.name}] does not declare property "${k}"`); }
       else if (!valid(schema[k], v)) diag(at, 'error', `Property "${k}" of ${tid} must be ${schema[k].enum ? `one of ${schema[k].enum!.join(', ')}` : `a ${schema[k].type}`}`);
     }
-    tasks[tid] = { id: tid, type: home.node.type, title: home.node.title, props, description: descText(home.pf, home.node), home: loc(home), occurrences: list.map(loc) };
+    tasks[tid] = { id: tid, type: home.node.type, title: home.node.title, props, description: descText(home.pf, home.node), anchor: anchor(tid, anchors), home: loc(home), occurrences: list.map(loc) };
   }
 
   // Rollup: DFS per task over Subtask links with a visited set (shared subtasks and cycles count once)

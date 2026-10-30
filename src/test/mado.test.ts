@@ -4,7 +4,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Mado, parseFormat, parseMarkdown } from '../index.js';
+import { buildDb, Mado, parseFormat, parseMarkdown } from '../index.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'mado-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -44,6 +44,12 @@ test('db: interwoven files merge into one task with links from headings and list
   assert.equal(m.db.tasks['[Task] Stabilize the SQueLe core API'].description, 'The query library everything else builds on.');
   assert.deepEqual(m.db.totals['[Task] Game-ready 3D engine'], { effort: 26, spent: 3.5 });
   assert.equal(m.db.tasks['[Task] Port EAA shadows'].occurrences.length, 2);
+});
+
+test('db: anchors follow GitHub heading slugs and stay unique', () => {
+  const { format } = parseFormat(parseMarkdown('mado-format.md', '# [T] t\n'));
+  const { db } = buildDb(format, [], [parseMarkdown('a.md', '# [T] Fix: Ünicode_ok\n# [T] A.b\n# [T] Ab\n')]);
+  assert.deepEqual(Object.values(db.tasks).map(t => t.anchor), ['t-fix-ünicode_ok', 't-ab', 't-ab-1']);
 });
 
 test('db: invalid links and properties are reported', async () => {
