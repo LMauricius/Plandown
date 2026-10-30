@@ -285,7 +285,8 @@ function live(t: Task) {
     if (e.to === t.id) { const name = e.reverse ?? `${e.type} (reverse)`; incoming.set(name, [...incoming.get(name) ?? [], { other: e.from, e }]); }
   }
   const li = ({ other, e }: { other: string; e: Edge }) => h('li', {},
-    h('button', { className: 'link', onclick: () => select(other) }, other), ' ',
+    h('button', { className: 'link', onclick: () => select(other) },
+      h('span', { className: 'badge' }, db.tasks[other]?.type ?? ''), ' ', db.tasks[other]?.title ?? other), ' ',
     h('button', {
       className: 'link', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
       title: e.heading ? 'Comes from heading nesting; move the heading in the file' : `Remove (declared at ${e.at.file}:${e.at.line + 1})`,
