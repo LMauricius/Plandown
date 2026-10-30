@@ -1,0 +1,35 @@
+# Dev notes (local, not for release)
+
+## Architecture
+
+```mermaid
+flowchart LR
+  md[markdown.ts: lines to nodes + ranges] --> fmt[format.ts: types, schemas, link flips]
+  md --> db[db.ts: merge occurrences, edges, validation, totals]
+  fmt --> db
+  db --> edit[edit.ts: Op to line edits, pure]
+  edit --> store[store.ts: Mado class, I/O, queue, watch]
+  store --> server[server.ts: HTTP + SSE]
+  server --> gui[gui/app.ts: DOM GUI]
+```
+
+- Identity = `[Type] Title`. Home occurrence = first with props/desc.
+- Edits are line-range replacements computed from the last parse; store refuses if disk text differs.
+- `Parent` edges are normalized to `Subtask` (flipped) in `db.edges`.
+- GUI imports types only; `api` object is the single transport seam.
+
+## Decisions taken without asking
+
+- Lists end at blank lines (no loose lists) so appended lists never merge into a labeled one.
+- Non-colon text directly above a task list still yields Subtask (lenient).
+- Undeclared `[X]` prefixes are tasks with an error, not ignored.
+- Timer state stored in md (`started`), not in GUI memory.
+- Built-ins: `done`, `effort`, `spent`, `started` (hours).
+- Flat folder only; natural filename sort.
+
+## Roadmap
+
+- VSCode extension: webview loads `dist/gui/*`, replace `api` with postMessage; `Mado.watch` or VSCode file watcher; map `db.diagnostics` to a DiagnosticCollection; "Stored in" entries open the file at line.
+- Graph: dummy nodes for long edges (see `shortcut:` in app.ts).
+- Time log per day (`spent` is a total today) if per-day allocation reports are needed.
+- Recursive folders if needed.

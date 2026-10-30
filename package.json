@@ -1,0 +1,22 @@
+{
+  "name": "mado",
+  "version": "0.1.0",
+  "description": "Task manager that stores tasks, links, properties and time tracking in a folder of plain Markdown files.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": { "mado": "dist/cli.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc && node -e \"for (const f of ['index.html', 'style.css']) require('fs').copyFileSync('src/gui/' + f, 'dist/gui/' + f)\"",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "start": "node dist/cli.js serve"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}

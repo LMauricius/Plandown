@@ -1,0 +1,35 @@
+# MaDo
+
+MaDo is a task manager whose database is a folder of plain Markdown files. Headings and bullets that start with `[<Task type>]` become tasks, YAML blocks hold their properties, and labeled lists link them together. A GUI edits tasks, shows the link graph and tracks effort and time, while the files stay readable and diff-friendly.
+
+- [Database.md](Database.md) describes the file format.
+- [Usage.md](Usage.md) describes the GUI.
+
+## Quick start
+
+```sh
+npm install
+npm run build
+node dist/cli.js serve examples/demo   # GUI at http://127.0.0.1:4848/
+node dist/cli.js check examples/demo   # print diagnostics
+npm test
+```
+
+## Using the library
+
+MaDo is a standalone library; the GUI server is one front end for it.
+
+```ts
+import { Mado } from 'mado';
+
+const mado = await Mado.open('path/to/folder');
+console.log(mado.db.tasks['[Task] Animation system']);
+
+await mado.apply({ op: 'update', id: '[Task] Animation system', props: { effort: 20 } });
+await mado.apply({ op: 'link', from: '[Task] Animation system', type: 'Blocked by', to: '[Task] Smart scene graph' });
+await mado.apply({ op: 'start', id: '[Task] Animation system' });
+
+const stop = mado.watch(() => console.log('folder changed'));
+```
+
+`mado.db` is plain JSON: the format, all tasks, all links, time totals and diagnostics. Operations are `update`, `create`, `delete`, `link`, `unlink`, `start` and `stop`; each one validates its input, rewrites only the affected lines, and refuses to write if a file changed on disk since it was read.
