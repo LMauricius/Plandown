@@ -14,6 +14,14 @@ spent: 3.5
 Skeletal, mesh-morphing and dynamic (IK) animation in one modular system.
 
 - [Task] High-level design of animation system
+  ---
+  spent: 0
+  ---
+  Parent:
+  - [Task] Implementation of common methods as examples
+
+  Blocked by:
+  - [Task] Design a prop and LoD structure
 - [Task] Programming interface for the system
 - [Task] Implementation of a modular system
 

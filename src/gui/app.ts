@@ -90,7 +90,10 @@ let tab: 'Tasks' | 'Graph' | 'Time' = 'Tasks';
 let filter = '';
 let showSubtasks = false;
 let dirty = false;          // the editor form has unsaved changes; refreshes keep the form element
-let form: HTMLFormElement | null = null, formFor = '';
+let formBundle: { form: HTMLFormElement; props: HTMLElement } | null = null, formFor = '';
+let currentSubmit: (() => void) | null = null;   // bound to whichever form is live, so Ctrl+S works from the sidebar too
+let sidebarWidth = 280, sidebarCollapsed = false;
+let revealedLinkKinds = new Set<string>();        // link types the user opened an empty list for, this task only
 
 /** Runs an operation and adopts the returned state. Only editor saves clear `dirty`; only saves and top-level creates move the selection. */
 async function run(op: Op, fromEditor = false) {
@@ -113,8 +116,13 @@ function select(id: string) {
   if (dirty && id !== sel) return toast('Save or revert your changes first');
   sel = id;
   tab = 'Tasks';
+  revealedLinkKinds = new Set();
   render();
 }
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (dirty) currentSubmit?.(); }
+});
 
 // ---- Header ----
 
@@ -194,8 +202,8 @@ function read(el: HTMLInputElement | HTMLSelectElement, s: PropSchema): unknown 
   return v;
 }
 
-/** The editable fields. Saving sends only touched fields, merged onto the latest state, so concurrent file edits survive. */
-function taskForm(t: Task): HTMLFormElement {
+/** The editable fields: title/description form plus a separate props list for the sidebar. Saving sends only touched fields, merged onto the latest state, so concurrent file edits survive. */
+function taskForm(t: Task): { form: HTMLFormElement; props: HTMLElement } {
   formFor = t.id;
   dirty = false;
   const touched = new Set<string>();
@@ -207,7 +215,7 @@ function taskForm(t: Task): HTMLFormElement {
   };
 
   const type = h('select', { value: t.type, onchange: mark('type') }, ...[...new Set([t.type, ...Object.keys(db.format.types)])].map(n => h('option', {}, n)));
-  const title = h('input', { type: 'text', value: t.title, oninput: mark('title') });
+  const title = h('input', { type: 'text', className: 'task-title', value: t.title, oninput: mark('title') });
   const done = h('input', { type: 'checkbox', checked: t.props.done === true, onchange: mark('p:done') });
   const fields = Object.entries(schema).map(([k, s]) => ({ k, s, el: field(s, t.props[k], mark('p:' + k)) }));
   const desc = h('textarea', { value: t.description, oninput: mark('description') });
@@ -230,76 +238,106 @@ function taskForm(t: Task): HTMLFormElement {
     run(op, true);
   };
 
-  const f = h('form', { onsubmit: submit },
-    h('div', { className: 'grid' },
-      h('label', {}, 'Type'), type,
-      h('label', {}, 'Title'), title,
-      h('label', {}, 'Done'), done,
-      ...fields.flatMap(({ k, s, el }) => [h('label', { title: s.description ?? '' }, k === 'effort' || k === 'spent' ? `${k} (h)` : k), el]),
-      ...extra.flatMap(k => [h('label', { className: 'muted' }, k), h('span', { className: 'muted' }, `${JSON.stringify(t.props[k])} (not in the schema; edit it in the file)`)])),
+  const f = h('form', { className: 'title-desc', onsubmit: submit },
+    title,
     h('div', {}, h('h3', {}, 'Description'), desc),
     h('div', { className: 'actions' }, save, revert, h('span', { className: 'muted' }, 'Ctrl+S saves')));
-  f.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (dirty) f.requestSubmit(); } });
-  return f;
+  currentSubmit = () => f.requestSubmit();
+
+  const props = h('div', { className: 'props-sidebar' },
+    h('div', { className: 'prop' }, h('label', {}, 'Type'), type),
+    h('div', { className: 'prop' }, h('label', {}, 'Done'), done),
+    ...fields.map(({ k, s, el }) => h('div', { className: 'prop' }, h('label', { title: s.description ?? '' }, k === 'effort' || k === 'spent' ? `${k} (h)` : k), el)),
+    ...extra.map(k => h('div', { className: 'prop' }, h('label', { className: 'muted' }, k), h('span', { className: 'muted' }, `${JSON.stringify(t.props[k])} (not in the schema; edit it in the file)`))));
+  return { form: f, props };
+}
+
+/** Compact, label-less prop values short enough for the collapsed sidebar; long values are dropped rather than truncated into noise. */
+function compactProps(t: Task): HTMLElement[] {
+  const schema: Record<string, PropSchema> = {
+    effort: { type: 'number', description: 'Estimated effort in hours' },
+    spent: { type: 'number', description: 'Logged time in hours' },
+    ...db.format.types[t.type]?.props,
+  };
+  const vals = [
+    { k: 'Type', v: t.type },
+    { k: 'Done', v: t.props.done === true ? '✓' : '' },
+    ...Object.keys(schema).map(k => ({ k, v: t.props[k] == null ? '' : String(t.props[k]) })),
+  ];
+  return vals.filter(({ v }) => v && v.length <= 10).map(({ k, v }) => h('div', { className: 'prop-compact', title: `${k}: ${v}` }, v));
 }
 
 /** Parts of the editor that act immediately (timer, links, subtasks, deletion); rebuilt on every refresh. */
-function live(t: Task): HTMLElement {
+function live(t: Task) {
   // Time
   const started = Date.parse(String(t.props.started ?? '')), tot = db.totals[t.id];
-  const timer = isNaN(started)
+  const timerBtn = isNaN(started)
     ? h('button', { onclick: () => run({ op: 'start', id: t.id }) }, 'Start timer')
     : h('button', { className: 'primary', onclick: () => run({ op: 'stop', id: t.id }) }, 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
+  const timeSummary = `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`;
 
-  // Links, grouped by the name seen from this task (incoming links use the reverse name)
-  const groups = new Map<string, { other: string; e: Edge }[]>();
+  // Edges split by direction: outgoing ones are keyed by their own type (so they match a linkable kind),
+  // incoming ones by their reverse name (read-only here; adding that link happens from the other task).
+  const outgoing = new Map<string, { other: string; e: Edge }[]>();
+  const incoming = new Map<string, { other: string; e: Edge }[]>();
   for (const e of db.edges) {
-    const name = e.from === t.id ? e.type : e.to === t.id ? e.reverse ?? `${e.type} (reverse)` : null;
-    if (name) groups.set(name, [...groups.get(name) ?? [], { other: e.from === t.id ? e.to : e.from, e }]);
+    if (e.from === t.id) outgoing.set(e.type, [...outgoing.get(e.type) ?? [], { other: e.to, e }]);
+    if (e.to === t.id) { const name = e.reverse ?? `${e.type} (reverse)`; incoming.set(name, [...incoming.get(name) ?? [], { other: e.from, e }]); }
   }
-  const groupEls = [...groups].map(([name, list]) => h('div', {}, h('b', {}, name), h('ul', {}, ...list.map(({ other, e }) => h('li', {},
+  const li = ({ other, e }: { other: string; e: Edge }) => h('li', {},
     h('button', { className: 'link', onclick: () => select(other) }, other), ' ',
     h('button', {
       className: 'link', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
       title: e.heading ? 'Comes from heading nesting; move the heading in the file' : `Remove (declared at ${e.at.file}:${e.at.line + 1})`,
-    }, '✕'))))));
+    }, '✕'));
 
-  // Add link: target suggestions are filtered by what the chosen link type allows
+  // One target-picker row per link kind, appended as the last list item instead of a separate form with a type combobox.
   const linkTypes = db.format.types[t.type]?.links ?? {};
-  const kind = h('select', { onchange: () => fill() }, ...[SUBTASK, PARENT, ...Object.keys(linkTypes)].map(n => h('option', {}, n)));
-  const targets = h('datalist', { id: 'mado-targets' });
-  const fill = () => {
-    const allowed = kind.value in linkTypes ? Object.keys(linkTypes[kind.value]) : null;
-    targets.replaceChildren(...Object.values(db.tasks).filter(o => o.id !== t.id && (!allowed || allowed.includes(o.type))).map(o => h('option', { value: o.id })));
+  const addRow = (kind: string, focus: boolean) => {
+    const allowed = kind in linkTypes ? Object.keys(linkTypes[kind]) : null;
+    const listId = `mado-targets-${t.id}-${kind}`.replace(/\W+/g, '_');
+    const targets = h('datalist', { id: listId }, ...Object.values(db.tasks).filter(o => o.id !== t.id && (!allowed || allowed.includes(o.type))).map(o => h('option', { value: o.id })));
+    const target = h('input', { type: 'text', list: listId, placeholder: '[Type] Title of the target' });
+    const form = h('form', { className: 'inline link-add', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'link', from: t.id, type: kind, to: target.value }); } },
+      target, targets, h('button', {}, 'Link'));
+    if (focus) setTimeout(() => target.focus(), 0);
+    return h('li', {}, form);
   };
-  fill();
-  const target = h('input', { type: 'text', list: 'mado-targets', placeholder: '[Type] Title of the target' });
-  const linkForm = h('form', { className: 'inline', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'link', from: t.id, type: kind.value, to: target.value }); } },
-    kind, target, targets, h('button', {}, 'Link'));
 
-  // Add subtask
+  // Subtasks always get a list (even empty); "Add subtask" is just its last row.
   const subType = h('select', { value: t.type }, ...Object.keys(db.format.types).map(n => h('option', {}, n)));
   const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true });
-  const subForm = h('form', { className: 'inline', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'create', type: subType.value, title: subTitle.value, parent: t.id }); } },
-    subType, subTitle, h('button', {}, 'Add subtask'));
+  const subAddLi = h('li', {}, h('form', { className: 'inline', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'create', type: subType.value, title: subTitle.value, parent: t.id }); } },
+    subType, subTitle, h('button', {}, 'Add subtask')));
+  const linkBlocks = [h('div', { className: 'link-group' }, h('b', {}, SUBTASK), h('ul', {}, ...(outgoing.get(SUBTASK) ?? []).map(li), subAddLi))];
+
+  // Other kinds: no list until there's a link or the user opened one with its "Link <kind>" button.
+  // Parent is stored as a flipped Subtask edge, so its existing links live under the incoming "Parent" group, not outgoing.
+  const linkRevealBtns: HTMLElement[] = [];
+  for (const kind of [PARENT, ...Object.keys(linkTypes)]) {
+    const entries = (kind === PARENT ? incoming.get(PARENT) : outgoing.get(kind)) ?? [];
+    if (!entries.length && !revealedLinkKinds.has(kind)) {
+      linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); render(); } }, `Link ${kind}`));
+    } else {
+      linkBlocks.push(h('div', { className: 'link-group' }, h('b', {}, kind), h('ul', {}, ...entries.map(li), addRow(kind, !entries.length))));
+    }
+  }
+  const incomingBlocks = [...incoming].filter(([name]) => name !== PARENT).map(([name, list]) => h('div', { className: 'link-group' }, h('b', {}, name), h('ul', {}, ...list.map(li))));
 
   // Delete: two clicks instead of confirm(), which webviews block
-  const del = h('button', {
+  const deleteBtn = h('button', {
     type: 'button',
     onclick: () => {
-      if (del.textContent !== 'Delete') return run({ op: 'delete', id: t.id });
-      del.textContent = 'Click again: deletes every occurrence with all nested content';
-      setTimeout(() => { del.textContent = 'Delete'; }, 4000);
+      if (deleteBtn.textContent !== 'Delete') return run({ op: 'delete', id: t.id });
+      deleteBtn.textContent = 'Click again: deletes every occurrence with all nested content';
+      setTimeout(() => { deleteBtn.textContent = 'Delete'; }, 4000);
     },
   }, 'Delete');
 
-  return h('div', { className: 'live' },
-    h('div', {}, h('h3', {}, 'Time'), h('div', { className: 'actions' }, timer,
-      h('span', { className: 'muted' }, `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`))),
-    h('div', { className: 'links' }, h('h3', {}, 'Links'), ...groupEls, !groups.size && h('p', { className: 'muted' }, 'No links'), linkForm, subForm),
-    h('div', {}, h('h3', {}, 'Stored in'), ...t.occurrences.map(o => h('div', { className: 'muted' },
-      `${o.file}:${o.line + 1}${o.file === t.home.file && o.line === t.home.line ? ' (properties and description)' : ''}`))),
-    h('div', { className: 'actions' }, del));
+  const occurrences = t.occurrences.map(o => h('div', { className: 'muted' },
+    `${o.file}:${o.line + 1}${o.file === t.home.file && o.line === t.home.line ? ' (properties and description)' : ''}`));
+
+  return { timerBtn, timeSummary, linkBlocks, linkRevealBtns, incomingBlocks, occurrences, deleteBtn };
 }
 
 // ---- Graph tab ----
@@ -396,6 +434,21 @@ function time(): HTMLElement {
 
 // ---- Main ----
 
+/** Drag the left edge to resize; pointer capture keeps tracking even if the cursor leaves the handle. */
+function makeResizable(panel: HTMLElement, handle: HTMLElement) {
+  handle.onpointerdown = e => {
+    e.preventDefault();
+    const startX = e.clientX, startWidth = panel.getBoundingClientRect().width;
+    const onMove = (ev: PointerEvent) => {
+      sidebarWidth = Math.min(600, Math.max(160, startWidth - (ev.clientX - startX)));
+      panel.style.width = `${sidebarWidth}px`;
+    };
+    const onUp = () => { document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  };
+}
+
 function render() {
   header();
   const main = $('main');
@@ -403,10 +456,38 @@ function render() {
   if (tab === 'Time') return main.replaceChildren(time());
   const t = sel ? db.tasks[sel] : undefined;
   if (!t) { sel = null; dirty = false; }
-  const keep = dirty && form && formFor === sel;
-  main.replaceChildren(sidebar(), t
-    ? h('section', { className: 'editor' }, keep ? form! : (form = taskForm(t)), live(t))
-    : h('section', { className: 'editor muted' }, 'Select a task, or add one in the sidebar.'));
+  if (!t) {
+    main.replaceChildren(sidebar(), h('section', { className: 'editor muted' }, 'Select a task, or add one in the sidebar.'));
+    return;
+  }
+
+  const keep = dirty && formBundle && formFor === sel;
+  const bundle = keep ? formBundle! : (formBundle = taskForm(t));
+  const lv = live(t);
+
+  const sidebarContent = sidebarCollapsed
+    ? [...compactProps(t), lv.timerBtn, lv.deleteBtn]
+    : [
+        bundle.props,
+        h('div', { className: 'sidebar-section' }, h('h3', {}, 'Time'), h('div', { className: 'actions' }, lv.timerBtn, h('span', { className: 'muted' }, lv.timeSummary))),
+        h('div', { className: 'sidebar-section' }, h('h3', {}, 'Stored in'), ...lv.occurrences),
+        h('div', { className: 'sidebar-section actions' }, lv.deleteBtn),
+      ];
+
+  const resizeHandle = h('div', { className: 'sidebar-resize' });
+  const collapseBtn = h('button', {
+    type: 'button', className: 'sidebar-collapse', title: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+    onclick: () => { sidebarCollapsed = !sidebarCollapsed; render(); },
+  }, sidebarCollapsed ? '◀' : '▶');
+  const panel = h('aside', { className: `sidebar-panel${sidebarCollapsed ? ' collapsed' : ''}` },
+    resizeHandle, collapseBtn, h('div', { className: 'sidebar-scroll' }, ...sidebarContent));
+  if (!sidebarCollapsed) panel.style.width = `${sidebarWidth}px`;
+  makeResizable(panel, resizeHandle);
+
+  const editorMain = h('div', { className: 'editor-main' }, bundle.form,
+    h('div', { className: 'links' }, h('h3', {}, 'Links'), ...lv.linkBlocks, ...lv.linkRevealBtns, ...lv.incomingBlocks));
+
+  main.replaceChildren(sidebar(), h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, editorMain, panel)));
 }
 
 setInterval(() => document.querySelectorAll<HTMLElement>('[data-started]').forEach(el => { el.textContent = clock(Date.now() - Number(el.dataset.started)); }), 1000);
