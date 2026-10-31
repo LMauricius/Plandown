@@ -7,6 +7,7 @@ import type { Op } from '../edit.js';
 import type { PropSchema } from '../format.js';
 import type { TreeNode } from '../tree.js';
 import { mdEditor } from './mdedit.js';
+import { appear, show, still } from './motion.js';
 
 const SUBTASK = 'Subtask', PARENT = 'Parent';
 
@@ -68,13 +69,7 @@ const ICONS = {
 };
 const icon = (n: keyof typeof ICONS) => s('svg', { class: 'ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, s('path', { d: ICONS[n] }));
 
-const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-/**
- * Pops `el` in once. Script animations, unlike CSS ones, do not restart when `render` re-inserts the element,
- * so only the event that made it appear animates it.
- */
-const appear = (el: Element) => { if (!still()) el.animate([{ opacity: 0, transform: 'scale(.92)' }, {}], { duration: 160, easing: 'ease-out' }); };
-/** Layout changes (navigation, sidebar collapse) morph from the old layout through a view transition, where supported. */
+/** Layout changes (navigation, sidebar collapse, op results) morph from the old layout through a view transition, where supported. */
 const transition = (f: () => void) => { if (document.startViewTransition && !still()) document.startViewTransition(f); else f(); };
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -99,9 +94,9 @@ let toastTimer:ReturnType<typeof setTimeout> | undefined;
 function toast(msg: string) {
   const t = $('toast');
   t.textContent = msg;
-  t.hidden = false;
+  show(t, true);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+  toastTimer = setTimeout(() => show(t, false), 5000);
 }
 
 /**
@@ -164,7 +159,7 @@ async function run(op: Op, fromEditor = false): Promise<boolean> {
   } catch (e) {
     toast((e as Error).message);
   }
-  render();
+  transition(render);
   return ok;
 }
 
@@ -260,7 +255,7 @@ function header() {
   const dt = $('diag-toggle');
   dt.replaceChildren(icon('alert'), `${errors} errors, ${warnings} warnings`);
   dt.className = `link ${errors ? 'error' : warnings ? 'warning' : ''}`;
-  dt.onclick = () => { $('diags').hidden = !$('diags').hidden; };
+  dt.onclick = () => show($('diags'));
   $('diags').replaceChildren(...db.diagnostics.map(d => h('div', { className: d.severity }, `${d.file}:${d.line + 1}: ${d.message}`)));
 }
 
@@ -369,7 +364,7 @@ function createSection(): HTMLElement {
       focusAdd = true;
       // The create row lives in the unfiltered, expanded tree
       if (panes.nav.collapsed) { filter = ''; panes.nav.collapsed = false; transition(render); }
-      else if (filter) { filter = ''; render(); } else fillTree();
+      else if (filter) { filter = ''; transition(render); } else fillTree();
     },
   }, icon(type ? 'plus' : 'folderPlus'), label), type ?? '');
   return h('div', { className: 'create' }, h('h3', {}, 'Create a new...'),
@@ -427,7 +422,7 @@ function taskForm(t: Task): Form {
   const mark = (key: string) => () => {
     touched.add(key);
     dirty = true;
-    if (save.hidden) { save.hidden = revert.hidden = false; appear(save); appear(revert); }
+    show(save, true); show(revert, true);
   };
   const schema: Record<string, PropSchema> = {
     effort: { type: 'number', description: 'Estimated effort in hours' },
@@ -445,7 +440,7 @@ function taskForm(t: Task): Form {
   const desc = mdEditor({ mode: 'block', parts: t.body.map(x => typeof x === 'string' ? x : slots[n++].el), label: 'Description', placeholder: 'Description', onInput: mark('body') });
   const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== 'done' && k !== 'started');
   const save = h('button', { className: 'good', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, icon('check'), 'Save');
-  const revert = h('button', { className: 'neutral', hidden: true, onclick: () => { dirty = false; render(); } }, icon('undo'), 'Revert');
+  const revert = h('button', { className: 'neutral', hidden: true, onclick: () => { dirty = false; transition(render); } }, icon('undo'), 'Revert');
 
   const submit = () => {
     const cur = db.tasks[t.id];
@@ -523,7 +518,7 @@ function live(t: Task, slots: Slot[]) {
     const targets = h('datalist', { id: listId }, ...[...ids].map(id => h('option', { value: id })));
     // The Link button appears only once the input names a valid target
     const btn = h('button', { hidden: true }, icon('link'), 'Link');
-    const target = h('input', { type: 'text', list: listId, placeholder: 'search to link', oninput: () => { btn.hidden = !ids.has(target.value); } });
+    const target = h('input', { type: 'text', list: listId, placeholder: 'search to link', oninput: () => show(btn, ids.has(target.value)) });
     const form = h('form', { className: 'inline link-add', onsubmit: (e: Event) => { e.preventDefault(); if (ids.has(target.value)) run({ op: 'link', from: t.id, type: kind, to: target.value }); } },
       target, targets, btn);
     if (focus) setTimeout(() => target.focus(), 0);
@@ -534,7 +529,7 @@ function live(t: Task, slots: Slot[]) {
   // Enter submits through the first type button (implicit submission).
   const subTypes = h('div', { className: 'sub-types', hidden: true }, h('span', { className: 'muted' }, 'Make it a'),
     ...Object.keys(db.format.types).map(n => typed(h('button', { value: n }, n), n)));
-  const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true, oninput: () => { subTypes.hidden = !subTitle.value.trim(); } });
+  const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true, oninput: () => show(subTypes, !!subTitle.value.trim()) });
   const subAddLi = h('li', {}, h('form', { className: 'sub-add', onsubmit: (e: SubmitEvent) => { e.preventDefault(); run({ op: 'create', type: (e.submitter as HTMLButtonElement | null)?.value ?? t.type, title: subTitle.value, parent: t.id }); } },
     subTitle, subTypes));
   // One group per link kind. Parent is stored as a flipped Subtask edge, so its links are the incoming "Parent" ones.
@@ -569,7 +564,7 @@ function live(t: Task, slots: Slot[]) {
       deleteBtn.classList.add('armed');
       deleteLbl.textContent = deleteBtn.title = 'Click again: deletes every occurrence with all nested content';
       appear(deleteBtn);
-      setTimeout(() => { deleteBtn.classList.remove('armed'); deleteLbl.textContent = deleteBtn.title = 'Delete'; }, 4000);
+      setTimeout(() => { deleteBtn.classList.remove('armed'); deleteLbl.textContent = deleteBtn.title = 'Delete'; appear(deleteBtn); }, 4000);
     },
   }, icon('trash'), deleteLbl);
 
@@ -582,7 +577,7 @@ function live(t: Task, slots: Slot[]) {
 // ---- Graph tab ----
 
 function graph(): HTMLElement {
-  const toggle = h('label', {}, h('input', { type: 'checkbox', checked: showSubtasks, onchange: () => { showSubtasks = !showSubtasks; render(); } }), ' Show subtask links');
+  const toggle = h('label', {}, h('input', { type: 'checkbox', checked: showSubtasks, onchange: () => { showSubtasks = !showSubtasks; transition(render); } }), ' Show subtask links');
   const edges = db.edges.filter(e => showSubtasks || e.type !== SUBTASK);
   const ids = [...new Set(edges.flatMap(e => [e.from, e.to]))];
   if (!ids.length) return h('div', { className: 'view' }, toggle, h('p', { className: 'muted' }, 'No links to show.'));

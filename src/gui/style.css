@@ -346,15 +346,11 @@ progress { width: 120px; height: 8px; accent-color: var(--teal); }
 
 /*
  * ---- Motion ----
- * Re-rendered controls never animate here: `render` rebuilds them on every refresh, which would replay CSS animations.
- * Popups that are only shown and hidden replay `pop` when they appear; `appear` in app.ts pops controls a user action
- * revealed; view transitions morph layout changes. The named boxes morph on their own, and their snapshots keep
- * their size, clipped to the moving box, instead of stretching with it.
+ * Controls never animate here: `render` rebuilds them on every refresh, which would replay CSS animations.
+ * motion.ts pops in and fades out what a user action shows or hides; view transitions morph layout changes.
+ * The named boxes morph on their own, and their snapshots keep their size, clipped to the moving box,
+ * instead of stretching with it.
  */
-@media (prefers-reduced-motion: no-preference) {
-  @keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.97); } }
-  #toast:not([hidden]), #diags:not([hidden]), .mdtools:not([hidden]) { animation: pop .18s ease-out; }
-}
 .editor-main { view-transition-name: editor-main; }
 .sidebar-panel { view-transition-name: props; }
 .sidebar { view-transition-name: nav; }

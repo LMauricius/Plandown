@@ -13,6 +13,7 @@ const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/mdedit.js': ['mdedit.js', 'text/javascript; charset=utf-8'],
+  '/motion.js': ['motion.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
 const HEADERS = { 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'self'; img-src 'self' data:" };

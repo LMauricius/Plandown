@@ -10,6 +10,8 @@
  * The tokenizer is pure and nothing touches `document` at import time, so node tests can import this module.
  */
 
+import { show } from './motion.js';
+
 // ---- Types ----
 
 /** Inline element: `[start, open)` is the opening marker, `[close, end)` the closing one, `kids` lie in between. */
@@ -442,18 +444,18 @@ export function mdEditor(o: EditorOpts): Editor {
   // Focus: the toolbox follows the focused part; focus moving into a widget hides it
   frame.addEventListener('focusin', e => {
     const p = st.parts.find(p => p.el === e.target);
-    if (!p) { if (active === st) toolbox().hidden = true; return; }
+    if (!p) { if (active === st) show(toolbox(), false); return; }
     st.cur = p;
     active = st;
     const tb = toolbox();
     tb.classList.toggle('line', o.mode === 'line');
-    tb.hidden = false;
+    show(tb, true);
     place();
   });
   frame.addEventListener('focusout', e => {
     const p = st.parts.find(p => p.el === e.target);
     p?.el.querySelectorAll('.near').forEach(n => n.classList.remove('near'));
-    if (active === st && !st.parts.some(p => p.el === e.relatedTarget)) { toolbox().hidden = true; active = null; }
+    if (active === st && !st.parts.some(p => p.el === e.relatedTarget)) { show(toolbox(), false); active = null; }
   });
 
   return {
