@@ -7,10 +7,12 @@ import { Document, parseDocument, isMap, isScalar } from 'yaml';
 import { bodyTexts, gaps, rangeText, type Node, type ParsedFile } from './markdown.js';
 import { FORMAT_FILE, PARENT, SUBTASK } from './format.js';
 import { taskId, type Db, type Occ, type Task } from './db.js';
+import { baseName, findNode, namesTask } from './tree.js';
 
 export type Op =
   | { op: 'update'; id: string; type?: string; title?: string; props?: Record<string, unknown>; body?: string[] }
-  | { op: 'create'; type: string; title: string; parent?: string; file?: string }
+  | { op: 'create'; type: string; title: string; parent?: string; file?: string; near?: string }
+  | { op: 'group'; name: string; near?: string }
   | { op: 'delete'; id: string }
   | { op: 'link'; from: string; type: string; to: string }
   | { op: 'unlink'; from: string; type: string; to: string }
@@ -21,8 +23,11 @@ export interface Edit { file: string; start: number; end: number; lines: string[
 
 export interface Ctx { db: Db; occ: Map<string, Occ[]>; files: Map<string, ParsedFile> }
 
-/** Edits plus the id of the task the caller should focus afterwards. */
-export interface Plan { edits: Edit[]; id?: string }
+/**
+ * Edits plus what the caller should focus afterwards (a task id; for `group`, the folder's path).
+ * Folder changes wrap the edits: `mkdir` before them, then `moves` (renames), then `rmdir` (only if empty).
+ */
+export interface Plan { edits: Edit[]; id?: string; mkdir?: string; rmdir?: string; moves?: { from: string; to: string }[] }
 
 // ---- Helpers ----
 
@@ -44,10 +49,42 @@ function checkName(ctx: Ctx, type: unknown, title: unknown): asserts type is str
   if (typeof title !== 'string' || !title.trim() || /[\r\n]/.test(title)) throw new Error('Title must be a single non-empty line');
 }
 
-/** Task files may only be plain `.md` names inside the folder (no paths, no hidden files, not the format). */
-function checkFile(file: unknown): string {
-  if (typeof file !== 'string' || !/^[^/\\\0]+\.md$/i.test(file) || file.startsWith('.') || file === FORMAT_FILE) throw new Error(`Invalid task file name "${String(file)}"`);
-  return file;
+/**
+ * Paths arrive from untrusted clients and must stay inside the folder: `/`-separated, no empty, hidden (`.`, `..`)
+ * or backslash segments. Task files end in `.md` and are never named like the format file (nested ones are ignored).
+ */
+function checkPath(path: unknown, file: boolean): string {
+  const ok = typeof path === 'string' && path.split('/').every(s => s && !s.startsWith('.') && !/[\\\0]/.test(s))
+    && (!file || (path.endsWith('.md') && baseName(path) !== FORMAT_FILE));
+  if (!ok) throw new Error(`Invalid ${file ? 'task file' : 'group'} name "${String(path)}"`);
+  return path as string;
+}
+
+/** File stem for a task's own file: the title minus characters file systems reject, so the stem still names the task. */
+function stemOf(title: string): string {
+  const stem = title.replace(/[/\\:*?"<>|\0]/g, '').replace(/^[.\s]+/, '').trim();
+  if (!stem) throw new Error(`"${title}" has no characters usable in a file name`);
+  return stem;
+}
+
+/** Folder part of a path, with its trailing `/` ('' at the root). */
+const dirOf = (path: string) => path.slice(0, path.lastIndexOf('/') + 1);
+
+/**
+ * File for a new top-level task created near tree node `near` ('' is the root):
+ * - a node merged with its task: a new file next to it (that file belongs to its task)
+ * - a file with top-level tasks of its own, or a plain file: appended to it
+ * - an empty folder: becomes a file of the same name, replacing the folder
+ * - any other folder: a new file inside it
+ */
+function placeTask(ctx: Ctx, near: unknown, title: string): { file: string; rmdir?: string } {
+  if (near === '') return { file: stemOf(title) + '.md' };
+  const n = typeof near === 'string' ? findNode(ctx.db.tree, near) : undefined;
+  if (!n) throw new Error(`No group or file "${String(near)}"`);
+  if (n.task) return { file: dirOf(n.path) + stemOf(title) + '.md' };
+  if (n.file && (n.tasks.length || !n.folder)) return { file: n.file };
+  if (!n.file && !n.kids.length) return { file: n.path + '.md', rmdir: n.path };
+  return { file: `${n.path}/${stemOf(title)}.md` };
 }
 
 const hasBody = (pf: ParsedFile, n: Node) => !!n.props || n.lists.length > 0 || bodyTexts(pf, n).some(Boolean);
@@ -120,18 +157,25 @@ function bodyEdits({ pf, node }: Occ, texts: unknown): Edit[] {
 function update(ctx: Ctx, op: Extract<Op, { op: 'update' }>): Plan {
   const t = need(ctx, op.id), type = op.type ?? t.type, title = (op.title ?? t.title).trim();
   checkName(ctx, type, title);
-  const id = taskId(type, title), edits: Edit[] = [];
+  const id = taskId(type, title), edits: Edit[] = [], moves: { from: string; to: string }[] = [];
 
   // Rename/retype: every occurrence's title line, in all files
   if (id !== t.id) {
     if (ctx.db.tasks[id]) throw new Error(`Task ${id} already exists`);
     for (const { pf, node } of ctx.occ.get(t.id)!)
       edits.push({ file: pf.file, start: node.line, end: node.line + 1, lines: [`${node.prefix}[${type}] ${title}`] });
+    // The file (and folder) merged with the task in the tree follows its new name
+    const n = findNode(ctx.db.tree, t.home.file.slice(0, -3));
+    if (n?.task === t.id && !namesTask(n.path, type, title)) {
+      const to = dirOf(n.path) + stemOf(title), file = checkPath(to + '.md', true);
+      if (ctx.db.files.includes(file) || ctx.db.folders.includes(to)) throw new Error(`Cannot rename ${n.path}: ${to} already exists`);
+      moves.push({ from: n.file!, to: file }, ...n.folder ? [{ from: n.path, to }] : []);
+    }
   }
   // Props before description: with no YAML block both edits start at the same line, and the later edit is applied first
   if (op.props !== undefined) { const e = propsEdit(home(ctx, t), op.props); if (e) edits.push(e); }
   if (op.body !== undefined) edits.push(...bodyEdits(home(ctx, t), op.body));
-  return { edits, id };
+  return { edits, id, moves };
 }
 
 function create(ctx: Ctx, op: Extract<Op, { op: 'create' }>): Plan {
@@ -142,9 +186,21 @@ function create(ctx: Ctx, op: Extract<Op, { op: 'create' }>): Plan {
   if (op.parent !== undefined) return { edits: [addItem(home(ctx, need(ctx, op.parent)), null, op.type, title)], id };
 
   // Top-level task: a new level-1 heading at the end of the file
-  const file = checkFile(op.file ?? ctx.db.files[0] ?? 'tasks.md'), lines = ctx.files.get(file)?.lines ?? [];
+  const at = op.near !== undefined ? placeTask(ctx, op.near, title) : { file: op.file ?? ctx.db.files[0] ?? 'tasks.md' };
+  const file = checkPath(at.file, true), lines = ctx.files.get(file)?.lines ?? [];
   const n = lines.length, heading = `# [${op.type}] ${title}`;
-  return { edits: [{ file, start: n, end: n, lines: n && lines[n - 1].trim() ? ['', heading] : [heading] }], id };
+  return { edits: [{ file, start: n, end: n, lines: n && lines[n - 1].trim() ? ['', heading] : [heading] }], id, rmdir: at.rmdir };
+}
+
+/** Empty folder near tree node `near`: inside a folder, otherwise next to the node (a task-merged node counts as a task). */
+function group(ctx: Ctx, op: Extract<Op, { op: 'group' }>): Plan {
+  const name = typeof op.name === 'string' ? op.name.trim() : '';
+  if (!name || name.includes('/')) throw new Error('Group name must be a single non-empty name');
+  const n = op.near ? findNode(ctx.db.tree, String(op.near)) : undefined;
+  if (op.near && !n) throw new Error(`No group or file "${String(op.near)}"`);
+  const dir = checkPath((n ? (n.folder && !n.task ? n.path + '/' : dirOf(n.path)) : '') + name, false);
+  if (ctx.db.folders.includes(dir)) throw new Error(`Group ${dir} already exists`);
+  return { edits: [], id: dir, mkdir: dir };
 }
 
 function remove(ctx: Ctx, op: Extract<Op, { op: 'delete' }>): Plan {
@@ -193,6 +249,7 @@ export function plan(ctx: Ctx, op: Op, now = new Date()): Plan {
   switch (op?.op) {
     case 'update': return update(ctx, op);
     case 'create': return create(ctx, op);
+    case 'group': return group(ctx, op);
     case 'delete': return remove(ctx, op);
     case 'link': return link(ctx, op);
     case 'unlink': return unlink(ctx, op);

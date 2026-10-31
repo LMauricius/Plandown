@@ -25,7 +25,7 @@ flowchart TB
   H --> T[Tasks tab]
   H --> G[Graph tab]
   H --> M[Time tab]
-  T --> S["Sidebar: filter, task tree, new top-level task"]
+  T --> S["Sidebar: filter, folder and task tree, create a new group or task"]
   T --> E["Editor: fields, description, time, links, location, delete"]
 ```
 
@@ -46,17 +46,35 @@ A task's ID is the anchor a Markdown viewer gives its heading: `[Task] Animation
 
 ### Sidebar
 
-The **task tree** shows top-level tasks with their subtasks nested below them. A subtask that has several parents appears under each of them, but its own subtasks are expanded only once.
+The **tree** mirrors the folder. Folders (📁) and files (📄) are listed by name; inside each file, its top-level tasks are shown with their subtasks nested below them. A subtask that has several parents appears under each of them, but its own subtasks are expanded only once.
 
-Each row shows:
+Two kinds of nodes are merged, so the tree does not repeat the same name twice:
+
+- A file and a folder with the same name (`design.md` next to `design/`) form one node. The file's tasks come first, followed by the folder's contents.
+- A file holding a single top-level task named like the file is shown as that task. The comparison uses the task's ID, so `fix-login.md`, `Fix login.md` and `[Task] Fix login.md` all match `[Task] Fix login`. Renaming such a task in the GUI renames its file (and its same-named folder) too; if the new name is already taken, the rename is refused.
+
+Each task row shows:
 
 - a **checkbox** that marks the task as done (it sets the `done` property),
 - the **task type** badge and the **title**,
 - the **time summary** `spent/effort h`, which includes all subtasks.
 
-Click a row to open the task in the editor. Type in the **filter** box to show a flat list of the tasks whose type, title or description contains the text.
+Click a task row to open the task in the editor. Clicking any row also selects it as the place where new items are created; click the empty space below the tree to clear that selection without leaving the open task. Type in the **filter** box to show a flat list of the tasks whose type, title or description contains the text.
 
-At the bottom, **add a top-level task**: pick its type, type a title, and choose the file it should go into. The task is appended to that file as a new `#` heading. Typing a file name that does not exist yet creates the file.
+At the bottom, **Create a new...** offers a *Group* button and one button per task type. Each opens a row in the tree where you type the name; Enter creates the item and Escape cancels.
+
+- A **group** is an empty folder. It is created inside the selected folder, or next to the selected file or task (at the top of the folder if nothing is selected).
+- A **task** is created as a top-level task near the selected row. When a subtask is selected, its file or folder decides:
+
+| Selected | New task |
+|---|---|
+| Nothing | A new file at the top of the folder, named after the task |
+| A file with several top-level tasks, or a file without its own task | A new `#` heading at the end of that file |
+| A file merged with its task | A new file next to it, named after the new task |
+| An empty folder | The folder is replaced by a file of the same name holding the task |
+| Any other folder | A new file inside it, named after the task |
+
+New file names are the task title without the characters that file systems reject (`/ \ : * ? " < > |`). If a file with that name already exists, the task is added to it.
 
 ### Editor
 

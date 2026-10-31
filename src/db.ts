@@ -5,6 +5,7 @@
  */
 import { bodyTexts, type Diagnostic, type Node, type ParsedFile } from './markdown.js';
 import { BUILTIN_PROPS, linkReverse, PARENT, SUBTASK, type Format, type PropSchema } from './format.js';
+import { buildTree, slug, type TreeNode } from './tree.js';
 
 export interface Loc { file: string; line: number }
 
@@ -30,7 +31,9 @@ export interface Totals { effort: number; spent: number }
 
 export interface Db {
   format: Format;
-  files: string[];
+  files: string[];       // task files, `/`-separated paths relative to the folder
+  folders: string[];     // every subfolder, including empty ones (groups)
+  tree: TreeNode[];
   tasks: Record<string, Task>;
   edges: Edge[];
   totals: Record<string, Totals>;
@@ -46,7 +49,7 @@ export const taskId = (type: string, title: string) => `[${type}] ${title}`;
  * Collisions get `-1`, `-2`, … in load order, as GitHub does for repeated headings.
  */
 function anchor(text: string, taken: Set<string>): string {
-  const base = text.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, '').replace(/ /g, '-');
+  const base = slug(text);
   let a = base;
   for (let i = 1; taken.has(a); i++) a = `${base}-${i}`;
   taken.add(a);
@@ -68,7 +71,7 @@ function valid(s: PropSchema, v: unknown): boolean {
   }
 }
 
-export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: ParsedFile[]): { db: Db; occ: Map<string, Occ[]> } {
+export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: ParsedFile[], folders: string[] = []): { db: Db; occ: Map<string, Occ[]> } {
   const diagnostics = [...formatDiagnostics];
   const diag = (at: Loc, severity: Diagnostic['severity'], message: string) => diagnostics.push({ ...at, severity, message });
   const occ = new Map<string, Occ[]>();
@@ -139,5 +142,6 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
     totals[tid] = t;
   }
 
-  return { db: { format, files: files.map(f => f.file), tasks, edges, totals, diagnostics }, occ };
+  const names = files.map(f => f.file);
+  return { db: { format, files: names, folders, tree: buildTree(names, folders, tasks, edges), tasks, edges, totals, diagnostics }, occ };
 }

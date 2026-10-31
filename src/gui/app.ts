@@ -5,6 +5,7 @@
 import type { Db, Edge, Task } from '../db.js';
 import type { Op } from '../edit.js';
 import type { PropSchema } from '../format.js';
+import type { TreeNode } from '../tree.js';
 import { mdEditor } from './mdedit.js';
 
 const SUBTASK = 'Subtask', PARENT = 'Parent';
@@ -67,10 +68,10 @@ function toast(msg: string) {
 }
 
 /**
- * Depth-first over Subtask links from tasks without a parent. A task seen before is listed again but not
- * expanded, which keeps shared subtasks and cycles linear; tasks only reachable through a cycle come last.
+ * Depth-first over Subtask links from `roots`, or else from tasks without a parent. A task seen before is listed again
+ * but not expanded, which keeps shared subtasks and cycles linear; without `roots`, tasks only reachable through a cycle come last.
  */
-function walk(visit: (t: Task, depth: number) => void) {
+function walk(visit: (t: Task, depth: number) => void, roots?: string[], depth = 0) {
   const kids = new Map<string, string[]>(), hasParent = new Set<string>(), seen = new Set<string>();
   for (const e of db.edges) if (e.type === SUBTASK) { kids.set(e.from, [...kids.get(e.from) ?? [], e.to]); hasParent.add(e.to); }
   const go = (id: string, d: number) => {
@@ -79,6 +80,7 @@ function walk(visit: (t: Task, depth: number) => void) {
     seen.add(id);
     for (const c of kids.get(id) ?? []) go(c, d + 1);
   };
+  if (roots) return roots.forEach(id => go(id, depth));
   for (const id in db.tasks) if (!hasParent.has(id)) go(id, 0);
   for (const id in db.tasks) if (!seen.has(id)) go(id, 0);
 }
@@ -95,30 +97,43 @@ let formBundle: Form | null = null, formFor = '';
 let currentSubmit: (() => void) | null = null;   // bound to whichever form is live, so Ctrl+S works from the sidebar too
 let sidebarWidth = 280, sidebarCollapsed = false;
 let revealedLinkKinds = new Set<string>();        // link types the user opened an empty list for, this task only
+// Tree selection, apart from navigation (`sel`): the picked row and the tree node new groups and tasks go near ('' : root)
+let pick: { key: string; near: string } | null = null;
+let adding: { type: string | null; text: string } | null = null;   // open "create" row; type null: a group
+let focusAdd = false;                                             // focus the create row once it is built
 
-/** Runs an operation and adopts the returned state. Only editor saves clear `dirty`; only saves and top-level creates move the selection. */
-async function run(op: Op, fromEditor = false) {
+/**
+ * Runs an operation, adopts the returned state and tells whether it succeeded. Only editor saves clear `dirty`;
+ * only saves and top-level creates move the selection; a new group becomes the picked tree node.
+ */
+async function run(op: Op, fromEditor = false): Promise<boolean> {
+  let ok = false;
   try {
     const r = await api.op(op);
     db = r.db;
     if (r.error) toast(r.error);
     else {
+      ok = true;
       if (fromEditor) dirty = false;
       if (op.op === 'delete' && op.id === sel) { sel = null; dirty = false; }
+      else if (op.op === 'group' && r.id) pick = { key: r.id + '\0', near: r.id };
       else if (r.id && db.tasks[r.id] && !dirty && (fromEditor || (op.op === 'create' && !op.parent))) sel = r.id;
     }
   } catch (e) {
     toast((e as Error).message);
   }
   render();
+  return ok;
 }
 
-function select(id: string) {
-  if (dirty && id !== sel) return toast('Save or revert your changes first');
+/** Navigates to a task; returns false (without rendering) when unsaved edits block it. */
+function select(id: string): boolean {
+  if (dirty && id !== sel) { toast('Save or revert your changes first'); return false; }
   if (id !== sel) revealedLinkKinds = new Set();
   sel = id;
   tab = 'Tasks';
   go();
+  return true;
 }
 
 // ---- Routing ----
@@ -200,39 +215,95 @@ function header() {
 // ---- Tasks tab: sidebar ----
 
 function sidebar(): HTMLElement {
-  const tree = h('div', { id: 'tree' });
+  // Clicking empty tree space drops the tree selection (new items then go to the root); navigation stays
+  const tree = h('div', { id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } } });
   const search = h('input', { type: 'search', placeholder: 'Filter tasks', value: filter, oninput: () => { filter = search.value; fillTree(tree); } });
   fillTree(tree);
-  return h('aside', { className: 'sidebar' }, search, tree, newTaskForm());
+  return h('aside', { className: 'sidebar' }, search, tree, createSection());
 }
 
-function fillTree(tree: HTMLElement) {
+/** Filtered: a flat list of matches. Otherwise each node: its row (or its merged task), top-level tasks with subtasks, child nodes, and the create row if it targets the node. */
+function fillTree(tree = $('tree')) {
   const rows: HTMLElement[] = [], q = filter.toLowerCase();
-  if (q) { for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0)); }
-  else walk((t, d) => rows.push(row(t, d)));
+  if (q) {
+    for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0, t.home.file.slice(0, -3)));
+    return tree.replaceChildren(...rows);
+  }
+  let slot: [number, number] | null = null;   // row index and depth of the create row
+  const node = (n: TreeNode, d: number) => {
+    if (n.task) walk((t, td) => rows.push(row(t, td, n.path, td === d ? n : undefined)), [n.task], d);
+    else { rows.push(nodeRow(n, d)); walk((t, td) => rows.push(row(t, td, n.path)), n.tasks, d + 1); }
+    n.kids.forEach(k => node(k, d + 1));
+    if (pick?.near === n.path) slot = [rows.length, n.task ? d : d + 1];   // a merged node gets a sibling
+  };
+  db.tree.forEach(n => node(n, 0));
+  // A picked row that vanished (deleted, renamed, merged) no longer names a target
+  if (pick && !rows.some(r => r.dataset.key === pick!.key)) { pick = null; slot = null; }
+  if (adding) { const [i, d] = slot ?? [rows.length, 0]; rows.splice(i, 0, addRow(d)); }
   tree.replaceChildren(...rows);
 }
 
-function row(t: Task, depth: number): HTMLElement {
-  const done = t.props.done === true, tot = db.totals[t.id];
+const nodeIcon = (n: TreeNode) => h('span', { className: 'icon' }, n.folder ? '📁' : '📄');
+
+/** Task row under tree node `near`; `merged` is the node the task is merged with (shown with its icon). */
+function row(t: Task, depth: number, near: string, merged?: TreeNode): HTMLElement {
+  const done = t.props.done === true, tot = db.totals[t.id], key = `${near}\0${t.id}`;
   const cb = h('input', {
     type: 'checkbox', checked: done, title: 'Done',
     onclick: (e: Event) => e.stopPropagation(),
     onchange: () => run({ op: 'update', id: t.id, props: { ...t.props, done: cb.checked || undefined } }),
   });
-  const r = h('div', { className: `row${done ? ' done' : ''}${t.id === sel ? ' sel' : ''}`, title: t.id, onclick: () => select(t.id) },
-    cb, h('span', { className: 'badge' }, t.type), h('span', { className: 'title' }, t.title),
+  const r = h('div', {
+    className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
+    onclick: () => { pick = { key, near }; if (!select(t.id)) fillTree(); },
+  }, cb, merged ? nodeIcon(merged) : null, h('span', { className: 'badge' }, t.type), h('span', { className: 'title' }, t.title),
     tot.effort || tot.spent ? h('span', { className: 'muted' }, `${hours(tot.spent)}/${hours(tot.effort)} h`) : null);
   r.style.paddingLeft = `${4 + depth * 16}px`;
   return r;
 }
 
-function newTaskForm(): HTMLElement {
-  const type = h('select', {}, ...Object.keys(db.format.types).map(n => h('option', {}, n)));
-  const title = h('input', { type: 'text', placeholder: 'New top-level task', required: true });
-  const file = h('input', { type: 'text', list: 'mado-files', value: db.files[0] ?? 'tasks.md', title: 'File to append to (a new name creates the file)' });
-  return h('form', { className: 'inline', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'create', type: type.value, title: title.value, file: file.value }); } },
-    type, title, file, h('datalist', { id: 'mado-files' }, ...db.files.map(f => h('option', { value: f }))), h('button', { className: 'primary' }, 'Add'));
+/** Folder and/or file row; picking it only sets where new items go. */
+function nodeRow(n: TreeNode, depth: number): HTMLElement {
+  const key = n.path + '\0';
+  const r = h('div', { className: `row node${pick?.key === key ? ' sel' : ''}`, title: n.file ?? n.path + '/', 'data-key': key, onclick: () => { pick = { key, near: n.path }; fillTree(); } },
+    nodeIcon(n), h('span', { className: 'title' }, n.path.slice(n.path.lastIndexOf('/') + 1)));
+  r.style.paddingLeft = `${4 + depth * 16}px`;
+  return r;
+}
+
+/** Inline name input for the open create action; Enter creates near the picked node, Escape cancels. Survives tree refreshes. */
+function addRow(depth: number): HTMLElement {
+  const a = adding!, near = pick?.near ?? '';
+  const input = h('input', {
+    type: 'text', className: 'add-input', value: a.text, placeholder: a.type ? 'Title' : 'Group name',
+    oninput: () => { a.text = input.value; },
+    onkeydown: async (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { adding = null; fillTree(); }
+      if (e.key !== 'Enter' || !input.value.trim()) return;
+      adding = null;
+      // On failure (toasted) the row comes back with the typed text
+      if (!await run(a.type ? { op: 'create', type: a.type, title: input.value, near } : { op: 'group', name: input.value, near })) { adding = a; focusAdd = true; fillTree(); }
+    },
+  });
+  // The previous row is still in the document here: keep focus across refreshes
+  if (focusAdd || document.activeElement?.classList.contains('add-input')) { focusAdd = false; setTimeout(() => input.focus()); }
+  const r = h('div', { className: 'row add-row' }, a.type ? h('span', { className: 'badge' }, a.type) : h('span', { className: 'icon' }, '📁'), input);
+  r.style.paddingLeft = `${4 + depth * 16}px`;
+  return r;
+}
+
+/** "Create a new..." buttons: a group, separated from one button per task type. Each opens the create row near the picked node. */
+function createSection(): HTMLElement {
+  const b = (label: string, type: string | null) => h('button', {
+    type: 'button',
+    onclick: () => {
+      adding = { type, text: adding?.text ?? '' };
+      focusAdd = true;
+      if (filter) { filter = ''; render(); } else fillTree();   // the create row lives in the unfiltered tree
+    },
+  }, label);
+  return h('div', { className: 'create' }, h('h3', {}, 'Create a new...'),
+    h('div', { className: 'actions' }, b('Group', null), h('span', { className: 'sep' }), ...Object.keys(db.format.types).map(t => b(t, t))));
 }
 
 // ---- Tasks tab: editor ----

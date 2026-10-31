@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDb, Mado, parseFormat, parseMarkdown } from '../index.js';
+import { buildDb, findNode, Mado, parseFormat, parseMarkdown } from '../index.js';
 import { tokenize } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
@@ -120,6 +120,49 @@ test('body: text gaps around task lists, sub-chapters included, edited gap by ga
   await m.apply({ op: 'update', id: '[T] A', body: ['First'] });
   assert.deepEqual(m.db.tasks['[T] A'].body, ['First', { links: ['Subtask'] }, '', { links: ['Blocks'] }, 'Tail\ntwo'], 'missing trailing gaps are kept');
   await assert.rejects(m.apply({ op: 'update', id: '[T] A', body: ['a', 'b', 'c', 'd'] }), /lists changed/);
+});
+
+test('tree: subfolders, stem merges and placement of new groups and tasks', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'mado-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  for (const f of ['g/empty', '.hidden']) mkdirSync(join(d, f), { recursive: true });
+  w('mado-format.md', '# [T] t\n');
+  w('g.md', '# [T] G\n');                              // one node with folder g/ and its task
+  w('g/fix-login.md', '# [T] Fix login\n## [T] Sub\n'); // merged by slug; Sub is a subtask, not top-level
+  w('g/notes.md', '# [T] A\n# [T] B\n');
+  w('g/mado-format.md', '# [T] Nested\n');             // reserved for sub-formats: ignored
+  w('.hidden/x.md', '# [T] Hidden\n');
+  const m = await Mado.open(d), node = (p: string) => findNode(m.db.tree, p)!;
+  assert.deepEqual(m.db.tree.map(n => [n.path, n.folder, n.file, n.task]), [['g', true, 'g.md', '[T] G']]);
+  assert.deepEqual(node('g').kids.map(k => [k.path, k.task, k.tasks]), [['g/empty', null, []], ['g/fix-login', '[T] Fix login', []], ['g/notes', null, ['[T] A', '[T] B']]]);
+  assert.deepEqual(Object.keys(m.db.tasks).sort(), ['[T] A', '[T] B', '[T] Fix login', '[T] G', '[T] Sub']);
+
+  const create = (title: string, near: string) => m.apply({ op: 'create', type: 'T', title, near });
+  await create('Next', 'g/fix-login');
+  assert.equal(node('g/Next').task, '[T] Next', 'next to a merged file: a file of its own');
+  await create('C', 'g/notes');
+  assert.deepEqual(node('g/notes').tasks, ['[T] A', '[T] B', '[T] C'], 'appended to a file with several tasks');
+  await create('D', 'g/empty');
+  assert.ok(!existsSync(join(d, 'g/empty')) && read(d, 'g/empty.md') === '# [T] D\n', 'an empty folder becomes a file');
+  await create('Root: 1', '');
+  assert.equal(read(d, 'Root 1.md'), '# [T] Root: 1\n');
+  assert.equal(findNode(m.db.tree, 'Root 1')?.task, '[T] Root: 1', 'stripped characters still match by slug');
+
+  await m.apply({ op: 'group', name: 'New', near: '' });
+  await m.apply({ op: 'group', name: 'In', near: 'New' });
+  await m.apply({ op: 'group', name: 'Side', near: 'g/notes' });
+  assert.deepEqual(m.db.folders, ['g', 'g/Side', 'New', 'New/In']);
+  await assert.rejects(m.apply({ op: 'group', name: 'In', near: 'New' }), /already exists/);
+  await assert.rejects(m.apply({ op: 'group', name: '..', near: '' }), /Invalid/);
+  await assert.rejects(m.apply({ op: 'group', name: 'X', near: 'nope' }), /No group/);
+  await assert.rejects(m.apply({ op: 'create', type: 'T', title: 'X', file: '../x.md' }), /Invalid/);
+  await assert.rejects(m.apply({ op: 'create', type: 'T', title: 'X', file: 'g/mado-format.md' }), /Invalid/);
+
+  await m.apply({ op: 'update', id: '[T] G', title: 'H' });
+  assert.ok(existsSync(join(d, 'H.md')) && existsSync(join(d, 'H/notes.md')) && !existsSync(join(d, 'g')), 'merged file and folder follow a rename');
+  assert.equal(node('H').task, '[T] H');
+  w('H/Taken.md', 'Notes\n');
+  await m.reload();
+  await assert.rejects(m.apply({ op: 'update', id: '[T] Next', title: 'Taken' }), /Cannot rename H\/Next: H\/Taken already exists/);
 });
 
 test('editor tokenizer: blocks, nested inline marks, fences and unclosed delimiters', () => {

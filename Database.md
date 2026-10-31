@@ -6,10 +6,10 @@ This document explains how MaDo reads that folder: which lines become tasks, how
 
 ## The folder
 
-Every `.md` file directly inside the folder is read (subfolders and hidden files are ignored). One file has a special role:
+Every `.md` file inside the folder and its subfolders is read. Hidden files and folders (names starting with `.`) are skipped, and symbolic links are not followed. One file has a special role:
 
-- **`mado-format.md`** declares the task types, their properties and the link types between them.
-- **Every other `.md` file** holds tasks. Files are read in natural name order (`2.md` before `10.md`), and together they form one database.
+- **`mado-format.md`** at the top of the folder declares the task types, their properties and the link types between them. A file with that name inside a subfolder is ignored.
+- **Every other `.md` file** holds tasks. Files are read in natural name order (`2.md` before `10.md`), and together they form one database. Subfolders only organize the files; a task's identity does not depend on where it is stored.
 
 ```mermaid
 flowchart LR
