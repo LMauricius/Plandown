@@ -111,7 +111,7 @@ form.link-add input[type=text] { min-width: 10em; }
  */
 .mdedit { position: relative; border: 1px solid transparent; border-radius: var(--radius); padding: 2px 6px; margin: 0 -7px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; transition: border-color .15s, background-color .15s; }
 .mdedit:focus-within { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-soft); }
-.mdedit.block { min-height: 14em; overflow: auto; resize: vertical; padding: 8px 12px 8px 28px; margin: 0 -13px 0 -29px; }
+.mdedit.block { min-height: 14em; overflow: auto; resize: vertical; padding: 8px 12px; margin: 0 -13px; }
 .mdedit .part { position: relative; outline: none; }
 .mdedit .part[data-empty]::before { content: attr(data-ph); position: absolute; color: var(--muted); pointer-events: none; }
 .mdwidget { white-space: normal; cursor: auto; margin: 6px 0; }
@@ -133,13 +133,16 @@ form.link-add input[type=text] { min-width: 10em; }
 .k-link { color: var(--accent); text-decoration: underline; }
 .mk { position: absolute; white-space: pre; opacity: 0; pointer-events: none; color: var(--muted); font: 400 13px/1.5 ui-monospace, monospace; text-decoration: none; background: var(--surface); border-radius: 3px; z-index: 1; }
 .mk.o { transform: translateX(-100%); }
+/* Heading markers would not fit left of the text in the frame's narrow (clipped) padding: they go to the line's right end */
+:is(.h1, .h2, .h3, .h4, .h5, .h6) > .mk.o { right: 0; transform: none; }
 .near > .mk, .ln.ol > .mk { opacity: 1; }
 
-/* Toolbox: shared, fixed on top of everything at the focused editor; controls left, confirm right, scrolls if it must */
-.mdtools { position: fixed; z-index: 100; display: flex; gap: 2px; padding: 3px; overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 14px #0003; }
+/* Toolbox: shared, fixed on top of everything at the focused editor. Transparent row of two bubbles (controls, confirm); clicks pass through the gap. */
+.mdtools { position: fixed; z-index: 100; display: flex; justify-content: space-between; gap: 6px; pointer-events: none; }
 .mdtools[hidden], .mdtools.line .blk { display: none; }
+.mdtools .bar { display: flex; gap: 2px; padding: 3px; min-width: 0; overflow-x: auto; pointer-events: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 14px #0003; }
+.mdtools .bar:last-child { flex: none; }
 .mdtools button { flex: none; min-width: 28px; padding: 1px 7px; border-color: transparent; box-shadow: none; font-size: 13px; }
-.mdtools .sp { flex: 1; }
 .mdtools .ok { color: var(--accent); font-weight: 600; }
 
 /* ---- Graph and Time tabs ---- */

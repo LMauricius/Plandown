@@ -383,7 +383,8 @@ function toolbox(): HTMLElement {
     b.addEventListener('mousedown', e => { e.preventDefault(); if (active) act(active); });
     return b;
   };
-  tools = el('div', 'mdtools', ...TOOLS.map(([l, t, act, blk]) => btn(l, t, act, blk ? 'blk' : '')), el('span', 'sp'), btn('✓', 'Confirm (Ctrl+Enter)', confirm, 'ok'));
+  // Two bubbles: formatting controls (scroll only if the screen is too narrow) and the confirm button
+  tools = el('div', 'mdtools', el('div', 'bar', ...TOOLS.map(([l, t, act, blk]) => btn(l, t, act, blk ? 'blk' : ''))), el('div', 'bar', btn('✓', 'Confirm (Ctrl+Enter)', confirm, 'ok')));
   tools.hidden = true;
   document.body.append(tools);
   addEventListener('scroll', place, { capture: true, passive: true });
@@ -392,13 +393,19 @@ function toolbox(): HTMLElement {
   return tools;
 }
 
-/** Above the frame; below it when that would leave the viewport; pinned to the top when neither fits. */
+/**
+ * Vertically: above the frame; below it when that would leave the viewport; pinned to the top when neither fits.
+ * Horizontally: spans the frame (controls left, confirm right). When the bubbles need more room, they are centered
+ * on the frame instead, shifted to stay on screen and squeezed (the controls scroll) only past the screen width.
+ */
 function place() {
   if (!active || !tools || tools.hidden) return;
-  const r = active.frame.getBoundingClientRect(), h = tools.offsetHeight, left = Math.max(4, r.left);
+  const r = active.frame.getBoundingClientRect(), h = tools.offsetHeight, [bar, ok] = Array.from(tools.children) as HTMLElement[];
+  const need = bar.scrollWidth + bar.offsetWidth - bar.clientWidth + 6 + ok.offsetWidth, w = Math.min(Math.max(need, r.width), innerWidth - 8);
+  const left = need <= r.width ? r.left : Math.min(Math.max(4, r.left + (r.width - w) / 2), innerWidth - w - 4);
   let top = r.top - h - 4;
   if (top < 0) top = r.bottom + 4 + h <= innerHeight ? r.bottom + 4 : 0;
-  Object.assign(tools.style, { left: `${left}px`, top: `${top}px`, minWidth: `${r.width}px`, maxWidth: `${innerWidth - left - 4}px` });
+  Object.assign(tools.style, { left: `${left}px`, top: `${top}px`, width: `${w}px` });
 }
 
 // ---- Editor ----
