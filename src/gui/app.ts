@@ -132,7 +132,11 @@ let showSubtasks = false;
 let dirty = false;          // the editor form has unsaved changes; refreshes keep the form element
 let formBundle: Form | null = null, formFor = '';
 let currentSubmit: (() => void) | null = null;   // bound to whichever form is live, so Ctrl+S works from the sidebar too
-let sidebarWidth = 280, sidebarCollapsed = false;
+/** Side panes: the navigation tree (left) and the task's properties (right). */
+interface Pane { width: number; collapsed: boolean }
+const panes: Record<'nav' | 'props', Pane> = { nav: { width: 340, collapsed: false }, props: { width: 280, collapsed: false } };
+// Collapsed panes survive reloads within the browser session (saved by `render`)
+try { for (const k of (sessionStorage.getItem('mado-collapsed') ?? '').split(',')) if (Object.hasOwn(panes, k)) panes[k as keyof typeof panes].collapsed = true; } catch { /* not persisted */ }
 let revealedLinkKinds = new Set<string>();        // link types the user opened an empty list for, this task only
 // Tree selection, apart from navigation (`sel`): the picked row and the tree node new groups and tasks go near ('' : root)
 let pick: { key: string; near: string } | null = null;
@@ -253,11 +257,16 @@ function header() {
 // ---- Tasks tab: sidebar ----
 
 function sidebar(): HTMLElement {
+  const handle = h('div', { className: 'sidebar-resize' }), head = paneHead(panes.nav, 'Navigation', 'right');
+  makeResizable(panes.nav, handle, '.sidebar', 1);
+  if (panes.nav.collapsed) return h('aside', { className: 'sidebar collapsed' }, handle, head, createSection());
   // Clicking empty tree space drops the tree selection (new items then go to the root); navigation stays
   const tree = h('div', { id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } } });
   const search = h('input', { type: 'search', placeholder: 'Filter tasks', value: filter, oninput: () => { filter = search.value; fillTree(tree); } });
   fillTree(tree);
-  return h('aside', { className: 'sidebar' }, search, tree, createSection());
+  const aside = h('aside', { className: 'sidebar' }, handle, head, search, tree, createSection());
+  aside.style.width = `${panes.nav.width}px`;
+  return aside;
 }
 
 /** Filtered: a flat list of matches. Otherwise each node: its row (or its merged task), top-level tasks with subtasks, child nodes, and the create row if it targets the node. */
@@ -332,14 +341,19 @@ function addRow(depth: number): HTMLElement {
   return r;
 }
 
-/** "Create a new..." buttons: a group, separated from one button per task type. Each opens the create row near the picked node. */
+/**
+ * "Create a new..." buttons: a group, separated from one button per task type. Each opens the create row near the picked node.
+ * Also shown in the collapsed sidebar, where a click expands it.
+ */
 function createSection(): HTMLElement {
   const b = (label: string, type: string | null) => typed(h('button', {
-    type: 'button',
+    type: 'button', title: `New ${type ?? 'group'}`,
     onclick: () => {
       adding = { type, text: adding?.text ?? '' };
       focusAdd = true;
-      if (filter) { filter = ''; render(); } else fillTree();   // the create row lives in the unfiltered tree
+      // The create row lives in the unfiltered, expanded tree
+      if (panes.nav.collapsed) { filter = ''; panes.nav.collapsed = false; transition(render); }
+      else if (filter) { filter = ''; render(); } else fillTree();
     },
   }, icon(type ? 'plus' : 'folderPlus'), label), type ?? '');
   return h('div', { className: 'create' }, h('h3', {}, 'Create a new...'),
@@ -433,7 +447,7 @@ function taskForm(t: Task): Form {
 
   const f = h('div', { className: 'title-desc' },
     h('div', { className: 'title-row' }, title.el, save, revert),
-    h('div', {}, h('h3', {}, 'Description'), desc.el));
+    desc.el);
   currentSubmit = submit;
 
   const props = h('div', { className: 'props-sidebar' },
@@ -503,7 +517,7 @@ function live(t: Task, slots: Slot[]) {
   // Subtasks always get a list (even empty); its last row is a title input that reveals one "Make it a <type>" button per type.
   // Enter submits through the first type button (implicit submission).
   const subTypes = h('div', { className: 'sub-types', hidden: true }, h('span', { className: 'muted' }, 'Make it a'),
-    h('div', { className: 'actions' }, ...Object.keys(db.format.types).map(n => typed(h('button', { value: n }, icon('plus'), n), n))));
+    ...Object.keys(db.format.types).map(n => typed(h('button', { value: n }, n), n)));
   const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true, oninput: () => { subTypes.hidden = !subTitle.value.trim(); } });
   const subAddLi = h('li', {}, h('form', { className: 'sub-add', onsubmit: (e: SubmitEvent) => { e.preventDefault(); run({ op: 'create', type: (e.submitter as HTMLButtonElement | null)?.value ?? t.type, title: subTitle.value, parent: t.id }); } },
     subTitle, subTypes));
@@ -643,14 +657,33 @@ function time(): HTMLElement {
 
 // ---- Main ----
 
-/** Drag the left edge to resize; pointer capture keeps tracking even if the cursor leaves the handle. */
-function makeResizable(panel: HTMLElement, handle: HTMLElement) {
+/**
+ * Title row of a pane with its Hide/expand button: "Hide" with an arrow when expanded; collapsed, the title goes and
+ * only the arrow towards `expand` stays, at the same place (CSS keeps the toggle on the pane's outer edge).
+ */
+function paneHead(pane: Pane, title: string, expand: 'left' | 'right'): HTMLElement {
+  const toggle = h('button', {
+    type: 'button', className: 'neutral pane-toggle', title: pane.collapsed ? `Expand ${title.toLowerCase()}` : `Hide ${title.toLowerCase()}`,
+    onclick: () => { pane.collapsed = !pane.collapsed; transition(render); },
+  }, icon(pane.collapsed ? expand : expand === 'left' ? 'right' : 'left'), pane.collapsed ? null : 'Hide');
+  return h('div', { className: 'pane-head' }, pane.collapsed ? null : h('h3', {}, title), toggle);
+}
+
+/**
+ * Drag the pane's inner edge (`dir` 1: right edge, -1: left edge) to resize. A collapsed pane expands once dragged out
+ * to the minimum width; that re-renders it, so the pane is looked up by `sel` on every move. Document listeners keep
+ * tracking even if the cursor leaves the handle.
+ */
+function makeResizable(pane: Pane, handle: HTMLElement, sel: string, dir: 1 | -1) {
   handle.onpointerdown = e => {
     e.preventDefault();
-    const startX = e.clientX, startWidth = panel.getBoundingClientRect().width;
+    const startX = e.clientX, startWidth = handle.parentElement!.getBoundingClientRect().width;
     const onMove = (ev: PointerEvent) => {
-      sidebarWidth = Math.min(600, Math.max(160, startWidth - (ev.clientX - startX)));
-      panel.style.width = `${sidebarWidth}px`;
+      const w = startWidth + dir * (ev.clientX - startX);
+      if (pane.collapsed && w < 160) return;
+      pane.width = Math.min(600, Math.max(160, w));
+      if (pane.collapsed) { pane.collapsed = false; render(); }
+      document.querySelector<HTMLElement>(sel)!.style.width = `${pane.width}px`;
     };
     const onUp = () => { document.removeEventListener('pointermove', onMove); document.removeEventListener('pointerup', onUp); };
     document.addEventListener('pointermove', onMove);
@@ -660,6 +693,8 @@ function makeResizable(panel: HTMLElement, handle: HTMLElement) {
 
 function render() {
   if (url() !== location.pathname) history.replaceState(null, '', url());
+  // Every collapse change ends in a render
+  try { sessionStorage.setItem('mado-collapsed', Object.entries(panes).filter(([, p]) => p.collapsed).map(([k]) => k).join(',')); } catch { /* not persisted */ }
   header();
   const main = $('main');
   if (tab === 'Graph') return main.replaceChildren(graph());
@@ -675,7 +710,7 @@ function render() {
   const bundle = keep ? formBundle! : (formBundle = taskForm(t));
   const lv = live(t, bundle.slots);
 
-  const sidebarContent = sidebarCollapsed
+  const sidebarContent = panes.props.collapsed
     ? [...compactProps(t), lv.timerBtn, lv.deleteBtn]
     : [
         bundle.props,
@@ -685,14 +720,10 @@ function render() {
       ];
 
   const resizeHandle = h('div', { className: 'sidebar-resize' });
-  const collapseBtn = h('button', {
-    type: 'button', className: 'sidebar-collapse icon', title: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
-    onclick: () => { sidebarCollapsed = !sidebarCollapsed; transition(render); },
-  }, icon(sidebarCollapsed ? 'left' : 'right'));
-  const panel = h('aside', { className: `sidebar-panel${sidebarCollapsed ? ' collapsed' : ''}` },
-    resizeHandle, collapseBtn, h('div', { className: 'sidebar-scroll' }, ...sidebarContent));
-  if (!sidebarCollapsed) panel.style.width = `${sidebarWidth}px`;
-  makeResizable(panel, resizeHandle);
+  const panel = h('aside', { className: `sidebar-panel${panes.props.collapsed ? ' collapsed' : ''}` },
+    resizeHandle, paneHead(panes.props, 'Properties', 'left'), h('div', { className: 'sidebar-scroll' }, ...sidebarContent));
+  if (!panes.props.collapsed) panel.style.width = `${panes.props.width}px`;
+  makeResizable(panes.props, resizeHandle, '.sidebar-panel', -1);
 
   const editorMain = h('div', { className: 'editor-main' }, bundle.form,
     h('div', { className: 'links' }, h('h3', {}, 'Links'), ...lv.linkBlocks, ...lv.linkRevealBtns, ...lv.incomingBlocks));

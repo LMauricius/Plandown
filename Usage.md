@@ -76,6 +76,8 @@ At the bottom, **Create a new...** offers a *Group* button and one button per ta
 
 New file names are the task title without the characters that file systems reject (`/ \ : * ? " < > |`). If a file with that name already exists, the task is added to it.
 
+The sidebar and the editor's property panel are resized by dragging their inner edge. **Hide** collapses either one to a thin strip; click the strip's arrow, or drag its edge outwards, to expand it again. Collapsed panes stay collapsed across page reloads in the same browser tab. The collapsed sidebar keeps its create buttons; clicking one expands the sidebar and opens the name input.
+
 ### Editor
 
 The upper part of the editor holds the task's editable fields:
