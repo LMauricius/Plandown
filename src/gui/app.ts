@@ -48,6 +48,37 @@ function s(tag: string, attrs: Record<string, string | number>, ...kids: (Node |
   return el;
 }
 
+/** Stroke icons on a 16px grid, drawn in `currentColor`: inline paths keep the GUI free of dependencies and requests. */
+const ICONS = {
+  list: 'M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01',
+  graph: 'M1.5 2.5h4v3h-4zM10.5 6.5h4v3h-4zM1.5 10.5h4v3h-4zM5.5 4h1a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-1M7.5 8h3',
+  clock: 'M8 2a6 6 0 1 0 0 12A6 6 0 1 0 8 2zM8 5v3l2 1.5',
+  alert: 'M8 2l6.5 11.5h-13zM8 6.5v3M8 11.5h.01',
+  plus: 'M8 3v10M3 8h10',
+  folderPlus: 'M1.5 3.5h4.5l1.5 2h7v7h-13zM8 7.5v4M6 9.5h4',
+  check: 'M3 8.5l3 3 7-7',
+  undo: 'M5.5 3.5l-3 3 3 3M2.5 6.5h7a3.5 3.5 0 0 1 0 7H7',
+  play: 'M5 3l8 5-8 5z',
+  stop: 'M4 4h8v8H4z',
+  link: 'M6.5 9.5l3-3M7 4.5l1-1a2.8 2.8 0 0 1 4 4l-1 1M9 11.5l-1 1a2.8 2.8 0 0 1-4-4l1-1',
+  x: 'M4 4l8 8M12 4l-8 8',
+  trash: 'M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 6.5v4.5M9.5 6.5v4.5',
+  left: 'M10 3L5 8l5 5',
+  right: 'M6 3l5 5-5 5',
+};
+const icon = (n: keyof typeof ICONS) => s('svg', { class: 'ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, s('path', { d: ICONS[n] }));
+/** Button text; hidden where only icons fit (collapsed sidebar), so such buttons also need a `title`. */
+const lbl = (t: string) => h('span', { className: 'lbl' }, t);
+
+const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+/**
+ * Pops `el` in once. Script animations, unlike CSS ones, do not restart when `render` re-inserts the element,
+ * so only the event that made it appear animates it.
+ */
+const appear = (el: Element) => { if (!still()) el.animate([{ opacity: 0, transform: 'scale(.92)' }, {}], { duration: 160, easing: 'ease-out' }); };
+/** Layout changes (navigation, sidebar collapse) morph from the old layout through a view transition, where supported. */
+const transition = (f: () => void) => { if (document.startViewTransition && !still()) document.startViewTransition(f); else f(); };
+
 const $ = (id: string) => document.getElementById(id)!;
 const hours = (v: number) => String(Math.round(v * 100) / 100);
 const clock = (ms: number) => { const t = Math.floor(ms / 1000); return [t / 3600, (t / 60) % 60, t % 60].map(x => String(Math.floor(x)).padStart(2, '0')).join(':'); };
@@ -166,7 +197,7 @@ function route(): { tab: typeof tab; sel?: string | null } {
 /** User navigation adds a history entry; state changes from data (renames, deletes, refreshes) only replace it in `render`. */
 function go() {
   if (url() !== location.pathname) history.pushState(null, '', url());
-  render();
+  transition(render);
 }
 
 /** Back/forward. Unsaved edits block leaving the task, as `select` does, by restoring the URL. */
@@ -178,7 +209,7 @@ addEventListener('popstate', () => {
     revealedLinkKinds = new Set();
   }
   tab = r.tab;
-  render();
+  transition(render);
 });
 
 document.addEventListener('keydown', e => {
@@ -207,14 +238,15 @@ applyTheme(THEMES.find(t => t === savedTheme) ?? 'auto');
 // ---- Header ----
 
 function header() {
-  $('tabs').replaceChildren(...(['Tasks', 'Graph', 'Time'] as const).map(n => h('button', { className: n === tab ? 'on' : '', onclick: () => { tab = n; go(); } }, n)));
+  const tabIcon = { Tasks: 'list', Graph: 'graph', Time: 'clock' } as const;
+  $('tabs').replaceChildren(...(['Tasks', 'Graph', 'Time'] as const).map(n => h('button', { className: n === tab ? 'on' : '', onclick: () => { tab = n; go(); } }, icon(tabIcon[n]), n)));
   $('timers').replaceChildren(...Object.values(db.tasks).filter(t => t.props.started).map(t => {
     const st = Date.parse(String(t.props.started));
-    return h('button', { className: 'link', title: 'Running timer', onclick: () => select(t.id) }, `⏱ ${trunc(t.title, 30)} `, h('span', { 'data-started': st }, clock(Date.now() - st)));
+    return h('button', { className: 'link', title: 'Running timer', onclick: () => select(t.id) }, icon('clock'), `${trunc(t.title, 30)} `, h('span', { 'data-started': st }, clock(Date.now() - st)));
   }));
   const errors = db.diagnostics.filter(d => d.severity === 'error').length, warnings = db.diagnostics.length - errors;
   const dt = $('diag-toggle');
-  dt.textContent = `${errors} errors, ${warnings} warnings`;
+  dt.replaceChildren(icon('alert'), `${errors} errors, ${warnings} warnings`);
   dt.className = `link ${errors ? 'error' : warnings ? 'warning' : ''}`;
   dt.onclick = () => { $('diags').hidden = !$('diags').hidden; };
   $('diags').replaceChildren(...db.diagnostics.map(d => h('div', { className: d.severity }, `${d.file}:${d.line + 1}: ${d.message}`)));
@@ -294,9 +326,11 @@ function addRow(depth: number): HTMLElement {
     },
   });
   // The previous row is still in the document here: keep focus across refreshes
+  const opened = focusAdd;
   if (focusAdd || document.activeElement?.classList.contains('add-input')) { focusAdd = false; setTimeout(() => input.focus()); }
   const r = h('div', { className: 'row add-row' }, a.type ? badge(a.type) :h('span', { className: 'icon' }, '📁'), input);
   r.style.paddingLeft = `${4 + depth * 16}px`;
+  if (opened) appear(r);
   return r;
 }
 
@@ -309,7 +343,7 @@ function createSection(): HTMLElement {
       focusAdd = true;
       if (filter) { filter = ''; render(); } else fillTree();   // the create row lives in the unfiltered tree
     },
-  }, label), type ?? '');
+  }, icon(type ? 'plus' : 'folderPlus'), label), type ?? '');
   return h('div', { className: 'create' }, h('h3', {}, 'Create a new...'),
     h('div', { className: 'actions' }, b('Group', null), h('span', { className: 'sep' }), ...Object.keys(db.format.types).map(t => b(t, t))));
 }
@@ -362,7 +396,11 @@ function taskForm(t: Task): Form {
   formFor = t.id;
   dirty = false;
   const touched = new Set<string>();
-  const mark = (key: string) => () => { touched.add(key); dirty = true; save.hidden = revert.hidden = false; };
+  const mark = (key: string) => () => {
+    touched.add(key);
+    dirty = true;
+    if (save.hidden) { save.hidden = revert.hidden = false; appear(save); appear(revert); }
+  };
   const schema: Record<string, PropSchema> = {
     effort: { type: 'number', description: 'Estimated effort in hours' },
     spent: { type: 'number', description: 'Logged time in hours' },
@@ -378,8 +416,8 @@ function taskForm(t: Task): Form {
   let n = 0;
   const desc = mdEditor({ mode: 'block', parts: t.body.map(x => typeof x === 'string' ? x : slots[n++].el), label: 'Description', placeholder: 'Description', onInput: mark('body') });
   const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== 'done' && k !== 'started');
-  const save = h('button', { className: 'good', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, 'Save');
-  const revert = h('button', { className: 'neutral', hidden: true, onclick: () => { dirty = false; render(); } }, 'Revert');
+  const save = h('button', { className: 'good', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, icon('check'), 'Save');
+  const revert = h('button', { className: 'neutral', hidden: true, onclick: () => { dirty = false; render(); } }, icon('undo'), 'Revert');
 
   const submit = () => {
     const cur = db.tasks[t.id];
@@ -428,8 +466,8 @@ function live(t: Task, slots: Slot[]) {
   // Time
   const started = Date.parse(String(t.props.started ?? '')), tot = db.totals[t.id];
   const timerBtn = isNaN(started)
-    ? h('button', { onclick: () => run({ op: 'start', id: t.id }) }, 'Start timer')
-    : h('button', { className: 'warn', onclick: () => run({ op: 'stop', id: t.id }) }, 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
+    ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), lbl('Start timer'))
+    : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), lbl('Stop timer'), h('span', { 'data-started': started }, clock(Date.now() - started)));
   const timeSummary = `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`;
 
   // Edges split by direction: outgoing ones are keyed by their own type (so they match a linkable kind),
@@ -446,7 +484,7 @@ function live(t: Task, slots: Slot[]) {
     h('button', {
       className: 'bad', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
       title: e.heading ? 'Comes from heading nesting; move the heading in the file' : `Remove (declared at ${e.at.file}:${e.at.line + 1})`,
-    }, '✕'));
+    }, icon('x')));
 
   // One target-picker row per link kind, appended as the last list item instead of a separate form with a type combobox.
   const linkTypes = db.format.types[t.type]?.links ?? {};
@@ -456,7 +494,7 @@ function live(t: Task, slots: Slot[]) {
     const targets = h('datalist', { id: listId }, ...Object.values(db.tasks).filter(o => o.id !== t.id && (!allowed || allowed.includes(o.type))).map(o => h('option', { value: o.id })));
     const target = h('input', { type: 'text', list: listId, placeholder: '[Type] Title of the target' });
     const form = h('form', { className: 'inline link-add', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'link', from: t.id, type: kind, to: target.value }); } },
-      target, targets, h('button', {}, 'Link'));
+      target, targets, h('button', {}, icon('link'), 'Link'));
     if (focus) setTimeout(() => target.focus(), 0);
     return h('li', {}, form);
   };
@@ -465,7 +503,7 @@ function live(t: Task, slots: Slot[]) {
   const subType = h('select', { value: t.type }, ...Object.keys(db.format.types).map(n => h('option', {}, n)));
   const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true });
   const subAddLi = h('li', {}, h('form', { className: 'inline', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'create', type: subType.value, title: subTitle.value, parent: t.id }); } },
-    subType, subTitle, h('button', {}, 'Add subtask')));
+    subType, subTitle, h('button', {}, icon('plus'), 'Add subtask')));
   // One group per link kind. Parent is stored as a flipped Subtask edge, so its links are the incoming "Parent" ones.
   const entries = (kind: string) => (kind === PARENT ? incoming.get(PARENT) : outgoing.get(kind)) ?? [];
   const group = (kind: string, focus = false) => h('div', { className: 'link-group' }, h('b', {}, kind),
@@ -485,19 +523,22 @@ function live(t: Task, slots: Slot[]) {
     if (placed.has(kind)) continue;
     const has = kind === SUBTASK || entries(kind).length > 0;
     if (has || revealedLinkKinds.has(kind)) linkBlocks.push(group(kind, !has));
-    else linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); render(); } }, `Link ${kind}`));
+    else linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); transition(render); } }, icon('link'), `Link ${kind}`));
   }
   const incomingBlocks = [...incoming].filter(([name]) => name !== PARENT).map(([name, list]) => h('div', { className: 'link-group' }, h('b', {}, name), h('ul', {}, ...list.map(li))));
 
-  // Delete: two clicks instead of confirm(), which webviews block
+  // Delete: two clicks instead of confirm(), which webviews block. Armed, its label shows even in the collapsed sidebar
+  const deleteLbl = lbl('Delete');
   const deleteBtn = h('button', {
-    type: 'button', className: 'bad',
+    type: 'button', className: 'bad', title: 'Delete',
     onclick: () => {
-      if (deleteBtn.textContent !== 'Delete') return run({ op: 'delete', id: t.id });
-      deleteBtn.textContent = 'Click again: deletes every occurrence with all nested content';
-      setTimeout(() => { deleteBtn.textContent = 'Delete'; }, 4000);
+      if (deleteBtn.classList.contains('armed')) return run({ op: 'delete', id: t.id });
+      deleteBtn.classList.add('armed');
+      deleteLbl.textContent = sidebarCollapsed ? 'Again?' : 'Click again: deletes every occurrence with all nested content';
+      appear(deleteLbl);
+      setTimeout(() => { deleteBtn.classList.remove('armed'); deleteLbl.textContent = 'Delete'; }, 4000);
     },
-  }, 'Delete');
+  }, icon('trash'), deleteLbl);
 
   const occurrences = t.occurrences.map(o => h('div', { className: 'muted' },
     `${o.file}:${o.line + 1}${o.file === t.home.file && o.line === t.home.line ? ' (properties and description)' : ''}`));
@@ -643,8 +684,8 @@ function render() {
   const resizeHandle = h('div', { className: 'sidebar-resize' });
   const collapseBtn = h('button', {
     type: 'button', className: 'sidebar-collapse icon', title: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
-    onclick: () => { sidebarCollapsed = !sidebarCollapsed; render(); },
-  }, sidebarCollapsed ? '◀' : '▶');
+    onclick: () => { sidebarCollapsed = !sidebarCollapsed; transition(render); },
+  }, icon(sidebarCollapsed ? 'left' : 'right'));
   const panel = h('aside', { className: `sidebar-panel${sidebarCollapsed ? ' collapsed' : ''}` },
     resizeHandle, collapseBtn, h('div', { className: 'sidebar-scroll' }, ...sidebarContent));
   if (!sidebarCollapsed) panel.style.width = `${sidebarWidth}px`;
