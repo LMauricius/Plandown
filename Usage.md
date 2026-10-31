@@ -21,7 +21,7 @@ To try it out, serve the demo folder: `node dist/cli.js serve examples/demo`.
 
 ```mermaid
 flowchart TB
-  H["Header: tabs (Tasks, Graph, Time), running timers, diagnostics"]
+  H["Header: tabs (Tasks, Graph, Time), running timers, diagnostics, theme"]
   H --> T[Tasks tab]
   H --> G[Graph tab]
   H --> M[Time tab]
@@ -29,7 +29,7 @@ flowchart TB
   T --> E["Editor: fields, description, time, links, location, delete"]
 ```
 
-The **header** holds the three tabs, a button for every running timer (click it to jump to that task), and the diagnostics counter. Click the counter to show or hide the list of errors and warnings, each with its file and line number.
+The **header** holds the three tabs, a button for every running timer (click it to jump to that task), and the diagnostics counter. Click the counter to show or hide the list of errors and warnings, each with its file and line number. The last button switches the color theme between automatic (follows the system), light and dark; the choice is remembered by the browser.
 
 The address bar follows what you look at, so you can bookmark a view, share it with someone working on the same folder, or use the browser's back and forward buttons:
 

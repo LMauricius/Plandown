@@ -161,6 +161,25 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (dirty) currentSubmit?.(); }
 });
 
+// ---- Theme ----
+
+/** Cycles auto → light → dark. Stored per browser; storage may throw (private mode), so it only ever degrades to auto. */
+const THEMES = ['auto', 'light', 'dark'] as const, THEME_ICON = { auto: '◐', light: '☀', dark: '☾' };
+function applyTheme(t: typeof THEMES[number]) {
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const b = $('theme');
+  b.textContent = THEME_ICON[t];
+  b.title = `Theme: ${t}`;
+  b.onclick = () => {
+    const next = THEMES[(THEMES.indexOf(t) + 1) % THEMES.length];
+    try { localStorage.setItem('mado-theme', next); } catch { /* not persisted */ }
+    applyTheme(next);
+  };
+}
+let savedTheme: string | null = null;
+try { savedTheme = localStorage.getItem('mado-theme'); } catch { /* auto */ }
+applyTheme(THEMES.find(t => t === savedTheme) ?? 'auto');
+
 // ---- Header ----
 
 function header() {
