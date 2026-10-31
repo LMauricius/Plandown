@@ -489,19 +489,24 @@ function live(t: Task, slots: Slot[]) {
   const addRow = (kind: string, focus: boolean) => {
     const allowed = kind in linkTypes ? Object.keys(linkTypes[kind]) : null;
     const listId = `mado-targets-${t.id}-${kind}`.replace(/\W+/g, '_');
-    const targets = h('datalist', { id: listId }, ...Object.values(db.tasks).filter(o => o.id !== t.id && (!allowed || allowed.includes(o.type))).map(o => h('option', { value: o.id })));
-    const target = h('input', { type: 'text', list: listId, placeholder: '[Type] Title of the target' });
-    const form = h('form', { className: 'inline link-add', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'link', from: t.id, type: kind, to: target.value }); } },
-      target, targets, h('button', {}, icon('link'), 'Link'));
+    const ids = new Set(Object.values(db.tasks).filter(o => o.id !== t.id && (!allowed || allowed.includes(o.type))).map(o => o.id));
+    const targets = h('datalist', { id: listId }, ...[...ids].map(id => h('option', { value: id })));
+    // The Link button appears only once the input names a valid target
+    const btn = h('button', { hidden: true }, icon('link'), 'Link');
+    const target = h('input', { type: 'text', list: listId, placeholder: 'search to link', oninput: () => { btn.hidden = !ids.has(target.value); } });
+    const form = h('form', { className: 'inline link-add', onsubmit: (e: Event) => { e.preventDefault(); if (ids.has(target.value)) run({ op: 'link', from: t.id, type: kind, to: target.value }); } },
+      target, targets, btn);
     if (focus) setTimeout(() => target.focus(), 0);
     return h('li', {}, form);
   };
 
-  // Subtasks always get a list (even empty); "Add subtask" is just its last row.
-  const subType = h('select', { value: t.type }, ...Object.keys(db.format.types).map(n => h('option', {}, n)));
-  const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true });
-  const subAddLi = h('li', {}, h('form', { className: 'inline', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'create', type: subType.value, title: subTitle.value, parent: t.id }); } },
-    subType, subTitle, h('button', {}, icon('plus'), 'Add subtask')));
+  // Subtasks always get a list (even empty); its last row is a title input that reveals one "Make it a <type>" button per type.
+  // Enter submits through the first type button (implicit submission).
+  const subTypes = h('div', { className: 'sub-types', hidden: true }, h('span', { className: 'muted' }, 'Make it a'),
+    h('div', { className: 'actions' }, ...Object.keys(db.format.types).map(n => typed(h('button', { value: n }, icon('plus'), n), n))));
+  const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true, oninput: () => { subTypes.hidden = !subTitle.value.trim(); } });
+  const subAddLi = h('li', {}, h('form', { className: 'sub-add', onsubmit: (e: SubmitEvent) => { e.preventDefault(); run({ op: 'create', type: (e.submitter as HTMLButtonElement | null)?.value ?? t.type, title: subTitle.value, parent: t.id }); } },
+    subTitle, subTypes));
   // One group per link kind. Parent is stored as a flipped Subtask edge, so its links are the incoming "Parent" ones.
   const entries = (kind: string) => (kind === PARENT ? incoming.get(PARENT) : outgoing.get(kind)) ?? [];
   const group = (kind: string, focus = false) => h('div', { className: 'link-group' }, h('b', {}, kind),
@@ -515,13 +520,13 @@ function live(t: Task, slots: Slot[]) {
     s.el.replaceChildren(...fresh.length ? fresh.map(k => group(k)) : [h('div', { className: 'muted' }, `More ${s.kinds.join(', ')} links, listed above`)]);
   }
 
-  // Kinds without a block go below the description: Subtask always; others once linked or opened with "Link <kind>"
+  // Kinds without a block go below the description: Subtask always; others once linked or opened with their reveal button
   const linkBlocks: HTMLElement[] = [], linkRevealBtns: HTMLElement[] = [];
   for (const kind of [SUBTASK, PARENT, ...Object.keys(linkTypes)]) {
     if (placed.has(kind)) continue;
     const has = kind === SUBTASK || entries(kind).length > 0;
     if (has || revealedLinkKinds.has(kind)) linkBlocks.push(group(kind, !has));
-    else linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); transition(render); } }, icon('link'), `Link ${kind}`));
+    else linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); transition(render); } }, icon('link'), kind));
   }
   const incomingBlocks = [...incoming].filter(([name]) => name !== PARENT).map(([name, list]) => h('div', { className: 'link-group' }, h('b', {}, name), h('ul', {}, ...list.map(li))));
 

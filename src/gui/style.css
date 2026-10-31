@@ -238,6 +238,9 @@ li > button.bad { display: inline-grid; place-items: center; width: 20px; height
 .links > button { margin: 0 6px 6px 0; }
 form.link-add { display: inline-flex; gap: 6px; }
 form.link-add input[type=text] { min-width: 10em; }
+form.sub-add { display: flex; flex-direction: column; gap: 6px; }
+.sub-types { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.sub-types[hidden] { display: none; }
 
 /*
  * Markdown editor. Unfocused it reads as plain text; focus turns the frame into an input field (same box, so nothing moves).
