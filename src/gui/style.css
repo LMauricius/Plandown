@@ -217,7 +217,7 @@ form.inline { display: flex; gap: 6px; flex-wrap: wrap; }
 form.inline input[type=text] { flex: 1; min-width: 8em; }
 
 /* ---- Tasks tab: editor ---- */
-.editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.editor { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 section.editor.muted { align-items: center; justify-content: center; font-size: 14px; }
 .editor-row { flex: 1; min-height: 0; display: flex; align-items: stretch; }
 .editor-main { flex: 1; min-width: 0; overflow: auto; padding: 20px 28px; display: flex; flex-direction: column; gap: 18px; }
@@ -263,7 +263,9 @@ button.pane-toggle { height: 20px; padding: 0 8px; font-size: 11px; line-height:
 .links li::marker { color: var(--muted); }
 li > button.bad { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; font-size: 11px; line-height: 1; vertical-align: middle; }
 .links > button { margin: 0 6px 6px 0; }
-form.sub-add { display: flex; flex-direction: column; gap: 6px; }
+/* Link and subtask inputs hold one task title: a title-sized width that grows with longer text up to the row's edge */
+.link-group form input[type=text] { flex: none; field-sizing: content; min-width: min(24em, 100%); max-width: 100%; }
+form.sub-add { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .sub-types { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .sub-types[hidden] { display: none; }
 
