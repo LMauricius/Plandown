@@ -444,7 +444,7 @@ function live(t: Task, slots: Slot[]) {
     h('button', { className: 'link', onclick: () => select(other) },
       badge(db.tasks[other]?.type ?? ''), ' ', db.tasks[other]?.title ?? other), ' ',
     h('button', {
-      className: 'icon bad', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
+      className: 'bad', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
       title: e.heading ? 'Comes from heading nesting; move the heading in the file' : `Remove (declared at ${e.at.file}:${e.at.line + 1})`,
     }, '✕'));
 

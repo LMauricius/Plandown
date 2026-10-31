@@ -17,6 +17,7 @@ Skeletal, mesh-morphing and dynamic (IK) animation in one modular system.
   ---
   spent: 0
   ---
+  This **needs** description.
 
   Blocked by:
   - [Task] Design a prop and LoD structure

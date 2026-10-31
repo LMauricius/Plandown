@@ -13,6 +13,7 @@
   --border: var(--vscode-panel-border, light-dark(#d9dee5, #2e353f));
   --accent: var(--vscode-focusBorder, light-dark(#0b7f7a, #4cc2b8));
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
+  --ring: color-mix(in srgb, var(--accent) 50%, transparent);   /* focus halo */
   --error: var(--vscode-errorForeground, light-dark(#c03a3a, #f07a7a));
   --warn: var(--vscode-editorWarning-foreground, light-dark(#a86200, #e2ab4a));
   --shadow: light-dark(0 1px 2px #1d243014, 0 1px 2px #00000040);
@@ -34,24 +35,28 @@
 * { box-sizing: border-box; }
 body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; scrollbar-color: var(--border) transparent; }
 ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-input, select, button { font: inherit; color: inherit; border-radius: var(--radius); padding: 4px 8px; transition: background-color .15s, box-shadow .15s, filter .15s; }
+:focus-visible { outline: 3px solid var(--ring); outline-offset: 1px; }
+input, select, button { font: inherit; color: inherit; padding: 4px 8px; transition: background-color .15s, box-shadow .15s, filter .15s; }
 input::placeholder { color: var(--muted); }
 input[type=checkbox] { accent-color: var(--teal); }
 
 /*
- * Buttons: beveled fill of `--c` (teal unless a class or a task type sets it). Light top edge, dark bottom edge,
- * and a vertical gradient read as a raised face; pressing swaps them for an inner shadow.
+ * Buttons: translucent plastic of `--c` (teal unless a class or a task type sets it). `--shine` is a gloss band over
+ * the top half; `--body` gets lighter towards the bottom, like light passing through and gathering at the lower edge.
+ * Light top and dark bottom edges stay as inner lines. The two layers are declared per element (here and on the
+ * edit-control pseudo-elements below) because `var(--c)` inside them resolves where they are declared.
  */
 button {
   --c: var(--teal);
-  cursor: pointer; color: #fff; text-shadow: 0 -1px 0 #0003;
-  border: 1px solid color-mix(in srgb, var(--c) 70%, #000);
-  background: linear-gradient(color-mix(in srgb, var(--c) 78%, #fff), var(--c) 50%, color-mix(in srgb, var(--c) 88%, #000));
-  box-shadow: inset 0 1px 0 #ffffff4d, inset 0 -1px 0 #00000026, 0 1px 2px #00000040;
+  --shine: linear-gradient(#ffffff70, #ffffff24 45%, #ffffff00 52%);
+  --body: linear-gradient(color-mix(in srgb, var(--c) 82%, #000), var(--c) 55%, color-mix(in srgb, var(--c) 62%, #fff));
+  cursor: pointer; color: #fff; text-shadow: 0 -1px 0 #00000040; border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--c) 65%, #000);
+  background: var(--shine), var(--body);
+  box-shadow: inset 0 1px 0 #ffffff8c, inset 0 -1px 0 #00000040, inset 0 -5px 7px -3px #ffffff40, 0 1px 2px #00000040;
 }
 button:hover:not(:disabled) { filter: brightness(1.08); }
-button:active:not(:disabled) { background: linear-gradient(color-mix(in srgb, var(--c) 85%, #000), var(--c)); box-shadow: inset 0 1px 3px #00000059; }
+button:active:not(:disabled) { --shine: linear-gradient(#ffffff26, #ffffff00 50%); filter: brightness(.93); box-shadow: inset 0 1px 3px #00000066, inset 0 -1px 0 #ffffff33; }
 button:disabled { opacity: .5; cursor: default; }
 button.good { --c: var(--good); }
 button.bad { --c: var(--bad); }
@@ -74,49 +79,76 @@ button.link:hover:not(:disabled) { text-decoration: underline; filter: none; }
   text-shadow: none;
   border-radius: 999px 4px 4px 999px; padding: 0 5px 0 7px;
 }
-/* Neutral controls and hints are gray */
-button.icon, .prop-compact, .ln > .mk { --c: var(--neutral); }
-button.icon.bad { --c: var(--bad); }
+/* Neutral controls and hints (editor markers) are gray */
+button.icon, .prop-compact, .mk { --c: var(--neutral); }
 button.icon { padding: 1px 7px; border-radius: 999px; }
 button.icon:hover:not(:disabled) { filter: none; background: color-mix(in srgb, var(--c) 30%, var(--surface)); }
 button.icon:active:not(:disabled) { background: color-mix(in srgb, var(--c) 38%, var(--surface)); box-shadow: inset 0 1px 2px #0003; }
 
 /*
- * Input fields: white (light mode) and slightly sunken. The border is a background layer under the padding box:
- * an uneven horizontal gradient gives a thin brushed stroke, and a darker 2px bottom line under it a writing line.
- * `--edge` is set here, not on :root, so focus can recolor the stroke. `:where` keeps specificity 0, so `select` below can add layers.
+ * Input fields: white (light mode) and sunken. Top, left and right are a thin brushed stroke (an uneven horizontal
+ * gradient layered under the padding box) with an inner shadow falling from them; the bottom is a solid, darker
+ * 3px writing line with no shadow. `--edge` is set here, not on :root, so focus can recolor it.
+ * `:where` keeps specificity 0, so `select` below can add layers.
  */
 :where(input:not([type=checkbox]), select, .mdedit:focus-within, .props-sidebar .mdedit) {
   --edge: var(--field-edge);
-  border: 1px solid transparent; border-bottom-width: 2px;
+  --sunk: inset 0 3px 4px -1px light-dark(#00000030, #000000a0), inset 3px 0 3px -2px light-dark(#0000001f, #00000080), inset -3px 0 3px -2px light-dark(#0000001f, #00000080);
+  border: 1px solid transparent; border-bottom-width: 3px; border-radius: var(--radius);
   background:
     linear-gradient(var(--field), var(--field)) padding-box,
-    linear-gradient(to top, color-mix(in srgb, var(--edge) 75%, var(--fg)) 2px, transparent 2px) border-box,
-    linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 45%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 65%, transparent) 76%, var(--edge)) border-box;
-  box-shadow: inset 0 1px 3px #0000001f;
+    linear-gradient(to top, color-mix(in srgb, var(--edge) 40%, var(--fg)) 3px, transparent 3px) border-box,
+    linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 40%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 60%, transparent) 76%, var(--edge)) border-box;
+  box-shadow: var(--sunk);
 }
-:is(input:not([type=checkbox]), select):focus, .mdedit:focus-within { outline: none; --edge: var(--accent); box-shadow: inset 0 1px 3px #0000001f, 0 0 0 3px var(--accent-soft); }
+:is(input:not([type=checkbox]), select):focus, .mdedit:focus-within { outline: none; --edge: var(--accent); box-shadow: var(--sunk), 0 0 0 3px var(--ring); }
 
-/* Edit-control buttons (combobox arrows, pickers) are buttons too: a teal bevel drawn as background layers */
+/*
+ * Edit-control buttons (combobox arrows, pickers, clear buttons) are buttons too. A select cannot hold an element,
+ * so its button is drawn as layers: glyph, top/bottom/left edge lines, then the plastic face, over the field layers.
+ */
 select {
+  --c: var(--teal);
+  --shine: linear-gradient(#ffffff70, #ffffff24 45%, #ffffff00 52%);
+  --body: linear-gradient(color-mix(in srgb, var(--c) 82%, #000), var(--c) 55%, color-mix(in srgb, var(--c) 62%, #fff));
   appearance: none; padding-right: 30px; cursor: pointer;
   background:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E") right 7px center / 10px 6px no-repeat padding-box,
-    linear-gradient(color-mix(in srgb, var(--teal) 78%, #fff), var(--teal) 50%, color-mix(in srgb, var(--teal) 88%, #000)) right / 24px 100% no-repeat padding-box,
+    linear-gradient(#ffffff8c, #ffffff8c) right top / 24px 1px no-repeat padding-box,
+    linear-gradient(#00000040, #00000040) right bottom / 24px 1px no-repeat padding-box,
+    linear-gradient(color-mix(in srgb, var(--c) 65%, #000), color-mix(in srgb, var(--c) 65%, #000)) right 24px top / 1px 100% no-repeat padding-box,
+    var(--shine) right / 24px 100% no-repeat padding-box,
+    var(--body) right / 24px 100% no-repeat padding-box,
     linear-gradient(var(--field), var(--field)) padding-box,
-    linear-gradient(to top, color-mix(in srgb, var(--edge) 75%, var(--fg)) 2px, transparent 2px) border-box,
-    linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 45%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 65%, transparent) 76%, var(--edge)) border-box;
+    linear-gradient(to top, color-mix(in srgb, var(--edge) 40%, var(--fg)) 3px, transparent 3px) border-box,
+    linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 40%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 60%, transparent) 76%, var(--edge)) border-box;
 }
+select:hover { filter: brightness(1.03); }
 option { background: var(--field); color: var(--fg); }
-/* Chromium only: date pickers and datalist dropdowns; other engines keep their native indicator */
-input::-webkit-calendar-picker-indicator { cursor: pointer; padding: 3px 5px; margin-right: -5px; border-radius: 4px; box-shadow: inset 0 1px 0 #ffffff4d; }
+/*
+ * Chromium only: date pickers, datalist dropdowns and search clear buttons get the button look; other engines keep
+ * their native ones. Separate rules per pseudo-element: an unknown one would invalidate a whole selector list.
+ */
+input::-webkit-calendar-picker-indicator {
+  --c: var(--teal);
+  --shine: linear-gradient(#ffffff70, #ffffff24 45%, #ffffff00 52%);
+  --body: linear-gradient(color-mix(in srgb, var(--c) 82%, #000), var(--c) 55%, color-mix(in srgb, var(--c) 62%, #fff));
+  cursor: pointer; padding: 3px 5px; margin-right: -5px; border-radius: 4px; border: 1px solid color-mix(in srgb, var(--c) 65%, #000);
+  box-shadow: inset 0 1px 0 #ffffff8c, inset 0 -1px 0 #00000040, 0 1px 1px #00000033;
+}
+input::-webkit-search-cancel-button {
+  --c: var(--teal);
+  --shine: linear-gradient(#ffffff70, #ffffff24 45%, #ffffff00 52%);
+  --body: linear-gradient(color-mix(in srgb, var(--c) 82%, #000), var(--c) 55%, color-mix(in srgb, var(--c) 62%, #fff));
+  -webkit-appearance: none; cursor: pointer; width: 18px; height: 18px; margin-right: -4px; border-radius: 4px; border: 1px solid color-mix(in srgb, var(--c) 65%, #000);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1 1l6 6M7 1L1 7' stroke='white' stroke-width='1.5'/%3E%3C/svg%3E") center / 8px no-repeat, var(--shine), var(--body);
+  box-shadow: inset 0 1px 0 #ffffff8c, inset 0 -1px 0 #00000040, 0 1px 1px #00000033;
+}
 input[type=date]::-webkit-calendar-picker-indicator {
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1.5 3h9v7.5h-9zM1.5 5.5h9M4 1.5v2.5M8 1.5v2.5' fill='none' stroke='white' stroke-width='1.3'/%3E%3C/svg%3E") center / 12px no-repeat,
-    linear-gradient(color-mix(in srgb, var(--teal) 78%, #fff), var(--teal) 50%, color-mix(in srgb, var(--teal) 88%, #000));
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1.5 3h9v7.5h-9zM1.5 5.5h9M4 1.5v2.5M8 1.5v2.5' fill='none' stroke='white' stroke-width='1.3'/%3E%3C/svg%3E") center / 12px no-repeat, var(--shine), var(--body);
 }
 input[list]::-webkit-calendar-picker-indicator {
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E") center / 10px 6px no-repeat,
-    linear-gradient(color-mix(in srgb, var(--teal) 78%, #fff), var(--teal) 50%, color-mix(in srgb, var(--teal) 88%, #000));
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E") center / 10px 6px no-repeat, var(--shine), var(--body);
 }
 /* Number fields: native spinners hidden, replaced by two stacked buttons glued to the field's right edge */
 input[type=number] { appearance: textfield; }
@@ -193,7 +225,7 @@ section.editor.muted { align-items: center; justify-content: center; font-size: 
 .links li, .link-group li { margin: 3px 0; }
 .links ul, .link-group ul { margin: 4px 0 8px; padding-left: 18px; }
 .links li::marker { color: var(--muted); }
-.links li > button.icon { padding: 0 6px; font-size: 11px; }
+.links li > button.bad { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; font-size: 11px; line-height: 1; vertical-align: middle; }
 .links > button { margin: 0 6px 6px 0; }
 form.link-add { display: inline-flex; gap: 6px; }
 form.link-add input[type=text] { min-width: 10em; }
@@ -204,7 +236,7 @@ form.link-add input[type=text] { min-width: 10em; }
  * Markers are absolutely positioned (no layout space) outside what they mark: opening ones shifted left by their
  * own width, closing ones at their natural spot. They show over neighboring text while their element is `.near`.
  */
-.mdedit { position: relative; border: 1px solid transparent; border-bottom-width: 2px; border-radius: var(--radius); padding: 2px 6px; margin: 0 -7px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; transition: box-shadow .15s; }
+.mdedit { position: relative; border: 1px solid transparent; border-bottom-width: 3px; border-radius: var(--radius); padding: 2px 6px; margin: 0 -7px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; transition: box-shadow .15s; }
 .props-sidebar .mdedit { margin: 0; }
 .mdedit.block { min-height: 14em; overflow: auto; resize: vertical; padding: 8px 12px; margin: 0 -13px; }
 .mdedit .part { position: relative; outline: none; }
@@ -226,7 +258,7 @@ form.link-add input[type=text] { min-width: 10em; }
 .k-em { font-style: italic; }
 .k-strike { text-decoration: line-through; }
 .k-link { color: var(--accent); text-decoration: underline; }
-/* Inline markers are colored bubbles, line markers (headings, lists, quotes) gray hints; each is round on its outer side */
+/* Markers are gray hint bubbles, each round on its outer side */
 .mk { position: absolute; white-space: pre; opacity: 0; pointer-events: none; font: 400 13px/1.4 ui-monospace, monospace; font-style: normal; text-decoration: none; padding: 0 2px 0 4px; z-index: 1; }
 .mk.o { transform: translateX(-100%); }
 .mk.c { border-radius: 4px 999px 999px 4px; padding: 0 4px 0 2px; }
@@ -237,12 +269,15 @@ form.link-add input[type=text] { min-width: 10em; }
 /* Toolbox: shared, fixed on top of everything at the focused editor. Transparent row of two toolbars (controls, confirm); clicks pass through the gap. */
 .mdtools { position: fixed; z-index: 100; display: flex; justify-content: space-between; gap: 6px; pointer-events: none; }
 .mdtools[hidden], .mdtools.line .blk { display: none; }
+/* Bars share the button plastic (see `button`), with a deeper drop shadow since they float */
 .mdtools .bar {
   --c: var(--teal);
+  --shine: linear-gradient(#ffffff70, #ffffff24 45%, #ffffff00 52%);
+  --body: linear-gradient(color-mix(in srgb, var(--c) 82%, #000), var(--c) 55%, color-mix(in srgb, var(--c) 62%, #fff));
   display: flex; gap: 2px; padding: 3px; min-width: 0; overflow-x: auto; pointer-events: auto; border-radius: var(--radius);
-  border: 1px solid color-mix(in srgb, var(--c) 70%, #000);
-  background: linear-gradient(color-mix(in srgb, var(--c) 82%, #fff), var(--c) 50%, color-mix(in srgb, var(--c) 90%, #000));
-  box-shadow: inset 0 1px 0 #ffffff40, 0 4px 14px #0003;
+  border: 1px solid color-mix(in srgb, var(--c) 65%, #000);
+  background: var(--shine), var(--body);
+  box-shadow: inset 0 1px 0 #ffffff8c, inset 0 -1px 0 #00000040, inset 0 -5px 7px -3px #ffffff40, 0 4px 14px #0003;
 }
 .mdtools .bar:last-child { --c: var(--good); flex: none; }
 .mdtools button { flex: none; min-width: 28px; padding: 1px 7px; font-size: 13px; border-color: transparent; background: none; box-shadow: none; }
