@@ -257,7 +257,8 @@ button.pane-toggle { height: 20px; padding: 0 8px; font-size: 11px; line-height:
 .props-sidebar .prop > :not(label) { flex: 1 1 9em; min-width: 0; }
 .props-sidebar .prop > input[type=checkbox] { flex: none; width: 16px; height: 16px; }
 .prop-compact { font-size: 11px; color: var(--muted); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.link-group { margin-bottom: 6px; }
+/* Long unbroken titles wrap like in the description editor instead of widening the pane */
+.link-group { margin-bottom: 6px; overflow-wrap: anywhere; }
 .link-group > b { font-size: 13px; font-weight: 600; }
 .links li, .link-group li { margin: 3px 0; }
 .links ul, .link-group ul { margin: 4px 0 8px; padding-left: 18px; }
@@ -278,7 +279,8 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
  */
 .mdedit { position: relative; border: 1px solid transparent; border-bottom-width: 3px; border-radius: var(--radius); padding: 2px 6px; margin: 0 -7px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; transition: box-shadow .15s; }
 .props-sidebar .mdedit { margin: 0; }
-.mdedit.block { min-height: 14em; overflow: auto; resize: vertical; padding: 8px 12px; margin: 0 -13px; }
+/* Text column capped at 80ch for readability; the extra 26px is padding + borders (border-box) */
+.mdedit.block { min-height: 14em; max-width: calc(80ch + 26px); padding: 8px 12px; margin: 0 -13px; }
 .mdedit .part { position: relative; outline: none; }
 .mdedit .part[data-empty]::before { content: attr(data-ph); position: absolute; color: var(--muted); pointer-events: none; }
 .mdwidget { white-space: normal; cursor: auto; margin: 6px 0; }
