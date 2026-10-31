@@ -140,6 +140,7 @@ try { for (const k of (sessionStorage.getItem('mado-collapsed') ?? '').split(','
 let revealedLinkKinds = new Set<string>();        // link types the user opened an empty list for, this task only
 // Tree selection, apart from navigation (`sel`): the picked row and the tree node new groups and tasks go near ('' : root)
 let pick: { key: string; near: string } | null = null;
+let pickSel = true;                                               // the first tree build picks the row of `sel` (the page's URL)
 let adding: { type: string | null; text: string } | null = null;   // open "create" row; type null: a group
 let focusAdd = false;                                             // focus the create row once it is built
 
@@ -167,6 +168,13 @@ async function run(op: Op, fromEditor = false): Promise<boolean> {
   return ok;
 }
 
+/** Click handler running `f` for plain clicks only; modified clicks (new tab or window) stay with the browser, as middle clicks do. */
+const inApp = (f: () => void) => (e: MouseEvent) => { if (e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; e.preventDefault(); f(); };
+
+/** Link to a task's view: a real `href` gives it the browser's link controls; plain clicks `select` in-app (or run `props.onclick`). */
+const taskLink = (id: string, props: Record<string, unknown>, ...kids: (Node | string | null)[]) =>
+  h('a', { href: db.tasks[id] && viewUrl(db.tasks[id]), onclick: inApp(() => select(id)), ...props }, ...kids);
+
 /** Navigates to a task; returns false (without rendering) when unsaved edits block it. */
 function select(id: string): boolean {
   if (dirty && id !== sel) { toast('Save or revert your changes first'); return false; }
@@ -179,11 +187,13 @@ function select(id: string): boolean {
 
 // ---- Routing ----
 
+const viewUrl = (t: Task) => '/view/' + encodeURIComponent(t.anchor);
+
 /** Path naming the current view: `/view/<anchor>` (selected task), `/graph`, `/time`, or `/`. */
 function url(): string {
   if (tab !== 'Tasks') return '/' + tab.toLowerCase();
   const t = sel ? db.tasks[sel] : undefined;
-  return t ? '/view/' + encodeURIComponent(t.anchor) : '/';
+  return t ? viewUrl(t) : '/';
 }
 
 /** The view `location` names. `sel` is absent for tab paths, which keep the current selection. */
@@ -244,7 +254,7 @@ function header() {
   $('tabs').replaceChildren(...(['Tasks', 'Graph', 'Time'] as const).map(n => h('button', { className: n === tab ? 'on' : '', onclick: () => { tab = n; go(); } }, icon(tabIcon[n]), n)));
   $('timers').replaceChildren(...Object.values(db.tasks).filter(t => t.props.started).map(t => {
     const st = Date.parse(String(t.props.started));
-    return h('button', { className: 'link', title: 'Running timer', onclick: () => select(t.id) }, icon('clock'), `${trunc(t.title, 30)} `, h('span', { 'data-started': st }, clock(Date.now() - st)));
+    return taskLink(t.id, { className: 'link', title: 'Running timer' }, icon('clock'), `${trunc(t.title, 30)} `, h('span', { 'data-started': st }, clock(Date.now() - st)));
   }));
   const errors = db.diagnostics.filter(d => d.severity === 'error').length, warnings = db.diagnostics.length - errors;
   const dt = $('diag-toggle');
@@ -286,6 +296,12 @@ function fillTree(tree = $('tree')) {
   db.tree.forEach(n => node(n, 0));
   // A picked row that vanished (deleted, renamed, merged) no longer names a target
   if (pick && !rows.some(r => r.dataset.key === pick!.key)) { pick = null; slot = null; }
+  // A page opened on a task picks the task's first row (once, so dropping the pick later sticks)
+  if (pickSel) {
+    pickSel = false;
+    const r = sel && rows.find(r => r.dataset.key!.endsWith('\0' + sel));
+    if (r) { pick = { key: r.dataset.key!, near: r.dataset.key!.split('\0')[0] }; r.classList.add('sel'); }
+  }
   if (adding) { const [i, d] = slot ?? [rows.length, 0]; rows.splice(i, 0, addRow(d)); }
   tree.replaceChildren(...rows);
 }
@@ -300,9 +316,9 @@ function row(t: Task, depth: number, near: string, merged?: TreeNode): HTMLEleme
     onclick: (e: Event) => e.stopPropagation(),
     onchange: () => run({ op: 'update', id: t.id, props: { ...t.props, done: cb.checked || undefined } }),
   });
-  const r = h('div', {
+  const r = taskLink(t.id, {
     className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
-    onclick: () => { pick = { key, near }; if (!select(t.id)) fillTree(); },
+    onclick: inApp(() => { pick = { key, near }; if (!select(t.id)) fillTree(); }),
   }, cb, merged ? nodeIcon(merged) : null, badge(t.type), h('span', { className: 'title' }, t.title),
     tot.effort || tot.spent ? h('span', { className: 'muted' }, `${hours(tot.spent)}/${hours(tot.effort)} h`) : null);
   r.style.paddingLeft = `${4 + depth * 16}px`;
@@ -491,7 +507,7 @@ function live(t: Task, slots: Slot[]) {
     if (e.to === t.id) { const name = e.reverse ?? `${e.type} (reverse)`; incoming.set(name, [...incoming.get(name) ?? [], { other: e.from, e }]); }
   }
   const li = ({ other, e }: { other: string; e: Edge }) => h('li', {},
-    h('button', { className: 'link', onclick: () => select(other) },
+    taskLink(other, { className: 'link' },
       badge(db.tasks[other]?.type ?? ''), ' ', db.tasks[other]?.title ?? other), ' ',
     h('button', {
       className: 'bad', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
@@ -611,11 +627,11 @@ function graph(): HTMLElement {
   }
   for (const v of ids) {
     const t = db.tasks[v];
-    const g = s('g', { transform: `translate(${x(v)},${y(v)})` },
+    const a = s('a', { href: viewUrl(t), transform: `translate(${x(v)},${y(v)})` },
       s('rect', { width: W, height: H, rx: 6, class: t.props.done === true ? 'done' : '' }),
       s('text', { x: 8, y: H / 2 + 4 }, trunc(v, 30)), s('title', {}, v));
-    g.addEventListener('click', () => select(v));
-    svg.append(g);
+    a.addEventListener('click', inApp(() => select(v)));
+    svg.append(a);
   }
 
   const legend = h('div', { className: 'legend' }, toggle, ...[...new Set(edges.map(e => e.type))].map(n => {
@@ -633,7 +649,7 @@ function time(): HTMLElement {
   const rows: HTMLElement[] = [], byType = new Map<string, { count: number; done: number; effort: number; spent: number }>();
   walk((t, d) => {
     const tot = db.totals[t.id], effort = Number(t.props.effort) || 0, spent = Number(t.props.spent) || 0;
-    const name = h('td', {}, h('button', { className: 'link', onclick: () => select(t.id) }, t.title));
+    const name = h('td', {}, taskLink(t.id, { className: 'link' }, t.title));
     name.style.paddingLeft = `${8 + d * 16}px`;
     rows.push(h('tr', { className: tot.effort && tot.spent > tot.effort ? 'over' : '' }, name, h('td', {}, badge(t.type)),
       n(effort), n(spent), n(tot.effort), n(tot.spent),
