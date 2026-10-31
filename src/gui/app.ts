@@ -67,8 +67,6 @@ const ICONS = {
   right: 'M6 3l5 5-5 5',
 };
 const icon = (n: keyof typeof ICONS) => s('svg', { class: 'ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, s('path', { d: ICONS[n] }));
-/** Button text; hidden where only icons fit (collapsed sidebar), so such buttons also need a `title`. */
-const lbl = (t: string) => h('span', { className: 'lbl' }, t);
 
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 /**
@@ -458,7 +456,7 @@ function compactProps(t: Task): HTMLElement[] {
     { k: 'Done', v: t.props.done === true ? '✓' : '' },
     ...Object.keys(schema).map(k => ({ k, v: t.props[k] == null ? '' : String(t.props[k]) })),
   ];
-  return vals.filter(({ v }) => v && v.length <= 10).map(({ k, v }) => h('div', { className: 'prop-compact', title: `${k}: ${v}` }, v));
+  return vals.filter(({ v }) => v && v.length <= 6).map(({ k, v }) => h('div', { className: 'prop-compact', title: `${k}: ${v}` }, v));
 }
 
 /** Parts of the editor that act immediately (timer, links, subtasks, deletion); rebuilt on every refresh, refilling the form's link slots. */
@@ -466,8 +464,8 @@ function live(t: Task, slots: Slot[]) {
   // Time
   const started = Date.parse(String(t.props.started ?? '')), tot = db.totals[t.id];
   const timerBtn = isNaN(started)
-    ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), lbl('Start timer'))
-    : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), lbl('Stop timer'), h('span', { 'data-started': started }, clock(Date.now() - started)));
+    ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), 'Start timer')
+    : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
   const timeSummary = `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`;
 
   // Edges split by direction: outgoing ones are keyed by their own type (so they match a linkable kind),
@@ -527,16 +525,16 @@ function live(t: Task, slots: Slot[]) {
   }
   const incomingBlocks = [...incoming].filter(([name]) => name !== PARENT).map(([name, list]) => h('div', { className: 'link-group' }, h('b', {}, name), h('ul', {}, ...list.map(li))));
 
-  // Delete: two clicks instead of confirm(), which webviews block. Armed, its label shows even in the collapsed sidebar
-  const deleteLbl = lbl('Delete');
+  // Delete: two clicks instead of confirm(), which webviews block. The collapsed sidebar hides labels, so the title warns too
+  const deleteLbl = h('span', {}, 'Delete');
   const deleteBtn = h('button', {
     type: 'button', className: 'bad', title: 'Delete',
     onclick: () => {
       if (deleteBtn.classList.contains('armed')) return run({ op: 'delete', id: t.id });
       deleteBtn.classList.add('armed');
-      deleteLbl.textContent = sidebarCollapsed ? 'Again?' : 'Click again: deletes every occurrence with all nested content';
-      appear(deleteLbl);
-      setTimeout(() => { deleteBtn.classList.remove('armed'); deleteLbl.textContent = 'Delete'; }, 4000);
+      deleteLbl.textContent = deleteBtn.title = 'Click again: deletes every occurrence with all nested content';
+      appear(deleteBtn);
+      setTimeout(() => { deleteBtn.classList.remove('armed'); deleteLbl.textContent = deleteBtn.title = 'Delete'; }, 4000);
     },
   }, icon('trash'), deleteLbl);
 
