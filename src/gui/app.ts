@@ -58,7 +58,15 @@ const hue = (t: string) => {
   return i < 0 ? 'gray' : `hsl(${(30 + i * 137.5) % 360} 65% 50%)`;
 };
 
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
+/** Gives `el` its task type's color as `--c` (read by buttons and bubbles); colors the browser rejects are ignored. */
+function typed<T extends HTMLElement>(el: T, type: string): T {
+  const c = db.format.types[type]?.color;
+  if (c && CSS.supports('color', c)) el.style.setProperty('--c', c);
+  return el;
+}
+const badge = (type: string) => typed(h('span', { className: 'badge' }, type), type);
+
+let toastTimer:ReturnType<typeof setTimeout> | undefined;
 function toast(msg: string) {
   const t = $('toast');
   t.textContent = msg;
@@ -256,7 +264,7 @@ function row(t: Task, depth: number, near: string, merged?: TreeNode): HTMLEleme
   const r = h('div', {
     className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
     onclick: () => { pick = { key, near }; if (!select(t.id)) fillTree(); },
-  }, cb, merged ? nodeIcon(merged) : null, h('span', { className: 'badge' }, t.type), h('span', { className: 'title' }, t.title),
+  }, cb, merged ? nodeIcon(merged) : null, badge(t.type), h('span', { className: 'title' }, t.title),
     tot.effort || tot.spent ? h('span', { className: 'muted' }, `${hours(tot.spent)}/${hours(tot.effort)} h`) : null);
   r.style.paddingLeft = `${4 + depth * 16}px`;
   return r;
@@ -287,21 +295,21 @@ function addRow(depth: number): HTMLElement {
   });
   // The previous row is still in the document here: keep focus across refreshes
   if (focusAdd || document.activeElement?.classList.contains('add-input')) { focusAdd = false; setTimeout(() => input.focus()); }
-  const r = h('div', { className: 'row add-row' }, a.type ? h('span', { className: 'badge' }, a.type) : h('span', { className: 'icon' }, '📁'), input);
+  const r = h('div', { className: 'row add-row' }, a.type ? badge(a.type) :h('span', { className: 'icon' }, '📁'), input);
   r.style.paddingLeft = `${4 + depth * 16}px`;
   return r;
 }
 
 /** "Create a new..." buttons: a group, separated from one button per task type. Each opens the create row near the picked node. */
 function createSection(): HTMLElement {
-  const b = (label: string, type: string | null) => h('button', {
+  const b = (label: string, type: string | null) => typed(h('button', {
     type: 'button',
     onclick: () => {
       adding = { type, text: adding?.text ?? '' };
       focusAdd = true;
       if (filter) { filter = ''; render(); } else fillTree();   // the create row lives in the unfiltered tree
     },
-  }, label);
+  }, label), type ?? '');
   return h('div', { className: 'create' }, h('h3', {}, 'Create a new...'),
     h('div', { className: 'actions' }, b('Group', null), h('span', { className: 'sep' }), ...Object.keys(db.format.types).map(t => b(t, t))));
 }
@@ -327,7 +335,10 @@ function field(s: PropSchema, v: unknown, mark: () => void): { el: HTMLElement; 
   const fits = s.type === 'number' ? typeof v === 'number' : s.type === 'date' ? typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) : true;
   const type = !fits && str ? 'text' : s.type === 'number' ? 'number' : s.type === 'date' ? 'date' : 'text';
   const input = h('input', { type, step: s.type === 'number' ? 'any' : undefined, value: str, title: s.description, oninput: mark });
-  return { el: input, value: () => input.value };
+  if (type !== 'number') return { el: input, value: () => input.value };
+  // Own spin buttons: native ones cannot be styled. Manual math, since stepUp() throws on step="any"
+  const spin = (d: number, label: string) => h('button', { type: 'button', tabIndex: -1, onclick: () => { input.value = String((Number(input.value) || 0) + d); mark(); } }, label);
+  return { el: h('span', { className: 'spin' }, input, spin(1, '▲'), spin(-1, '▼')), value: () => input.value };
 }
 
 function read(raw: string, s: PropSchema): unknown {
@@ -367,8 +378,8 @@ function taskForm(t: Task): Form {
   let n = 0;
   const desc = mdEditor({ mode: 'block', parts: t.body.map(x => typeof x === 'string' ? x : slots[n++].el), label: 'Description', placeholder: 'Description', onInput: mark('body') });
   const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== 'done' && k !== 'started');
-  const save = h('button', { className: 'primary', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, 'Save');
-  const revert = h('button', { hidden: true, onclick: () => { dirty = false; render(); } }, 'Revert');
+  const save = h('button', { className: 'good', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, 'Save');
+  const revert = h('button', { className: 'neutral', hidden: true, onclick: () => { dirty = false; render(); } }, 'Revert');
 
   const submit = () => {
     const cur = db.tasks[t.id];
@@ -418,7 +429,7 @@ function live(t: Task, slots: Slot[]) {
   const started = Date.parse(String(t.props.started ?? '')), tot = db.totals[t.id];
   const timerBtn = isNaN(started)
     ? h('button', { onclick: () => run({ op: 'start', id: t.id }) }, 'Start timer')
-    : h('button', { className: 'primary', onclick: () => run({ op: 'stop', id: t.id }) }, 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
+    : h('button', { className: 'warn', onclick: () => run({ op: 'stop', id: t.id }) }, 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
   const timeSummary = `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`;
 
   // Edges split by direction: outgoing ones are keyed by their own type (so they match a linkable kind),
@@ -431,9 +442,9 @@ function live(t: Task, slots: Slot[]) {
   }
   const li = ({ other, e }: { other: string; e: Edge }) => h('li', {},
     h('button', { className: 'link', onclick: () => select(other) },
-      h('span', { className: 'badge' }, db.tasks[other]?.type ?? ''), ' ', db.tasks[other]?.title ?? other), ' ',
+      badge(db.tasks[other]?.type ?? ''), ' ', db.tasks[other]?.title ?? other), ' ',
     h('button', {
-      className: 'link', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
+      className: 'icon bad', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
       title: e.heading ? 'Comes from heading nesting; move the heading in the file' : `Remove (declared at ${e.at.file}:${e.at.line + 1})`,
     }, '✕'));
 
@@ -480,7 +491,7 @@ function live(t: Task, slots: Slot[]) {
 
   // Delete: two clicks instead of confirm(), which webviews block
   const deleteBtn = h('button', {
-    type: 'button',
+    type: 'button', className: 'bad',
     onclick: () => {
       if (deleteBtn.textContent !== 'Delete') return run({ op: 'delete', id: t.id });
       deleteBtn.textContent = 'Click again: deletes every occurrence with all nested content';
@@ -566,7 +577,7 @@ function time(): HTMLElement {
     const tot = db.totals[t.id], effort = Number(t.props.effort) || 0, spent = Number(t.props.spent) || 0;
     const name = h('td', {}, h('button', { className: 'link', onclick: () => select(t.id) }, t.title));
     name.style.paddingLeft = `${8 + d * 16}px`;
-    rows.push(h('tr', { className: tot.effort && tot.spent > tot.effort ? 'over' : '' }, name, h('td', {}, h('span', { className: 'badge' }, t.type)),
+    rows.push(h('tr', { className: tot.effort && tot.spent > tot.effort ? 'over' : '' }, name, h('td', {}, badge(t.type)),
       n(effort), n(spent), n(tot.effort), n(tot.spent),
       h('td', {}, tot.effort ? h('progress', { max: tot.effort, value: Math.min(tot.spent, tot.effort), title: `${Math.round(100 * tot.spent / tot.effort)}%` }) : '')));
   });
@@ -631,7 +642,7 @@ function render() {
 
   const resizeHandle = h('div', { className: 'sidebar-resize' });
   const collapseBtn = h('button', {
-    type: 'button', className: 'sidebar-collapse', title: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+    type: 'button', className: 'sidebar-collapse icon', title: sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
     onclick: () => { sidebarCollapsed = !sidebarCollapsed; render(); },
   }, sidebarCollapsed ? '◀' : '▶');
   const panel = h('aside', { className: `sidebar-panel${sidebarCollapsed ? ' collapsed' : ''}` },

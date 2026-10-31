@@ -9,6 +9,7 @@ import type { Diagnostic, ParsedFile } from './markdown.js';
 export const FORMAT_FILE = 'mado-format.md';
 export const SUBTASK = 'Subtask';
 export const PARENT = 'Parent';
+export const META = '$meta';
 
 export const PROP_TYPES = ['string', 'number', 'boolean', 'date', 'datetime'] as const;
 export type PropType = typeof PROP_TYPES[number];
@@ -18,6 +19,7 @@ export interface PropSchema { type: PropType; enum?: (string | number)[]; descri
 export interface TaskType {
   name: string;
   description: string;
+  color?: string;                                 // `$meta.color`: any CSS color, applied by the GUI
   props: Record<string, PropSchema>;
   links: Record<string, Record<string, string>>;  // links[linkType][targetType] = reverse link type
 }
@@ -54,7 +56,16 @@ export function parseFormat(pf: ParsedFile | null): { format: Format; diagnostic
     types[node.type] = t;
 
     for (const [key, v] of Object.entries(node.props?.data ?? {})) {
-      const s = (typeof v === 'string' ? { type: v } : v) as Partial<PropSchema> | null;
+      // `$meta` holds type settings, not a property; the `$` keeps it apart from any property name
+      if (key === META) {
+        if (!v || typeof v !== 'object' || Array.isArray(v)) { err(node.props!.start, `"${META}" must be a map of type settings`); continue; }
+        for (const [mk, mv] of Object.entries(v)) {
+          if (mk === 'color' && typeof mv === 'string') t.color = mv;
+          else err(node.props!.start, mk === 'color' ? `"${META}.color" must be a CSS color string` : `Unknown type setting "${META}.${mk}"`);
+        }
+        continue;
+      }
+      const s =(typeof v === 'string' ? { type: v } : v) as Partial<PropSchema> | null;
       if (key in BUILTIN_PROPS) err(node.props!.start, `Property "${key}" is built in and cannot be redeclared`);
       else if (!s || typeof s !== 'object' || !PROP_TYPES.includes(s.type as PropType)) err(node.props!.start, `Property "${key}": type must be one of ${PROP_TYPES.join(', ')}`);
       else t.props[key] = { type: s.type!, ...(Array.isArray(s.enum) && { enum: s.enum }), ...(typeof s.description === 'string' && { description: s.description }) };

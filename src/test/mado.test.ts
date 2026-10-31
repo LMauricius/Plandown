@@ -19,6 +19,10 @@ test('format: flips are cross-checked, reflexive entries need none', () => {
   assert.deepEqual(good.diagnostics, []);
   assert.equal(good.format.types.Bug.links['Discovered during'].Task, 'Revealed');
   assert.deepEqual(good.format.types.Task.props.Priority, { type: 'number', enum: [1, 2, 3] });
+  const meta = parseFormat(parseMarkdown('mado-format.md', '# [A] a\n---\n$meta:\n  color: teal\n  icon: x\nP: string\n---\n\n# [B] b\n---\n$meta: red\n---\n'));
+  assert.equal(meta.format.types.A.color, 'teal');
+  assert.deepEqual(Object.keys(meta.format.types.A.props), ['P']);
+  assert.deepEqual(meta.diagnostics.map(d => d.message), ['Unknown type setting "$meta.icon"', '"$meta" must be a map of type settings']);
 });
 
 test('parser: checkboxes, links and code are not tasks; lists end at blank lines', () => {

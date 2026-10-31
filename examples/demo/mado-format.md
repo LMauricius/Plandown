@@ -1,5 +1,7 @@
 # [Task] A unit of planned work
 ---
+$meta:
+  color: '#2f6fbf'
 Due-date: date
 Priority:
   type: number
@@ -23,6 +25,8 @@ Revealed:
 
 # [Bug] A defect to fix
 ---
+$meta:
+  color: crimson
 Severity:
   type: string
   enum: [low, medium, high]

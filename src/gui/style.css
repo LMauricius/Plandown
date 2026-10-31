@@ -12,12 +12,20 @@
   --muted: var(--vscode-descriptionForeground, light-dark(#5f6b7a, #97a1ae));
   --border: var(--vscode-panel-border, light-dark(#d9dee5, #2e353f));
   --accent: var(--vscode-focusBorder, light-dark(#0b7f7a, #4cc2b8));
-  --on-accent: light-dark(#ffffff, #08211f);
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
   --error: var(--vscode-errorForeground, light-dark(#c03a3a, #f07a7a));
   --warn: var(--vscode-editorWarning-foreground, light-dark(#a86200, #e2ab4a));
   --shadow: light-dark(0 1px 2px #1d243014, 0 1px 2px #00000040);
   --radius: 6px;
+  /* Control colors: strong fills under white text, identical in both modes. `--c` on an element picks one of them (or a task type's color). */
+  --teal: #0d817a;
+  --good: #2f8a3e;
+  --bad: #c0392b;
+  --amber: #b86e00;
+  --neutral: #6b7684;
+  --field: light-dark(#ffffff, #11151a);
+  --field-edge: light-dark(#aab4bf, #46505c);
+  --gloss: light-dark(#ffffffb3, #ffffff1a);   /* top highlight of bubbles */
 }
 :root[data-theme=light] { color-scheme: light; }
 :root[data-theme=dark] { color-scheme: dark; }
@@ -27,28 +35,110 @@
 body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; scrollbar-color: var(--border) transparent; }
 ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-input, select, button { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; transition: border-color .15s, background-color .15s, box-shadow .15s; }
-input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input, select, button { font: inherit; color: inherit; border-radius: var(--radius); padding: 4px 8px; transition: background-color .15s, box-shadow .15s, filter .15s; }
 input::placeholder { color: var(--muted); }
-button { cursor: pointer; background: var(--surface); box-shadow: var(--shadow); }
-button:hover:not(:disabled) { border-color: var(--accent); }
-button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 500; }
-button.primary:hover:not(:disabled) { filter: brightness(1.08); }
-button:disabled { opacity: .5; cursor: default; }
-button.link { border: none; background: none; box-shadow: none; padding: 0; color: var(--accent); }
-button.link:hover:not(:disabled) { text-decoration: underline; }
+input[type=checkbox] { accent-color: var(--teal); }
 
-/* ---- Header ---- */
-header { display: flex; gap: 20px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface); flex-wrap: wrap; }
+/*
+ * Buttons: beveled fill of `--c` (teal unless a class or a task type sets it). Light top edge, dark bottom edge,
+ * and a vertical gradient read as a raised face; pressing swaps them for an inner shadow.
+ */
+button {
+  --c: var(--teal);
+  cursor: pointer; color: #fff; text-shadow: 0 -1px 0 #0003;
+  border: 1px solid color-mix(in srgb, var(--c) 70%, #000);
+  background: linear-gradient(color-mix(in srgb, var(--c) 78%, #fff), var(--c) 50%, color-mix(in srgb, var(--c) 88%, #000));
+  box-shadow: inset 0 1px 0 #ffffff4d, inset 0 -1px 0 #00000026, 0 1px 2px #00000040;
+}
+button:hover:not(:disabled) { filter: brightness(1.08); }
+button:active:not(:disabled) { background: linear-gradient(color-mix(in srgb, var(--c) 85%, #000), var(--c)); box-shadow: inset 0 1px 3px #00000059; }
+button:disabled { opacity: .5; cursor: default; }
+button.good { --c: var(--good); }
+button.bad { --c: var(--bad); }
+button.warn { --c: var(--amber); }
+button.neutral { --c: var(--neutral); }
+button.link { border: none; background: none; box-shadow: none; text-shadow: none; padding: 0; color: var(--accent); }
+button.link:hover:not(:disabled) { text-decoration: underline; filter: none; }
+
+/*
+ * Bubbles (badges, editor markers, plain icon buttons): `--c` faded into the surface, so light in light mode and
+ * dark in dark mode. Flatter than buttons: a soft top gloss and bottom shade suggest a rounded, extruded edge.
+ * Round on one side (the side facing away from what they mark), thin padding.
+ */
+.badge, .mk, button.icon, .prop-compact, #timers button {
+  --c: var(--accent);
+  color: color-mix(in srgb, var(--c) 72%, var(--fg));
+  background: color-mix(in srgb, var(--c) 16%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--c) 28%, transparent);
+  box-shadow: inset 0 1px 0 var(--gloss), inset 0 -1px 1px color-mix(in srgb, var(--c) 22%, transparent);
+  text-shadow: none;
+  border-radius: 999px 4px 4px 999px; padding: 0 5px 0 7px;
+}
+/* Neutral controls and hints are gray */
+button.icon, .prop-compact, .ln > .mk { --c: var(--neutral); }
+button.icon.bad { --c: var(--bad); }
+button.icon { padding: 1px 7px; border-radius: 999px; }
+button.icon:hover:not(:disabled) { filter: none; background: color-mix(in srgb, var(--c) 30%, var(--surface)); }
+button.icon:active:not(:disabled) { background: color-mix(in srgb, var(--c) 38%, var(--surface)); box-shadow: inset 0 1px 2px #0003; }
+
+/*
+ * Input fields: white (light mode) and slightly sunken. The border is a background layer under the padding box:
+ * an uneven horizontal gradient gives a thin brushed stroke, and a darker 2px bottom line under it a writing line.
+ * `--edge` is set here, not on :root, so focus can recolor the stroke. `:where` keeps specificity 0, so `select` below can add layers.
+ */
+:where(input:not([type=checkbox]), select, .mdedit:focus-within, .props-sidebar .mdedit) {
+  --edge: var(--field-edge);
+  border: 1px solid transparent; border-bottom-width: 2px;
+  background:
+    linear-gradient(var(--field), var(--field)) padding-box,
+    linear-gradient(to top, color-mix(in srgb, var(--edge) 75%, var(--fg)) 2px, transparent 2px) border-box,
+    linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 45%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 65%, transparent) 76%, var(--edge)) border-box;
+  box-shadow: inset 0 1px 3px #0000001f;
+}
+:is(input:not([type=checkbox]), select):focus, .mdedit:focus-within { outline: none; --edge: var(--accent); box-shadow: inset 0 1px 3px #0000001f, 0 0 0 3px var(--accent-soft); }
+
+/* Edit-control buttons (combobox arrows, pickers) are buttons too: a teal bevel drawn as background layers */
+select {
+  appearance: none; padding-right: 30px; cursor: pointer;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E") right 7px center / 10px 6px no-repeat padding-box,
+    linear-gradient(color-mix(in srgb, var(--teal) 78%, #fff), var(--teal) 50%, color-mix(in srgb, var(--teal) 88%, #000)) right / 24px 100% no-repeat padding-box,
+    linear-gradient(var(--field), var(--field)) padding-box,
+    linear-gradient(to top, color-mix(in srgb, var(--edge) 75%, var(--fg)) 2px, transparent 2px) border-box,
+    linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 45%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 65%, transparent) 76%, var(--edge)) border-box;
+}
+option { background: var(--field); color: var(--fg); }
+/* Chromium only: date pickers and datalist dropdowns; other engines keep their native indicator */
+input::-webkit-calendar-picker-indicator { cursor: pointer; padding: 3px 5px; margin-right: -5px; border-radius: 4px; box-shadow: inset 0 1px 0 #ffffff4d; }
+input[type=date]::-webkit-calendar-picker-indicator {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1.5 3h9v7.5h-9zM1.5 5.5h9M4 1.5v2.5M8 1.5v2.5' fill='none' stroke='white' stroke-width='1.3'/%3E%3C/svg%3E") center / 12px no-repeat,
+    linear-gradient(color-mix(in srgb, var(--teal) 78%, #fff), var(--teal) 50%, color-mix(in srgb, var(--teal) 88%, #000));
+}
+input[list]::-webkit-calendar-picker-indicator {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E") center / 10px 6px no-repeat,
+    linear-gradient(color-mix(in srgb, var(--teal) 78%, #fff), var(--teal) 50%, color-mix(in srgb, var(--teal) 88%, #000));
+}
+/* Number fields: native spinners hidden, replaced by two stacked buttons glued to the field's right edge */
+input[type=number] { appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.spin { display: inline-grid; grid-template: 1fr 1fr / 1fr auto; }
+.spin input { grid-row: span 2; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.spin button { padding: 0 6px; font-size: 8px; line-height: 1; border-radius: 0; border-left: none; }
+.spin button:first-of-type { border-top-right-radius: var(--radius); border-bottom: none; }
+.spin button:last-of-type { border-bottom-right-radius: var(--radius); }
+
+/* ---- Header (toolbar: teal-tinted) ---- */
+header { display: flex; gap: 20px; align-items: center; padding: 8px 16px; border-bottom: 1px solid color-mix(in srgb, var(--teal) 35%, var(--border)); background: linear-gradient(color-mix(in srgb, var(--teal) 16%, var(--surface)), color-mix(in srgb, var(--teal) 7%, var(--surface))); flex-wrap: wrap; }
 header > b { font-size: 16px; letter-spacing: .02em; color: var(--accent); }
-#tabs { display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--panel); }
-#tabs button { border: none; background: none; box-shadow: none; padding: 3px 14px; color: var(--muted); }
-#tabs button:hover { color: var(--fg); }
-#tabs button.on { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); font-weight: 500; }
+#tabs { display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: color-mix(in srgb, var(--teal) 10%, var(--panel)); box-shadow: inset 0 1px 2px #00000026; }
+#tabs button { padding: 2px 14px; }
+#tabs button:not(.on) { border-color: transparent; background: none; box-shadow: none; text-shadow: none; color: var(--muted); }
+#tabs button:not(.on):hover { color: var(--fg); filter: none; }
+#tabs button.on { font-weight: 500; }
 #timers { display: flex; gap: 12px; flex: 1; }
-#timers button { padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); font-variant-numeric: tabular-nums; }
-#theme { font-size: 16px; color: var(--muted); }
+#timers button { font-variant-numeric: tabular-nums; }
+#timers button:hover { text-decoration: none; filter: brightness(1.05); }
+#theme { font-size: 16px; line-height: 1.2; }
 #diags { max-height: 30vh; overflow: auto; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel); font-family: ui-monospace, monospace; font-size: 12px; }
 .error { color: var(--error); }
 .warning { color: var(--warn); }
@@ -67,8 +157,7 @@ main { flex: 1; display: flex; min-height: 0; }
 .create .sep { width: 1px; align-self: stretch; background: var(--border); }
 .row .title { overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .done .title { text-decoration: line-through; color: var(--muted); }
-input[type=checkbox] { accent-color: var(--accent); box-shadow: none; }
-.badge { font-size: 11px; font-weight: 500; padding: 0 7px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.badge { font-size: 11px; font-weight: 500; }
 .muted { color: var(--muted); font-size: 12px; }
 form.inline { display: flex; gap: 6px; flex-wrap: wrap; }
 form.inline input[type=text] { flex: 1; min-width: 8em; }
@@ -89,32 +178,34 @@ section.editor.muted { align-items: center; justify-content: center; font-size: 
 .sidebar-panel.collapsed { width: 68px !important; }
 .sidebar-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 1; }
 .sidebar-resize:hover { background: linear-gradient(to right, transparent 3px, var(--accent) 3px 5px, transparent 5px); }
-.sidebar-collapse { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; padding: 0; line-height: 1; font-size: 10px; color: var(--muted); z-index: 2; }
+.sidebar-collapse { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; padding: 0; line-height: 1; font-size: 10px; z-index: 2; }
 .sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 36px 14px 14px; display: flex; flex-direction: column; gap: 18px; }
 .sidebar-panel.collapsed .sidebar-scroll { align-items: stretch; padding: 36px 6px 8px; gap: 6px; }
 .sidebar-panel.collapsed .sidebar-scroll button { width: 100%; white-space: normal; word-break: break-word; font-size: 11px; padding: 4px 2px; }
 .props-sidebar { display: flex; flex-direction: column; gap: 12px; }
 .props-sidebar .prop { display: flex; flex-direction: column; gap: 3px; }
 .props-sidebar label { font-size: 12px; font-weight: 500; color: var(--muted); }
-.props-sidebar input[type=text], .props-sidebar input[type=number], .props-sidebar select { width: 100%; }
+.props-sidebar input[type=text], .props-sidebar input[type=number], .props-sidebar select, .props-sidebar .spin { width: 100%; }
 .props-sidebar input[type=checkbox] { justify-self: start; align-self: start; width: 16px; height: 16px; }
-.prop-compact { font-size: 11px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 4px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prop-compact { font-size: 11px; border-radius: 999px; padding: 0 4px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-group { margin-bottom: 6px; }
 .link-group > b { font-size: 13px; font-weight: 600; }
 .links li, .link-group li { margin: 3px 0; }
 .links ul, .link-group ul { margin: 4px 0 8px; padding-left: 18px; }
 .links li::marker { color: var(--muted); }
+.links li > button.icon { padding: 0 6px; font-size: 11px; }
+.links > button { margin: 0 6px 6px 0; }
 form.link-add { display: inline-flex; gap: 6px; }
 form.link-add input[type=text] { min-width: 10em; }
 
 /*
- * Markdown editor. Unfocused it reads as plain text; focus only colors the frame (same box, so nothing moves).
+ * Markdown editor. Unfocused it reads as plain text; focus turns the frame into an input field (same box, so nothing moves).
  * Negative margins equal to padding + border keep the text aligned with its surroundings.
  * Markers are absolutely positioned (no layout space) outside what they mark: opening ones shifted left by their
  * own width, closing ones at their natural spot. They show over neighboring text while their element is `.near`.
  */
-.mdedit { position: relative; border: 1px solid transparent; border-radius: var(--radius); padding: 2px 6px; margin: 0 -7px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; transition: border-color .15s, background-color .15s; }
-.mdedit:focus-within { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-soft); }
+.mdedit { position: relative; border: 1px solid transparent; border-bottom-width: 2px; border-radius: var(--radius); padding: 2px 6px; margin: 0 -7px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; transition: box-shadow .15s; }
+.props-sidebar .mdedit { margin: 0; }
 .mdedit.block { min-height: 14em; overflow: auto; resize: vertical; padding: 8px 12px; margin: 0 -13px; }
 .mdedit .part { position: relative; outline: none; }
 .mdedit .part[data-empty]::before { content: attr(data-ph); position: absolute; color: var(--muted); pointer-events: none; }
@@ -135,19 +226,29 @@ form.link-add input[type=text] { min-width: 10em; }
 .k-em { font-style: italic; }
 .k-strike { text-decoration: line-through; }
 .k-link { color: var(--accent); text-decoration: underline; }
-.mk { position: absolute; white-space: pre; opacity: 0; pointer-events: none; color: var(--muted); font: 400 13px/1.5 ui-monospace, monospace; text-decoration: none; background: var(--surface); border-radius: 3px; z-index: 1; }
+/* Inline markers are colored bubbles, line markers (headings, lists, quotes) gray hints; each is round on its outer side */
+.mk { position: absolute; white-space: pre; opacity: 0; pointer-events: none; font: 400 13px/1.4 ui-monospace, monospace; font-style: normal; text-decoration: none; padding: 0 2px 0 4px; z-index: 1; }
 .mk.o { transform: translateX(-100%); }
+.mk.c { border-radius: 4px 999px 999px 4px; padding: 0 4px 0 2px; }
 /* Heading markers would not fit left of the text in the frame's narrow (clipped) padding: they go to the line's right end */
-:is(.h1, .h2, .h3, .h4, .h5, .h6) > .mk.o { right: 0; transform: none; }
+:is(.h1, .h2, .h3, .h4, .h5, .h6) > .mk.o { right: 0; transform: none; border-radius: 4px 999px 999px 4px; padding: 0 4px 0 2px; }
 .near > .mk, .ln.ol > .mk { opacity: 1; }
 
-/* Toolbox: shared, fixed on top of everything at the focused editor. Transparent row of two bubbles (controls, confirm); clicks pass through the gap. */
+/* Toolbox: shared, fixed on top of everything at the focused editor. Transparent row of two toolbars (controls, confirm); clicks pass through the gap. */
 .mdtools { position: fixed; z-index: 100; display: flex; justify-content: space-between; gap: 6px; pointer-events: none; }
 .mdtools[hidden], .mdtools.line .blk { display: none; }
-.mdtools .bar { display: flex; gap: 2px; padding: 3px; min-width: 0; overflow-x: auto; pointer-events: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 14px #0003; }
-.mdtools .bar:last-child { flex: none; }
-.mdtools button { flex: none; min-width: 28px; padding: 1px 7px; border-color: transparent; box-shadow: none; font-size: 13px; }
-.mdtools .ok { color: var(--accent); font-weight: 600; }
+.mdtools .bar {
+  --c: var(--teal);
+  display: flex; gap: 2px; padding: 3px; min-width: 0; overflow-x: auto; pointer-events: auto; border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--c) 70%, #000);
+  background: linear-gradient(color-mix(in srgb, var(--c) 82%, #fff), var(--c) 50%, color-mix(in srgb, var(--c) 90%, #000));
+  box-shadow: inset 0 1px 0 #ffffff40, 0 4px 14px #0003;
+}
+.mdtools .bar:last-child { --c: var(--good); flex: none; }
+.mdtools button { flex: none; min-width: 28px; padding: 1px 7px; font-size: 13px; border-color: transparent; background: none; box-shadow: none; }
+.mdtools button:hover { filter: none; background: #ffffff2e; }
+.mdtools button:active { background: #0000002e; box-shadow: inset 0 1px 2px #0003; }
+.mdtools .ok { font-weight: 600; }
 
 /* ---- Graph and Time tabs ---- */
 .view { flex: 1; overflow: auto; padding: 20px 28px; }
@@ -164,4 +265,4 @@ th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--bor
 tbody tr:hover td { background: var(--accent-soft); }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 tr.over td { color: var(--error); }
-progress { width: 120px; height: 8px; accent-color: var(--accent); }
+progress { width: 120px; height: 8px; accent-color: var(--teal); }

@@ -180,6 +180,23 @@ Each property is declared either by its type name alone (`Due-date: date`) or as
 
 The built-in properties (`done`, `effort`, `spent`, `started`) cannot be redeclared.
 
+### Type settings
+
+The reserved `$meta` key in a type's property block holds settings of the type itself rather than a property:
+
+```markdown
+# [Bug] A defect to fix
+---
+$meta:
+  color: crimson
+Severity: string
+---
+```
+
+| Key | Meaning |
+|---|---|
+| `color` | Any CSS color. The GUI uses it for the type's badges and its "Create" button. Values the browser does not recognize are ignored. |
+
 ### Link types and their reverses
 
 Every link has two names, one for each direction. The format file states both, and the two declarations must agree:
