@@ -1,10 +1,10 @@
-# Using the MaDo GUI
+# Using the Plandown GUI
 
-The MaDo GUI is a small web page that edits the task folder described in [Database.md](Database.md). Every change you make in it is written straight into the Markdown files, and every change made to the files (by you in an editor, by `git pull`, by anyone) shows up in the GUI within a fraction of a second.
+The Plandown GUI is a small web page that edits the task folder described in [Database.md](Database.md). Every change you make in it is written straight into the Markdown files, and every change made to the files (by you in an editor, by `git pull`, by anyone) shows up in the GUI within a fraction of a second.
 
 ## Starting it
 
-MaDo needs Node.js 22 or newer.
+Plandown needs Node.js 22 or newer.
 
 ```sh
 npm install
@@ -84,7 +84,7 @@ The upper part of the editor holds the task's editable fields:
 
 - **Title** (at the top) and **Type.** Changing either renames the task in every file it appears in.
 - **Done**, **effort (h)** and **spent (h).** The built-in properties.
-- **One field per property** declared for the task's type in `mado-format.md`. Dates get a date picker; properties with an `enum` and booleans get a drop-down, where `(none)` removes the property. Hover over a field's name to see its description.
+- **One field per property** declared for the task's type in `plandown-format.md`. Dates get a date picker; properties with an `enum` and booleans get a drop-down, where `(none)` removes the property. Hover over a field's name to see its description.
 - **Description.** Markdown text. Each list of linked tasks in it is shown at its place in the text, as the interactive link list described below.
 
 Properties that the type does not declare are listed read-only; edit them in the file.

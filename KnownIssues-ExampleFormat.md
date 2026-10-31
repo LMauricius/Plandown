@@ -2,7 +2,7 @@
 
 Found by `node dist/cli.js check Example` (local notes, not for release).
 
-## `Example/mado-format.md`: reverse links not declared
+## `Example/plandown-format.md`: reverse links not declared
 
 | Line | Declaration | Problem |
 |---|---|---|
@@ -13,7 +13,7 @@ Found by `node dist/cli.js check Example` (local notes, not for release).
 | 32 | `[Bug]` `Prevents fixing:` `- [Bug] during fixing a bug` | Reverse should likely be `Fixing blocked by`. |
 | 36 | `[Bug]` `Fixing blocked by:` `- [Bug] Prevents fixing` | Needs `Prevents fixing:` to contain `- [Bug] Fixing blocked by` (follows from line 32). |
 
-Fix sketch: add `Revealed:` (`- [Bug] Discovered during`) to both types, use it as reverse of `Discovered during`; change line 32 entry to `- [Bug] Fixing blocked by`; drop `Subtasks:`/`Sub-bugs:` (built in). `examples/demo/mado-format.md` is a valid version.
+Fix sketch: add `Revealed:` (`- [Bug] Discovered during`) to both types, use it as reverse of `Discovered during`; change line 32 entry to `- [Bug] Fixing blocked by`; drop `Subtasks:`/`Sub-bugs:` (built in). `examples/demo/plandown-format.md` is a valid version.
 
 ## `Example/29.9.2025..md`: no tasks
 

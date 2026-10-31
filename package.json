@@ -1,11 +1,11 @@
 {
-  "name": "mado",
+  "name": "plandown",
   "version": "0.1.0",
   "description": "Task manager that stores tasks, links, properties and time tracking in a folder of plain Markdown files.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": { "mado": "dist/cli.js" },
+  "bin": { "plandown": "dist/cli.js" },
   "files": ["dist"],
   "scripts": {
     "build": "tsc && node -e \"for (const f of ['index.html', 'style.css']) require('fs').copyFileSync('src/gui/' + f, 'dist/gui/' + f)\"",

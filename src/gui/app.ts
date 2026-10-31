@@ -1,5 +1,5 @@
 /**
- * MaDo GUI: task tree and editor, link graph and time view. Plain DOM, no framework.
+ * Plandown GUI: task tree and editor, link graph and time view. Plain DOM, no framework.
  * Talks to the library only through `api`, so a VSCode webview can swap the transport.
  */
 import type { Db, Edge, Task } from '../db.js';
@@ -17,7 +17,7 @@ const SUBTASK = 'Subtask', PARENT = 'Parent';
 const api = {
   state: async (): Promise<Db> => (await fetch('api/state')).json(),
   async op(op: Op): Promise<{ id?: string; db: Db; error?: string }> {
-    const r = await fetch('api/op', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mado': '1' }, body: JSON.stringify(op) });
+    const r = await fetch('api/op', { method: 'POST', headers: { 'content-type': 'application/json', 'x-plandown': '1' }, body: JSON.stringify(op) });
     return r.json();
   },
   subscribe(cb: () => void) { new EventSource('api/events').onmessage = cb; },
@@ -131,7 +131,7 @@ let currentSubmit: (() => void) | null = null;   // bound to whichever form is l
 interface Pane { width: number; collapsed: boolean }
 const panes: Record<'nav' | 'props', Pane> = { nav: { width: 340, collapsed: false }, props: { width: 280, collapsed: false } };
 // Collapsed panes survive reloads within the browser session (saved by `render`)
-try { for (const k of (sessionStorage.getItem('mado-collapsed') ?? '').split(',')) if (Object.hasOwn(panes, k)) panes[k as keyof typeof panes].collapsed = true; } catch { /* not persisted */ }
+try { for (const k of (sessionStorage.getItem('plandown-collapsed') ?? '').split(',')) if (Object.hasOwn(panes, k)) panes[k as keyof typeof panes].collapsed = true; } catch { /* not persisted */ }
 let revealedLinkKinds = new Set<string>();        // link types the user opened an empty list for, this task only
 // Tree selection, apart from navigation (`sel`): the picked row and the tree node new groups and tasks go near ('' : root)
 let pick: { key: string; near: string } | null = null;
@@ -234,12 +234,12 @@ function applyTheme(t: typeof THEMES[number]) {
   b.title = `Theme: ${t}`;
   b.onclick = () => {
     const next = THEMES[(THEMES.indexOf(t) + 1) % THEMES.length];
-    try { localStorage.setItem('mado-theme', next); } catch { /* not persisted */ }
+    try { localStorage.setItem('plandown-theme', next); } catch { /* not persisted */ }
     applyTheme(next);
   };
 }
 let savedTheme: string | null = null;
-try { savedTheme = localStorage.getItem('mado-theme'); } catch { /* auto */ }
+try { savedTheme = localStorage.getItem('plandown-theme'); } catch { /* auto */ }
 applyTheme(THEMES.find(t => t === savedTheme) ?? 'auto');
 
 // ---- Header ----
@@ -513,7 +513,7 @@ function live(t: Task, slots: Slot[]) {
   const linkTypes = db.format.types[t.type]?.links ?? {};
   const addRow = (kind: string, focus: boolean) => {
     const allowed = kind in linkTypes ? Object.keys(linkTypes[kind]) : null;
-    const listId = `mado-targets-${t.id}-${kind}`.replace(/\W+/g, '_');
+    const listId = `plandown-targets-${t.id}-${kind}`.replace(/\W+/g, '_');
     const ids = new Set(Object.values(db.tasks).filter(o => o.id !== t.id && (!allowed || allowed.includes(o.type))).map(o => o.id));
     const targets = h('datalist', { id: listId }, ...[...ids].map(id => h('option', { value: id })));
     // The Link button appears only once the input names a valid target
@@ -705,7 +705,7 @@ function makeResizable(pane: Pane, handle: HTMLElement, sel: string, dir: 1 | -1
 function render() {
   if (url() !== location.pathname) history.replaceState(null, '', url());
   // Every collapse change ends in a render
-  try { sessionStorage.setItem('mado-collapsed', Object.entries(panes).filter(([, p]) => p.collapsed).map(([k]) => k).join(',')); } catch { /* not persisted */ }
+  try { sessionStorage.setItem('plandown-collapsed', Object.entries(panes).filter(([, p]) => p.collapsed).map(([k]) => k).join(',')); } catch { /* not persisted */ }
   header();
   const main = $('main');
   if (tab === 'Graph') return main.replaceChildren(graph());

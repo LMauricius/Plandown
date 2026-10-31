@@ -4,22 +4,22 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDb, findNode, Mado, parseFormat, parseMarkdown } from '../index.js';
+import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
 import { tokenize } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
-const copy = () => { const d = mkdtempSync(join(tmpdir(), 'mado-')); cpSync(DEMO, d, { recursive: true }); return d; };
+const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
 const read = (d: string, f: string) => readFileSync(join(d, f), 'utf8');
-const links = (m: Mado, id: string) => m.db.edges.filter(e => e.from === id).map(e => `${e.type} ${e.to}`).sort();
+const links = (m: Plandown, id: string) => m.db.edges.filter(e => e.from === id).map(e => `${e.type} ${e.to}`).sort();
 
 test('format: flips are cross-checked, reflexive entries need none', () => {
-  const bad = parseFormat(parseMarkdown('mado-format.md', '# [A] a\n\nX:\n- [A] X\n- [B] Y\n\n# [B] b\n\nZ:\n- [A] X\n'));
+  const bad = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n\nX:\n- [A] X\n- [B] Y\n\n# [B] b\n\nZ:\n- [A] X\n'));
   assert.deepEqual(bad.diagnostics.map(d => d.line), [4, 9]);
-  const good = parseFormat(parseMarkdown('mado-format.md', read(DEMO, 'mado-format.md')));
+  const good = parseFormat(parseMarkdown('plandown-format.md', read(DEMO, 'plandown-format.md')));
   assert.deepEqual(good.diagnostics, []);
   assert.equal(good.format.types.Bug.links['Discovered during'].Task, 'Revealed');
   assert.deepEqual(good.format.types.Task.props.Priority, { type: 'number', enum: [1, 2, 3] });
-  const meta = parseFormat(parseMarkdown('mado-format.md', '# [A] a\n---\n$meta:\n  color: teal\n  icon: x\nP: string\n---\n\n# [B] b\n---\n$meta: red\n---\n'));
+  const meta = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n---\n$meta:\n  color: teal\n  icon: x\nP: string\n---\n\n# [B] b\n---\n$meta: red\n---\n'));
   assert.equal(meta.format.types.A.color, 'teal');
   assert.deepEqual(Object.keys(meta.format.types.A.props), ['P']);
   assert.deepEqual(meta.diagnostics.map(d => d.message), ['Unknown type setting "$meta.icon"', '"$meta" must be a map of type settings']);
@@ -32,7 +32,7 @@ test('parser: checkboxes, links and code are not tasks; lists end at blank lines
 });
 
 test('db: interwoven files merge into one task with links from headings and lists', async () => {
-  const m = await Mado.open(DEMO);
+  const m = await Plandown.open(DEMO);
   assert.deepEqual(m.db.diagnostics, []);
   const anim = m.db.tasks['[Task] Animation system'];
   assert.equal(anim.home.file, 'roadmap.md');
@@ -52,7 +52,7 @@ test('db: interwoven files merge into one task with links from headings and list
 });
 
 test('db: anchors follow GitHub heading slugs and stay unique', () => {
-  const { format } = parseFormat(parseMarkdown('mado-format.md', '# [T] t\n'));
+  const { format } = parseFormat(parseMarkdown('plandown-format.md', '# [T] t\n'));
   const { db } = buildDb(format, [], [parseMarkdown('a.md', '# [T] Fix: Ünicode_ok\n# [T] A.b\n# [T] Ab\n')]);
   assert.deepEqual(Object.values(db.tasks).map(t => t.anchor), ['t-fix-ünicode_ok', 't-ab', 't-ab-1']);
 });
@@ -60,7 +60,7 @@ test('db: anchors follow GitHub heading slugs and stay unique', () => {
 test('db: invalid links and properties are reported', async () => {
   const d = copy();
   writeFileSync(join(d, 'bad.md'), '# [Bug] X\n---\nSeverity: huge\nFoo: 1\n---\n\nBlocks:\n- [Nope] Y\n\nRevealed:\n- [Task] Z\n');
-  const m = await Mado.open(d);
+  const m = await Plandown.open(d);
   assert.deepEqual(m.db.diagnostics.map(d => d.message).sort(), [
     'Link "Blocks" of [Bug] cannot target [Nope]',
     'Link "Revealed" of [Bug] cannot target [Task]',
@@ -71,7 +71,7 @@ test('db: invalid links and properties are reported', async () => {
 });
 
 test('edits: update, create, link, unlink, timer and delete rewrite only their lines', async () => {
-  const d = copy(), m = await Mado.open(d), before = read(d, 'roadmap.md');
+  const d = copy(), m = await Plandown.open(d), before = read(d, 'roadmap.md');
 
   await m.apply({ op: 'update', id: '[Task] Smart scene graph', title: 'Scene graph', props: { Priority: 2 }, body: ['Flat prop list.'] });
   const sg = m.db.tasks['[Task] Scene graph'];
@@ -102,17 +102,17 @@ test('edits: update, create, link, unlink, timer and delete rewrite only their l
 });
 
 test('edits: refuse to write over files changed on disk', async () => {
-  const d = copy(), m = await Mado.open(d);
+  const d = copy(), m = await Plandown.open(d);
   writeFileSync(join(d, 'roadmap.md'), read(d, 'roadmap.md') + '\nexternal\n');
   await assert.rejects(m.apply({ op: 'delete', id: '[Bug] Shadow acne on EAA shadows' }), /changed on disk/);
   assert.ok(read(d, 'roadmap.md').endsWith('external\n'));
 });
 
 test('body: text gaps around task lists, sub-chapters included, edited gap by gap', async () => {
-  const d = mkdtempSync(join(tmpdir(), 'mado-'));
-  writeFileSync(join(d, 'mado-format.md'), '# [T] t\n\nBlocks:\n- [T] Blocks\n');
+  const d = mkdtempSync(join(tmpdir(), 'plandown-'));
+  writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n\nBlocks:\n- [T] Blocks\n');
   writeFileSync(join(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nMid\n\n## Notes\nMore\n\nBlocks:\n- [T] C\n\nTail\n\n## [T] D\n');
-  const m = await Mado.open(d);
+  const m = await Plandown.open(d);
   assert.deepEqual(m.db.tasks['[T] A'].body, ['Intro', { links: ['Subtask'] }, 'Mid\n\n## Notes\nMore', { links: ['Blocks'] }, 'Tail']);
   assert.deepEqual(m.db.tasks['[T] B'].body, ['Bullet text']);
   assert.ok(links(m, '[T] A').includes('Subtask [T] D'), 'task sub-heading still nests');
@@ -127,15 +127,15 @@ test('body: text gaps around task lists, sub-chapters included, edited gap by ga
 });
 
 test('tree: subfolders, stem merges and placement of new groups and tasks', async () => {
-  const d = mkdtempSync(join(tmpdir(), 'mado-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   for (const f of ['g/empty', '.hidden']) mkdirSync(join(d, f), { recursive: true });
-  w('mado-format.md', '# [T] t\n');
+  w('plandown-format.md', '# [T] t\n');
   w('g.md', '# [T] G\n');                              // one node with folder g/ and its task
   w('g/fix-login.md', '# [T] Fix login\n## [T] Sub\n'); // merged by slug; Sub is a subtask, not top-level
   w('g/notes.md', '# [T] A\n# [T] B\n');
-  w('g/mado-format.md', '# [T] Nested\n');             // reserved for sub-formats: ignored
+  w('g/plandown-format.md', '# [T] Nested\n');             // reserved for sub-formats: ignored
   w('.hidden/x.md', '# [T] Hidden\n');
-  const m = await Mado.open(d), node = (p: string) => findNode(m.db.tree, p)!;
+  const m = await Plandown.open(d), node = (p: string) => findNode(m.db.tree, p)!;
   assert.deepEqual(m.db.tree.map(n => [n.path, n.folder, n.file, n.task]), [['g', true, 'g.md', '[T] G']]);
   assert.deepEqual(node('g').kids.map(k => [k.path, k.task, k.tasks]), [['g/empty', null, []], ['g/fix-login', '[T] Fix login', []], ['g/notes', null, ['[T] A', '[T] B']]]);
   assert.deepEqual(Object.keys(m.db.tasks).sort(), ['[T] A', '[T] B', '[T] Fix login', '[T] G', '[T] Sub']);
@@ -159,7 +159,7 @@ test('tree: subfolders, stem merges and placement of new groups and tasks', asyn
   await assert.rejects(m.apply({ op: 'group', name: '..', near: '' }), /Invalid/);
   await assert.rejects(m.apply({ op: 'group', name: 'X', near: 'nope' }), /No group/);
   await assert.rejects(m.apply({ op: 'create', type: 'T', title: 'X', file: '../x.md' }), /Invalid/);
-  await assert.rejects(m.apply({ op: 'create', type: 'T', title: 'X', file: 'g/mado-format.md' }), /Invalid/);
+  await assert.rejects(m.apply({ op: 'create', type: 'T', title: 'X', file: 'g/plandown-format.md' }), /Invalid/);
 
   await m.apply({ op: 'update', id: '[T] G', title: 'H' });
   assert.ok(existsSync(join(d, 'H.md')) && existsSync(join(d, 'H/notes.md')) && !existsSync(join(d, 'g')), 'merged file and folder follow a rename');

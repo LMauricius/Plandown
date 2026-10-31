@@ -1,19 +1,19 @@
-# The MaDo database
+# The Plandown database
 
-MaDo keeps all of its data in a folder of plain Markdown files. There is no hidden index and no cache: the files *are* the database. You can edit them in any text editor, keep them in version control, and MaDo picks up the changes immediately.
+Plandown keeps all of its data in a folder of plain Markdown files. There is no hidden index and no cache: the files *are* the database. You can edit them in any text editor, keep them in version control, and Plandown picks up the changes immediately.
 
-This document explains how MaDo reads that folder: which lines become tasks, how properties and links are written, and how the special `mado-format.md` file defines what is allowed.
+This document explains how Plandown reads that folder: which lines become tasks, how properties and links are written, and how the special `plandown-format.md` file defines what is allowed.
 
 ## The folder
 
 Every `.md` file inside the folder and its subfolders is read. Hidden files and folders (names starting with `.`) are skipped, and symbolic links are not followed. One file has a special role:
 
-- **`mado-format.md`** at the top of the folder declares the task types, their properties and the link types between them. A file with that name inside a subfolder is ignored.
+- **`plandown-format.md`** at the top of the folder declares the task types, their properties and the link types between them. A file with that name inside a subfolder is ignored.
 - **Every other `.md` file** holds tasks. Files are read in natural name order (`2.md` before `10.md`), and together they form one database. Subfolders only organize the files; a task's identity does not depend on where it is stored.
 
 ```mermaid
 flowchart LR
-  F[mado-format.md] -->|types, properties, link types| DB[(Task database)]
+  F[plandown-format.md] -->|types, properties, link types| DB[(Task database)]
   A[roadmap.md] -->|tasks| DB
   B[2026-11.md] -->|tasks| DB
   DB --> G[GUI and API]
@@ -47,7 +47,7 @@ A task is identified by its type and title together: `[Task] Animation system`. 
 
 Because of this, titles must be unique within a task type. Two different tasks named `[Task] Cleanup` would be merged into one.
 
-Each place a task appears is called an *occurrence*. The first occurrence that has properties or a description is the task's **home**; that is where its properties and description are read from and where the GUI writes them back. The other occurrences only contribute links. If properties are written in more than one occurrence, MaDo uses the home's and reports a warning for the others.
+Each place a task appears is called an *occurrence*. The first occurrence that has properties or a description is the task's **home**; that is where its properties and description are read from and where the GUI writes them back. The other occurrences only contribute links. If properties are written in more than one occurrence, Plandown uses the home's and reports a warning for the others.
 
 ### Top-level tasks
 
@@ -80,7 +80,7 @@ For a bullet task, indent the block to the bullet's text:
 
 The block must start on the line directly below the title. A missing closing `---` is reported as an error (the search stops at the next task heading, so an unclosed block never swallows other tasks). YAML comments are allowed and are preserved when the GUI edits the block.
 
-Which properties a task may have is declared by its type in `mado-format.md`. In addition, every type has these built-in properties:
+Which properties a task may have is declared by its type in `plandown-format.md`. In addition, every type has these built-in properties:
 
 | Property | Type | Meaning |
 |---|---|---|
@@ -136,11 +136,11 @@ The entries are ordinary task occurrences. If `[Task] Smart scene graph` is defi
 
 A blank line ends a list. Keep the items of one list together, and start a new list (with its own label, or none for subtasks) after a blank line.
 
-The same relation only needs to be written once. Writing `Blocked by: [Task] Smart scene graph` under Animation system is equivalent to writing `Blocks: [Task] Animation system` under Smart scene graph; if both are written, MaDo counts the link once.
+The same relation only needs to be written once. Writing `Blocked by: [Task] Smart scene graph` under Animation system is equivalent to writing `Blocks: [Task] Animation system` under Smart scene graph; if both are written, Plandown counts the link once.
 
 ## The format file
 
-`mado-format.md` uses the same Markdown structure as task files, with a different meaning:
+`plandown-format.md` uses the same Markdown structure as task files, with a different meaning:
 
 - Each `# [<Task type>] <description>` heading **declares a task type**. The text after the type is a short description of it.
 - The property block **declares the type's property schema**.
@@ -222,16 +222,16 @@ flowchart LR
 
 ## Validation
 
-MaDo never refuses to load a folder. Instead it reports diagnostics (with file and line) for anything that does not match the format:
+Plandown never refuses to load a folder. Instead it reports diagnostics (with file and line) for anything that does not match the format:
 
-- In `mado-format.md`: duplicate types, invalid property schemas, unlabeled lists, unknown target types, and missing or mismatched reverse declarations.
+- In `plandown-format.md`: duplicate types, invalid property schemas, unlabeled lists, unknown target types, and missing or mismatched reverse declarations.
 - In task files: unknown task types, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, undeclared properties and values that do not match their schema.
 
-Run `mado check <folder>` to print them; it exits with a non-zero status when there are errors, so it can guard a commit hook or a CI job.
+Run `plandown check <folder>` to print them; it exits with a non-zero status when there are errors, so it can guard a commit hook or a CI job.
 
 ## How edits are written
 
-When a task is changed through the GUI or the library, MaDo rewrites only the lines involved: a title line, a property block, a description, or a single list item. Everything else in the file, including your formatting and comments, stays byte for byte the same. Before writing, MaDo checks that the file has not changed on disk since it was last read; if it has, the edit is refused and the folder is reloaded, so nothing written by someone else is overwritten.
+When a task is changed through the GUI or the library, Plandown rewrites only the lines involved: a title line, a property block, a description, or a single list item. Everything else in the file, including your formatting and comments, stays byte for byte the same. Before writing, Plandown checks that the file has not changed on disk since it was last read; if it has, the edit is refused and the folder is reloaded, so nothing written by someone else is overwritten.
 
 Some changes are made where they are declared:
 

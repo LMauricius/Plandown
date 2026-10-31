@@ -1,12 +1,12 @@
 /**
- * Interprets `mado-format.md`: task types, their property schemas and link types.
+ * Interprets `plandown-format.md`: task types, their property schemas and link types.
  * Each `# [Type] Description` heading declares a type; its YAML block is the property schema;
  * each `<Link type>:` list declares a link type whose entries `[Target] Reverse` name the allowed
  * target types and the reverse link type declared on the target.
  */
 import type { Diagnostic, ParsedFile } from './markdown.js';
 
-export const FORMAT_FILE = 'mado-format.md';
+export const FORMAT_FILE = 'plandown-format.md';
 export const SUBTASK = 'Subtask';
 export const PARENT = 'Parent';
 export const META = '$meta';

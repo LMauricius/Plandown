@@ -1,5 +1,5 @@
 /**
- * `Mado`: the folder-backed task database. Loads every `.md` file of a folder and its subfolders, applies operations
+ * `Plandown`: the folder-backed task database. Loads every `.md` file of a folder and its subfolders, applies operations
  * as surgical file edits and watches the folder. All loads and writes run one at a time.
  */
 import { access, mkdir, readdir, readFile, rename, rmdir, writeFile } from 'node:fs/promises';
@@ -25,7 +25,7 @@ const exists = (path: string) => access(path).then(() => true, e => { if (code(e
 /**
  * Task files and folders below `root`, as `/`-separated relative paths. Hidden entries are never entered (`.git` can be
  * huge and the folder reloads on every change); symlinks are not followed (no loops, nothing outside the folder).
- * Only the root's `mado-format.md` is read: nested ones are reserved for sub-formats.
+ * Only the root's `plandown-format.md` is read: nested ones are reserved for sub-formats.
  */
 async function list(root: string, rel = '', out = { files: [] as string[], folders: [] as string[] }) {
   let entries;
@@ -40,7 +40,7 @@ async function list(root: string, rel = '', out = { files: [] as string[], folde
   return out;
 }
 
-export class Mado {
+export class Plandown {
   db!: Db;
   private files = new Map<string, ParsedFile>();
   private occ = new Map<string, Occ[]>();
@@ -48,8 +48,8 @@ export class Mado {
 
   private constructor(readonly dir: string) {}
 
-  static async open(dir: string): Promise<Mado> {
-    const m = new Mado(resolve(dir));
+  static async open(dir: string): Promise<Plandown> {
+    const m = new Plandown(resolve(dir));
     await m.reload();
     return m;
   }
@@ -101,8 +101,8 @@ export class Mado {
       // Atomic per file: write a temp file, then rename over the original
       for (const [file, list] of byFile) {
         const pf = this.files.get(file), lines = applyEdits(pf?.lines ?? [], list), path = join(this.dir, file);
-        await writeFile(path + '.mado-tmp', lines.length ? lines.join(pf?.eol ?? '\n') + (pf?.eol ?? '\n') : '');
-        await rename(path + '.mado-tmp', path);
+        await writeFile(path + '.plandown-tmp', lines.length ? lines.join(pf?.eol ?? '\n') + (pf?.eol ?? '\n') : '');
+        await rename(path + '.plandown-tmp', path);
       }
       for (const m of moves) await rename(join(this.dir, m.from), join(this.dir, m.to));
       // A folder replaced by a same-named file is removed only if nothing (e.g. an image) is left in it
@@ -116,9 +116,9 @@ export class Mado {
   watch(onChange: () => void): () => void {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const w = watch(this.dir, { recursive: true }, (_, name) => {
-      if (name && (/(^|[\\/])\./.test(String(name)) || String(name).endsWith('.mado-tmp'))) return;
+      if (name && (/(^|[\\/])\./.test(String(name)) || String(name).endsWith('.plandown-tmp'))) return;
       clearTimeout(timer);
-      timer = setTimeout(() => this.reload().then(onChange, e => console.error('mado: reload failed:', e)), 100);
+      timer = setTimeout(() => this.reload().then(onChange, e => console.error('plandown: reload failed:', e)), 100);
     });
     return () => { clearTimeout(timer); w.close(); };
   }

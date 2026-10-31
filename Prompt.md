@@ -17,7 +17,7 @@ Make a Typescript Task management/todo app that relies entirely on a folder with
   parent. Additional Link types are possible, and must have a line immediately above the list of format `<Link type>:`.
   Subtitles are always considered sub-tasks. The subtask has its parent linked as a "Parent" Link type.
 
-  Task types, link types and property schemas are specified in a `mado-format.md` file.
+  Task types, link types and property schemas are specified in a `plandown-format.md` file.
 
   Each `[<Task type]` before a task name introduces a new Task type
   Properties for a task of a particular Task type are declared with a YAML schema in the property block.

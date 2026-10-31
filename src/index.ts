@@ -3,5 +3,5 @@ export * from './format.js';
 export * from './db.js';
 export * from './tree.js';
 export * from './edit.js';
-export { Mado } from './store.js';
+export { Plandown } from './store.js';
 export { serve } from './server.js';

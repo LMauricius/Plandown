@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
-import type { Mado } from './store.js';
+import type { Plandown } from './store.js';
 
 const GUI = fileURLToPath(new URL('./gui/', import.meta.url));
 const STATIC: Record<string, [string, string]> = {
@@ -34,9 +34,9 @@ function body(req: IncomingMessage, limit = 1 << 20): Promise<string> {
   });
 }
 
-export function serve(mado: Mado, port = 4848): Promise<{ url: string; close(): void }> {
+export function serve(plandown: Plandown, port = 4848): Promise<{ url: string; close(): void }> {
   const clients = new Set<ServerResponse>();
-  const unwatch = mado.watch(() => { for (const c of clients) c.write('data: changed\n\n'); });
+  const unwatch = plandown.watch(() => { for (const c of clients) c.write('data: changed\n\n'); });
 
   const server = createServer(async (req, res) => {
     const json = (status: number, v: unknown) => send(res, status, 'application/json', JSON.stringify(v));
@@ -49,7 +49,7 @@ export function serve(mado: Mado, port = 4848): Promise<{ url: string; close(): 
       // GUI routes (see `url()` in gui/app.ts) all load the page, which reads the view from its location
       const file = STATIC[path] ?? (/^\/(view\/[^/]+|graph|time)$/.test(path) ? STATIC['/'] : undefined);
       if (req.method === 'GET' && file) return send(res, 200, file[1], await readFile(GUI + file[0]));
-      if (req.method === 'GET' && path === '/api/state') return json(200, mado.db);
+      if (req.method === 'GET' && path === '/api/state') return json(200, plandown.db);
       if (req.method === 'GET' && path === '/api/events') {
         res.writeHead(200, { ...HEADERS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
         clients.add(res);
@@ -57,13 +57,13 @@ export function serve(mado: Mado, port = 4848): Promise<{ url: string; close(): 
         return;
       }
       if (req.method === 'POST' && path === '/api/op') {
-        if (req.headers['x-mado'] !== '1') return send(res, 403, 'text/plain', 'Missing X-Mado header');
-        const id = await mado.apply(JSON.parse(await body(req)));
-        return json(200, { id, db: mado.db });
+        if (req.headers['x-plandown'] !== '1') return send(res, 403, 'text/plain', 'Missing X-Plandown header');
+        const id = await plandown.apply(JSON.parse(await body(req)));
+        return json(200, { id, db: plandown.db });
       }
       send(res, 404, 'text/plain', 'Not found');
     } catch (e) {
-      json(400, { error: (e as Error).message, db: mado.db });
+      json(400, { error: (e as Error).message, db: plandown.db });
     }
   });
 
