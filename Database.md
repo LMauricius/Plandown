@@ -93,7 +93,9 @@ Undeclared properties are kept but reported as warnings; values of the wrong typ
 
 ## Description
 
-The description is the text after the title (and its property block) up to the first list that contains tasks, or up to the next heading. For bullet tasks, it is the indented text below the bullet. Anything after the first task list is kept in the file but is not part of the description.
+The description is the text after the title (and its property block). For a heading task, it runs up to the next task heading or the next heading of the same or a higher level, so ordinary sub-headings such as `### Notes` are sub-chapters of the description. For a bullet task, it is the indented text below the bullet.
+
+Lists that contain tasks are not part of the description text; they declare subtasks and links, as described below. The description may continue after them, and the GUI shows each list's links at the place where the list stands.
 
 ## Subtasks and links
 

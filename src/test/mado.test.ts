@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, Mado, parseFormat, parseMarkdown } from '../index.js';
+import { tokenize } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'mado-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -41,7 +42,7 @@ test('db: interwoven files merge into one task with links from headings and list
     'Subtask [Task] Programming interface for the system',
   ]);
   assert.equal(m.db.edges.find(e => e.to === anim.id)?.from, '[Task] Game-ready 3D engine');
-  assert.equal(m.db.tasks['[Task] Stabilize the SQueLe core API'].description, 'The query library everything else builds on.');
+  assert.equal(m.db.tasks['[Task] Stabilize the SQueLe core API'].body[0], 'The query library everything else builds on.');
   assert.deepEqual(m.db.totals['[Task] Game-ready 3D engine'], { effort: 26, spent: 3.5 });
   assert.equal(m.db.tasks['[Task] Port EAA shadows'].occurrences.length, 2);
 });
@@ -68,9 +69,9 @@ test('db: invalid links and properties are reported', async () => {
 test('edits: update, create, link, unlink, timer and delete rewrite only their lines', async () => {
   const d = copy(), m = await Mado.open(d), before = read(d, 'roadmap.md');
 
-  await m.apply({ op: 'update', id: '[Task] Smart scene graph', title: 'Scene graph', props: { Priority: 2 }, description: 'Flat prop list.' });
+  await m.apply({ op: 'update', id: '[Task] Smart scene graph', title: 'Scene graph', props: { Priority: 2 }, body: ['Flat prop list.'] });
   const sg = m.db.tasks['[Task] Scene graph'];
-  assert.equal(sg.description, 'Flat prop list.');
+  assert.equal(sg.body[0], 'Flat prop list.');
   assert.equal(sg.props.Priority, 2);
   assert.ok(read(d, '2026-11.md').includes('- [Task] Scene graph'), 'renamed in every file');
   assert.ok(links(m, '[Task] Animation system').includes('Blocked by [Task] Scene graph'));
@@ -91,7 +92,7 @@ test('edits: update, create, link, unlink, timer and delete rewrite only their l
   assert.equal(typeof m.db.tasks['[Task] Write docs'].props.spent, 'number');
 
   await m.apply({ op: 'delete', id: '[Task] Write docs' });
-  await m.apply({ op: 'update', id: '[Task] Scene graph', title: 'Smart scene graph', props: {}, description: 'The scene is a flat list of props; the engine builds the optimal structure.' });
+  await m.apply({ op: 'update', id: '[Task] Scene graph', title: 'Smart scene graph', props: {}, body: ['The scene is a flat list of props; the engine builds the optimal structure.'] });
   assert.equal(read(d, 'roadmap.md'), before, 'round trip restores the file byte for byte');
   assert.deepEqual(m.db.diagnostics, []);
 });
@@ -101,4 +102,33 @@ test('edits: refuse to write over files changed on disk', async () => {
   writeFileSync(join(d, 'roadmap.md'), read(d, 'roadmap.md') + '\nexternal\n');
   await assert.rejects(m.apply({ op: 'delete', id: '[Bug] Shadow acne on EAA shadows' }), /changed on disk/);
   assert.ok(read(d, 'roadmap.md').endsWith('external\n'));
+});
+
+test('body: text gaps around task lists, sub-chapters included, edited gap by gap', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'mado-'));
+  writeFileSync(join(d, 'mado-format.md'), '# [T] t\n\nBlocks:\n- [T] Blocks\n');
+  writeFileSync(join(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nMid\n\n## Notes\nMore\n\nBlocks:\n- [T] C\n\nTail\n\n## [T] D\n');
+  const m = await Mado.open(d);
+  assert.deepEqual(m.db.tasks['[T] A'].body, ['Intro', { links: ['Subtask'] }, 'Mid\n\n## Notes\nMore', { links: ['Blocks'] }, 'Tail']);
+  assert.deepEqual(m.db.tasks['[T] B'].body, ['Bullet text']);
+  assert.ok(links(m, '[T] A').includes('Subtask [T] D'), 'task sub-heading still nests');
+
+  await m.apply({ op: 'update', id: '[T] A', body: ['Intro', '', 'Tail\ntwo'] });
+  assert.equal(read(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nBlocks:\n- [T] C\n\nTail\ntwo\n\n## [T] D\n');
+  await m.apply({ op: 'update', id: '[T] B', body: ['New\n\ntext'] });
+  assert.ok(read(d, 'a.md').includes('- [T] B\n  New\n\n  text\n'));
+  await m.apply({ op: 'update', id: '[T] A', body: ['First'] });
+  assert.deepEqual(m.db.tasks['[T] A'].body, ['First', { links: ['Subtask'] }, '', { links: ['Blocks'] }, 'Tail\ntwo'], 'missing trailing gaps are kept');
+  await assert.rejects(m.apply({ op: 'update', id: '[T] A', body: ['a', 'b', 'c', 'd'] }), /lists changed/);
+});
+
+test('editor tokenizer: blocks, nested inline marks, fences and unclosed delimiters', () => {
+  const src = '## **a *b*** `x*y*`\n- [x] [l](http://u) snake_case\n```\n**no**\n```\n*open';
+  const t = tokenize(src), at = (s: number, e: number) => src.slice(s, e);
+  assert.deepEqual(t.map(l => l.block), ['h2', 'li', 'fence', 'code', 'fence', 'p']);
+  assert.equal(at(t[0].start, t[0].mark), '## ');
+  const [strong, code] = t[0].inl;
+  assert.deepEqual([strong.kind, at(strong.start, strong.end), strong.kids[0].kind, code.kind, code.kids.length], ['strong', '**a *b***', 'em', 'code', 0]);
+  assert.deepEqual([t[1].check, t[1].inl.map(i => [i.kind, i.url])], ['x', [['link', 'http://u']]]);
+  assert.deepEqual([t[3].inl, t[5].inl], [[], []]);
 });

@@ -5,6 +5,7 @@
 import type { Db, Edge, Task } from '../db.js';
 import type { Op } from '../edit.js';
 import type { PropSchema } from '../format.js';
+import { mdEditor } from './mdedit.js';
 
 const SUBTASK = 'Subtask', PARENT = 'Parent';
 
@@ -90,7 +91,7 @@ let tab: 'Tasks' | 'Graph' | 'Time' = 'Tasks';
 let filter = '';
 let showSubtasks = false;
 let dirty = false;          // the editor form has unsaved changes; refreshes keep the form element
-let formBundle: { form: HTMLFormElement; props: HTMLElement } | null = null, formFor = '';
+let formBundle: Form | null = null, formFor = '';
 let currentSubmit: (() => void) | null = null;   // bound to whichever form is live, so Ctrl+S works from the sidebar too
 let sidebarWidth = 280, sidebarCollapsed = false;
 let revealedLinkKinds = new Set<string>();        // link types the user opened an empty list for, this task only
@@ -207,7 +208,7 @@ function sidebar(): HTMLElement {
 
 function fillTree(tree: HTMLElement) {
   const rows: HTMLElement[] = [], q = filter.toLowerCase();
-  if (q) { for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.description}`.toLowerCase().includes(q)) rows.push(row(t, 0)); }
+  if (q) { for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0)); }
   else walk((t, d) => rows.push(row(t, d)));
   tree.replaceChildren(...rows);
 }
@@ -236,21 +237,30 @@ function newTaskForm(): HTMLElement {
 
 // ---- Tasks tab: editor ----
 
-/** Input for one schema property. Unchanged inputs are never written back, so values the widget cannot show are safe. */
-function field(s: PropSchema, v: unknown, mark: () => void): HTMLInputElement | HTMLSelectElement {
+/**
+ * Input for one schema property and a getter of its raw text; plain strings get a line-mode Markdown editor.
+ * Unchanged inputs are never written back, so values the widget cannot show are safe.
+ */
+function field(s: PropSchema, v: unknown, mark: () => void): { el: HTMLElement; value: () => string } {
   const str = v == null ? '' : String(v);
   if (s.enum || s.type === 'boolean') {
     const opts = s.enum ? s.enum.map(String) : ['true', 'false'];
     if (str && !opts.includes(str)) opts.push(str);
-    return h('select', { value: str, title: s.description, onchange: mark }, h('option', { value: '' }, '(none)'), ...opts.map(o => h('option', { value: o }, o)));
+    const sel = h('select', { value: str, title: s.description, onchange: mark }, h('option', { value: '' }, '(none)'), ...opts.map(o => h('option', { value: o }, o)));
+    return { el: sel, value: () => sel.value };
+  }
+  if (s.type === 'string') {
+    const ed = mdEditor({ mode: 'line', parts: [str], label: s.description, placeholder: 'Empty', onInput: mark });
+    return { el: ed.el, value: () => ed.texts()[0] };
   }
   const fits = s.type === 'number' ? typeof v === 'number' : s.type === 'date' ? typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) : true;
   const type = !fits && str ? 'text' : s.type === 'number' ? 'number' : s.type === 'date' ? 'date' : 'text';
-  return h('input', { type, step: s.type === 'number' ? 'any' : undefined, value: str, title: s.description, oninput: mark });
+  const input = h('input', { type, step: s.type === 'number' ? 'any' : undefined, value: str, title: s.description, oninput: mark });
+  return { el: input, value: () => input.value };
 }
 
-function read(el: HTMLInputElement | HTMLSelectElement, s: PropSchema): unknown {
-  const v = el.value.trim();
+function read(raw: string, s: PropSchema): unknown {
+  const v = raw.trim();
   if (!v) return undefined;
   if (s.enum) return s.enum.find(e => String(e) === v) ?? v;
   if (s.type === 'number') return Number.isFinite(Number(v)) ? Number(v) : v;
@@ -258,12 +268,19 @@ function read(el: HTMLInputElement | HTMLSelectElement, s: PropSchema): unknown 
   return v;
 }
 
-/** The editable fields: title/description form plus a separate props list for the sidebar. Saving sends only touched fields, merged onto the latest state, so concurrent file edits survive. */
-function taskForm(t: Task): { form: HTMLFormElement; props: HTMLElement } {
+/** Description slot holding the link groups of one task-list block, at its place in the text. */
+interface Slot { el: HTMLElement; kinds: string[] }
+interface Form { form: HTMLElement; props: HTMLElement; slots: Slot[] }
+
+/**
+ * The editable fields: title row (with page-wide Save/Revert), description, and a separate props list for the sidebar.
+ * Saving sends only touched fields, merged onto the latest state, so concurrent file edits survive.
+ */
+function taskForm(t: Task): Form {
   formFor = t.id;
   dirty = false;
   const touched = new Set<string>();
-  const mark = (key: string) => () => { touched.add(key); dirty = true; save.disabled = revert.disabled = false; };
+  const mark = (key: string) => () => { touched.add(key); dirty = true; save.hidden = revert.hidden = false; };
   const schema: Record<string, PropSchema> = {
     effort: { type: 'number', description: 'Estimated effort in hours' },
     spent: { type: 'number', description: 'Logged time in hours' },
@@ -271,41 +288,42 @@ function taskForm(t: Task): { form: HTMLFormElement; props: HTMLElement } {
   };
 
   const type = h('select', { value: t.type, onchange: mark('type') }, ...[...new Set([t.type, ...Object.keys(db.format.types)])].map(n => h('option', {}, n)));
-  const title = h('input', { type: 'text', className: 'task-title', value: t.title, oninput: mark('title') });
+  const title = mdEditor({ mode: 'line', parts: [t.title], multiline: false, label: 'Title', className: 'task-title', onInput: mark('title') });
   const done = h('input', { type: 'checkbox', checked: t.props.done === true, onchange: mark('p:done') });
   const fields = Object.entries(schema).map(([k, s]) => ({ k, s, el: field(s, t.props[k], mark('p:' + k)) }));
-  const desc = h('textarea', { value: t.description, oninput: mark('description') });
+  // Description: link lists stay where they are in the file; `live` refills their slots on every render
+  const slots = t.body.filter(x => typeof x !== 'string').map(x => ({ el: h('div'), kinds: x.links }));
+  let n = 0;
+  const desc = mdEditor({ mode: 'block', parts: t.body.map(x => typeof x === 'string' ? x : slots[n++].el), label: 'Description', placeholder: 'Description', onInput: mark('body') });
   const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== 'done' && k !== 'started');
-  const save = h('button', { className: 'primary', disabled: true }, 'Save');
-  const revert = h('button', { type: 'button', disabled: true, onclick: () => { dirty = false; render(); } }, 'Revert');
+  const save = h('button', { className: 'primary', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, 'Save');
+  const revert = h('button', { hidden: true, onclick: () => { dirty = false; render(); } }, 'Revert');
 
-  const submit = (e: Event) => {
-    e.preventDefault();
+  const submit = () => {
     const cur = db.tasks[t.id];
     if (!cur) return toast('This task no longer exists');
     const op: Extract<Op, { op: 'update' }> = { op: 'update', id: t.id };
     if (touched.has('type')) op.type = type.value;
-    if (touched.has('title')) op.title = title.value;
-    if (touched.has('description')) op.description = desc.value;
+    if (touched.has('title')) op.title = title.texts()[0];
+    if (touched.has('body')) op.body = desc.texts();
     const props = { ...cur.props };
     if (touched.has('p:done')) props.done = done.checked || undefined;
-    for (const { k, s, el } of fields) if (touched.has('p:' + k)) props[k] = read(el, s);
+    for (const { k, s, el } of fields) if (touched.has('p:' + k)) props[k] = read(el.value(), s);
     if ([...touched].some(k => k.startsWith('p:'))) op.props = props;
     run(op, true);
   };
 
-  const f = h('form', { className: 'title-desc', onsubmit: submit },
-    title,
-    h('div', {}, h('h3', {}, 'Description'), desc),
-    h('div', { className: 'actions' }, save, revert, h('span', { className: 'muted' }, 'Ctrl+S saves')));
-  currentSubmit = () => f.requestSubmit();
+  const f = h('div', { className: 'title-desc' },
+    h('div', { className: 'title-row' }, title.el, save, revert),
+    h('div', {}, h('h3', {}, 'Description'), desc.el));
+  currentSubmit = submit;
 
   const props = h('div', { className: 'props-sidebar' },
     h('div', { className: 'prop' }, h('label', {}, 'Type'), type),
     h('div', { className: 'prop' }, h('label', {}, 'Done'), done),
-    ...fields.map(({ k, s, el }) => h('div', { className: 'prop' }, h('label', { title: s.description ?? '' }, k === 'effort' || k === 'spent' ? `${k} (h)` : k), el)),
+    ...fields.map(({ k, s, el }) => h('div', { className: 'prop' }, h('label', { title: s.description ?? '' }, k === 'effort' || k === 'spent' ? `${k} (h)` : k), el.el)),
     ...extra.map(k => h('div', { className: 'prop' }, h('label', { className: 'muted' }, k), h('span', { className: 'muted' }, `${JSON.stringify(t.props[k])} (not in the schema; edit it in the file)`))));
-  return { form: f, props };
+  return { form: f, props, slots };
 }
 
 /** Compact, label-less prop values short enough for the collapsed sidebar; long values are dropped rather than truncated into noise. */
@@ -323,8 +341,8 @@ function compactProps(t: Task): HTMLElement[] {
   return vals.filter(({ v }) => v && v.length <= 10).map(({ k, v }) => h('div', { className: 'prop-compact', title: `${k}: ${v}` }, v));
 }
 
-/** Parts of the editor that act immediately (timer, links, subtasks, deletion); rebuilt on every refresh. */
-function live(t: Task) {
+/** Parts of the editor that act immediately (timer, links, subtasks, deletion); rebuilt on every refresh, refilling the form's link slots. */
+function live(t: Task, slots: Slot[]) {
   // Time
   const started = Date.parse(String(t.props.started ?? '')), tot = db.totals[t.id];
   const timerBtn = isNaN(started)
@@ -366,18 +384,26 @@ function live(t: Task) {
   const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true });
   const subAddLi = h('li', {}, h('form', { className: 'inline', onsubmit: (e: Event) => { e.preventDefault(); run({ op: 'create', type: subType.value, title: subTitle.value, parent: t.id }); } },
     subType, subTitle, h('button', {}, 'Add subtask')));
-  const linkBlocks = [h('div', { className: 'link-group' }, h('b', {}, SUBTASK), h('ul', {}, ...(outgoing.get(SUBTASK) ?? []).map(li), subAddLi))];
+  // One group per link kind. Parent is stored as a flipped Subtask edge, so its links are the incoming "Parent" ones.
+  const entries = (kind: string) => (kind === PARENT ? incoming.get(PARENT) : outgoing.get(kind)) ?? [];
+  const group = (kind: string, focus = false) => h('div', { className: 'link-group' }, h('b', {}, kind),
+    h('ul', {}, ...entries(kind).map(li), kind === SUBTASK ? subAddLi : addRow(kind, focus)));
 
-  // Other kinds: no list until there's a link or the user opened one with its "Link <kind>" button.
-  // Parent is stored as a flipped Subtask edge, so its existing links live under the incoming "Parent" group, not outgoing.
-  const linkRevealBtns: HTMLElement[] = [];
-  for (const kind of [PARENT, ...Object.keys(linkTypes)]) {
-    const entries = (kind === PARENT ? incoming.get(PARENT) : outgoing.get(kind)) ?? [];
-    if (!entries.length && !revealedLinkKinds.has(kind)) {
-      linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); render(); } }, `Link ${kind}`));
-    } else {
-      linkBlocks.push(h('div', { className: 'link-group' }, h('b', {}, kind), h('ul', {}, ...entries.map(li), addRow(kind, !entries.length))));
-    }
+  // Description slots: the first task-list block of a kind shows its group, later blocks of that kind point to it
+  const placed = new Set<string>();
+  for (const s of slots) {
+    const fresh = [...new Set(s.kinds)].filter(k => !placed.has(k));
+    fresh.forEach(k => placed.add(k));
+    s.el.replaceChildren(...fresh.length ? fresh.map(k => group(k)) : [h('div', { className: 'muted' }, `More ${s.kinds.join(', ')} links, listed above`)]);
+  }
+
+  // Kinds without a block go below the description: Subtask always; others once linked or opened with "Link <kind>"
+  const linkBlocks: HTMLElement[] = [], linkRevealBtns: HTMLElement[] = [];
+  for (const kind of [SUBTASK, PARENT, ...Object.keys(linkTypes)]) {
+    if (placed.has(kind)) continue;
+    const has = kind === SUBTASK || entries(kind).length > 0;
+    if (has || revealedLinkKinds.has(kind)) linkBlocks.push(group(kind, !has));
+    else linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); render(); } }, `Link ${kind}`));
   }
   const incomingBlocks = [...incoming].filter(([name]) => name !== PARENT).map(([name, list]) => h('div', { className: 'link-group' }, h('b', {}, name), h('ul', {}, ...list.map(li))));
 
@@ -521,7 +547,7 @@ function render() {
 
   const keep = dirty && formBundle && formFor === sel;
   const bundle = keep ? formBundle! : (formBundle = taskForm(t));
-  const lv = live(t);
+  const lv = live(t, bundle.slots);
 
   const sidebarContent = sidebarCollapsed
     ? [...compactProps(t), lv.timerBtn, lv.deleteBtn]

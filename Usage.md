@@ -62,16 +62,16 @@ At the bottom, **add a top-level task**: pick its type, type a title, and choose
 
 The upper part of the editor holds the task's editable fields:
 
-- **Type** and **Title.** Changing either renames the task in every file it appears in.
+- **Title** (at the top) and **Type.** Changing either renames the task in every file it appears in.
 - **Done**, **effort (h)** and **spent (h).** The built-in properties.
 - **One field per property** declared for the task's type in `mado-format.md`. Dates get a date picker; properties with an `enum` and booleans get a drop-down, where `(none)` removes the property. Hover over a field's name to see its description.
-- **Description.** Plain Markdown text.
+- **Description.** Markdown text. Each list of linked tasks in it is shown at its place in the text, as the interactive link list described below.
 
 Properties that the type does not declare are listed read-only; edit them in the file.
 
-Changes in this part are collected until you press **Save** (or Ctrl+S). **Revert** discards them. Only the fields you actually touched are written, merged onto the latest state of the file, so a property changed meanwhile in a text editor is not overwritten. While you have unsaved changes, the GUI will not switch to another task; save or revert first.
+Changes in this part are collected until you press **Save** (or Ctrl+S). **Revert** discards them. Both buttons appear next to the title as soon as anything is changed, and they apply to the whole task. Only the fields you actually touched are written, merged onto the latest state of the file, so a property changed meanwhile in a text editor is not overwritten. While you have unsaved changes, the GUI will not switch to another task; save or revert first.
 
-The lower part of the editor acts immediately:
+The rest of the editor acts immediately:
 
 - **Time.** *Start timer* records the start time in the task's `started` property. *Stop timer* adds the elapsed time to `spent`. Because the timer lives in the file, it keeps running when you close the browser or restart the server. The line next to the button sums effort and time over the task and all of its subtasks.
 - **Links.** All links of the task, grouped by link type as seen from this task (a task that blocks this one is listed under *Blocked by*). Click a linked task to open it, or ✕ to remove the link. The ✕ is disabled for links that come from heading nesting, because those are changed by moving the heading in the file.
@@ -79,6 +79,21 @@ The lower part of the editor acts immediately:
 - **Add subtask.** Creates a new task as a bullet in the task's subtask list.
 - **Stored in.** Every file and line where the task occurs. The occurrence marked *properties and description* is the one the editor writes to.
 - **Delete.** Click twice. Deleting removes every occurrence of the task, including everything nested inside them.
+
+### Text editing
+
+The title, the description and text properties share one editor. It shows formatted text; click into it to edit, and the text stays exactly where it is. Markdown markers (such as `**` for bold or `##` for a heading) appear beside the formatted text while the cursor is in it. A toolbar appears above the field, or below it when there is no room above, with buttons for common formatting on the left and a ✓ on the right that finishes editing.
+
+| Key | Effect |
+| --- | --- |
+| Enter | In the description, a new line. In other fields, finishes editing; once a field has several lines, adds another line. |
+| Shift+Enter | A new line (the title is always a single line). |
+| Ctrl+Enter | Finishes editing, like ✓. |
+| Ctrl+B, Ctrl+I | Bold, italic. |
+| Ctrl+Z, Ctrl+Shift+Z | Undo, redo. |
+| Ctrl+click | Opens a link. |
+
+Drag the lower right corner of the description to resize it.
 
 ## Graph tab
 

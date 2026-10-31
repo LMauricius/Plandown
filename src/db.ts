@@ -3,17 +3,20 @@
  * collects links, validates them and the properties against the format, and rolls up time.
  * `Db` is plain JSON (sent to GUIs); `occ` keeps the parser nodes needed for editing.
  */
-import { descText, type Diagnostic, type Node, type ParsedFile } from './markdown.js';
+import { bodyTexts, type Diagnostic, type Node, type ParsedFile } from './markdown.js';
 import { BUILTIN_PROPS, linkReverse, PARENT, SUBTASK, type Format, type PropSchema } from './format.js';
 
 export interface Loc { file: string; line: number }
+
+/** A description text, or a task-list block with the link type of each list in it (Subtask for unlabeled lists). */
+export type BodyPart = string | { links: string[] };
 
 export interface Task {
   id: string;
   type: string;
   title: string;
   props: Record<string, unknown>;
-  description: string;
+  body: BodyPart[];     // description texts alternating with the task-list blocks between them; starts and ends with text
   anchor: string;       // ID for URLs: the heading anchor Markdown viewers give `[Type] Title`, unique across tasks
   home: Loc;            // occurrence holding properties and description; edits go there
   occurrences: Loc[];
@@ -103,7 +106,7 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
   // Tasks: the first occurrence with content is home; its properties are validated against the schema
   const tasks: Record<string, Task> = {}, anchors = new Set<string>();
   for (const [tid, list] of occ) {
-    const home = list.find(o => o.node.props || descText(o.pf, o.node)) ?? list.find(o => o.node.kind === 'heading') ?? list[0];
+    const home = list.find(o => o.node.props || bodyTexts(o.pf, o.node).some(Boolean)) ?? list.find(o => o.node.kind === 'heading') ?? list[0];
     const loc = (o: Occ): Loc => ({ file: o.pf.file, line: o.node.line });
     for (const o of list) if (o !== home && o.node.props) diag(loc(o), 'warning', `Properties of ${tid} are already defined at ${home.pf.file}:${home.node.line + 1}; these are ignored`);
     const props = home.node.props?.data ?? {}, type = format.types[home.node.type];
@@ -113,7 +116,10 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
       if (!schema[k]) { if (type) diag(at, 'warning', `[${type.name}] does not declare property "${k}"`); }
       else if (!valid(schema[k], v)) diag(at, 'error', `Property "${k}" of ${tid} must be ${schema[k].enum ? `one of ${schema[k].enum!.join(', ')}` : `a ${schema[k].type}`}`);
     }
-    tasks[tid] = { id: tid, type: home.node.type, title: home.node.title, props, description: descText(home.pf, home.node), anchor: anchor(tid, anchors), home: loc(home), occurrences: list.map(loc) };
+    tasks[tid] = { id: tid, type: home.node.type, title: home.node.title, props, body: bodyTexts(home.pf, home.node).flatMap((t, i) => {
+      const s = home.node.spans[i];
+      return s ? [t, { links: s.labels.map(l => l ?? SUBTASK) }] : [t];
+    }), anchor: anchor(tid, anchors), home: loc(home), occurrences: list.map(loc) };
   }
 
   // Rollup: DFS per task over Subtask links with a visited set (shared subtasks and cycles count once)

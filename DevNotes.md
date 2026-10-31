@@ -26,6 +26,8 @@ flowchart LR
 - Timer state stored in md (`started`), not in GUI memory.
 - Built-ins: `done`, `effort`, `spent`, `started` (hours).
 - Flat folder only; natural filename sort.
+- Description = body (`own`) minus task-list spans → `Task.body` alternates texts and `{ links }`. Heading body runs over non-task sub-headings. `update.body` is per gap; fewer texts than gaps keep trailing gaps (lists appended meanwhile), more texts are rejected.
+- GUI editor (`gui/mdedit.ts`): live-preview over raw source (lossless), markers absolutely positioned outside what they mark, shown when caret near. Own undo stack (DOM is repainted per input). Shared fixed toolbox. Save/Revert page-wide in the title row; links save immediately into description slots refilled by `live()`.
 
 ## Roadmap
 
@@ -33,3 +35,4 @@ flowchart LR
 - Graph: dummy nodes for long edges (see `shortcut:` in app.ts).
 - Time log per day (`spent` is a total today) if per-day allocation reports are needed.
 - Recursive folders if needed.
+- Editor: list continuation on Enter, per-line repaint for long descriptions, fuller CommonMark inline subset (see `shortcut:` in mdedit.ts).

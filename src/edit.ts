@@ -4,12 +4,12 @@
  * Edits only touch the lines an operation concerns; everything else in the files stays byte-identical.
  */
 import { Document, parseDocument, isMap, isScalar } from 'yaml';
-import { descText, type Node, type ParsedFile } from './markdown.js';
+import { bodyTexts, gaps, rangeText, type Node, type ParsedFile } from './markdown.js';
 import { FORMAT_FILE, PARENT, SUBTASK } from './format.js';
 import { taskId, type Db, type Occ, type Task } from './db.js';
 
 export type Op =
-  | { op: 'update'; id: string; type?: string; title?: string; props?: Record<string, unknown>; description?: string }
+  | { op: 'update'; id: string; type?: string; title?: string; props?: Record<string, unknown>; body?: string[] }
   | { op: 'create'; type: string; title: string; parent?: string; file?: string }
   | { op: 'delete'; id: string }
   | { op: 'link'; from: string; type: string; to: string }
@@ -50,7 +50,7 @@ function checkFile(file: unknown): string {
   return file;
 }
 
-const hasBody = (pf: ParsedFile, n: Node) => !!n.props || n.lists.length > 0 || !!descText(pf, n);
+const hasBody = (pf: ParsedFile, n: Node) => !!n.props || n.lists.length > 0 || bodyTexts(pf, n).some(Boolean);
 
 /** Appends `[type] title` to the occurrence's list with `label` (null: Subtask), creating the list if needed. */
 function addItem({ pf, node }: Occ, label: string | null, type: string, title: string): Edit {
@@ -95,14 +95,24 @@ function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | nu
   return node.props ? { file: pf.file, start: node.props.start, end: node.props.end, lines } : { file: pf.file, start: node.line + 1, end: node.line + 1, lines };
 }
 
-/** Replaces the description; keeps a blank line before whatever follows it. */
-function descEdit({ pf, node }: Occ, text: string): Edit {
-  if (typeof text !== 'string') throw new Error('Description must be a string');
-  const body = text.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
-  const lines = body ? body.split('\n').map(l => l.trim() ? node.indent + l : '') : [];
-  const follows = node.kind === 'heading' ? node.desc.end < pf.lines.length : node.desc.end < node.own.end;
-  if (follows && (lines.length || node.kind === 'heading')) lines.push('');
-  return { file: pf.file, start: node.desc.start, end: node.desc.end, lines };
+/**
+ * Replaces the changed description gaps (`texts[i]` is the text before the i-th task-list block); blank lines keep
+ * text and lists apart. Fewer texts than gaps leave the trailing gaps alone (lists appended since the client read
+ * the task); more texts mean lists were removed meanwhile, which cannot be mapped back.
+ */
+function bodyEdits({ pf, node }: Occ, texts: unknown): Edit[] {
+  if (!Array.isArray(texts) || !texts.every(t => typeof t === 'string')) throw new Error('Body must be a list of strings');
+  const gs = gaps(node);
+  if (texts.length > gs.length) throw new Error("The task's lists changed meanwhile; revert and edit again");
+  return texts.flatMap((text, i) => {
+    const r = gs[i], body = text.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
+    if (body === rangeText(pf, node, r)) return [];
+    const lines = body ? body.split('\n').map(l => l.trim() ? node.indent + l : '') : [];
+    const prev = i > 0, next = i < node.spans.length || (node.kind === 'heading' && r.end < pf.lines.length);
+    if (prev && lines.length) lines.unshift('');
+    if (next && (lines.length || prev || node.kind === 'heading')) lines.push('');
+    return [{ file: pf.file, start: r.start, end: r.end, lines }];
+  });
 }
 
 // ---- Operations ----
@@ -120,7 +130,7 @@ function update(ctx: Ctx, op: Extract<Op, { op: 'update' }>): Plan {
   }
   // Props before description: with no YAML block both edits start at the same line, and the later edit is applied first
   if (op.props !== undefined) { const e = propsEdit(home(ctx, t), op.props); if (e) edits.push(e); }
-  if (op.description !== undefined) edits.push(descEdit(home(ctx, t), op.description));
+  if (op.body !== undefined) edits.push(...bodyEdits(home(ctx, t), op.body));
   return { edits, id };
 }
 

@@ -10,6 +10,9 @@ export interface Range { start: number; end: number }
 
 export interface Props extends Range { raw: string; data: Record<string, unknown> }
 
+/** Top-level block of an occurrence's body holding task lists (label line included); `labels` of every list inside it. */
+export interface Span extends Range { labels: (string | null)[] }
+
 /** A run of contiguous bullets owned by a task; `label` is the `<Link type>:` line above it (null: Subtask). */
 export interface List {
   label: string | null;
@@ -28,8 +31,8 @@ export interface Node {
   prefix: string;            // title line text before `[Type]` (`## `, `  - [x] `)
   indent: string;            // indentation of content lines ('' for headings)
   props?: Props;             // YAML block including both `---` fences
-  desc: Range;               // description: content up to the first task list
-  own: Range;                // content excluding sub-headings: where new lists are appended
+  own: Range;                // body: content after the props up to the next task heading; where new lists are appended
+  spans: Span[];             // task-list blocks in `own`; the text between them is the description
   block: Range;              // everything the occurrence spans: what deletion removes
   lists: List[];
   children: Node[];          // task sub-headings (implicit Subtask links)
@@ -64,9 +67,18 @@ export function matchTask(text: string): { pre: string; type: string; title: str
   return { pre: m[1] ?? '', type: m[2].trim(), title: m[3] };
 }
 
-/** Description text of an occurrence, de-indented and trimmed of surrounding blank lines. */
-export function descText(pf: ParsedFile, node: Node): string {
-  return pf.lines.slice(node.desc.start, node.desc.end)
+/** Text gaps of an occurrence's body (`own` minus its spans), in order; always `spans.length + 1` ranges. */
+export function gaps(node: Node): Range[] {
+  const b = [node.own.start, ...node.spans.flatMap(s => [s.start, s.end]), node.own.end];
+  return Array.from({ length: node.spans.length + 1 }, (_, i) => ({ start: b[2 * i], end: b[2 * i + 1] }));
+}
+
+/** Description texts of an occurrence, one per gap. */
+export const bodyTexts = (pf: ParsedFile, node: Node) => gaps(node).map(r => rangeText(pf, node, r));
+
+/** Text of a body range, de-indented and trimmed of surrounding blank lines. */
+export function rangeText(pf: ParsedFile, node: Node, r: Range): string {
+  return pf.lines.slice(r.start, r.end)
     .map(l => l.slice(Math.min(node.indent.length, indentOf(l))))
     .join('\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
 }
@@ -137,18 +149,18 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
 
   function mk(kind: Node['kind'], line: number, prefix: string, indent: string, t: { type: string; title: string }, blockEnd: number): Node {
     const r = { start: line + 1, end: line + 1 };
-    const node: Node = { type: t.type, title: t.title, line, kind, prefix, indent, desc: r, own: r, block: { start: line, end: blockEnd }, lists: [], children: [], list: null };
+    const node: Node = { type: t.type, title: t.title, line, kind, prefix, indent, own: r, spans: [], block: { start: line, end: blockEnd }, lists: [], children: [], list: null };
     pf.nodes.push(node);
     return node;
   }
 
   /**
    * Scans [start, end) for lists. Task bullets become occurrences in `owner.lists` (or roots).
-   * With `desc`, the owner's description ends where the first list containing a task starts.
-   * Returns whether any task was found (so enclosing non-task bullets also end the description).
+   * With `top`, each top-level list containing a task (even nested under non-task bullets) becomes a span of the owner.
+   * Returns whether any task was found.
    */
-  function parseBody(start: number, end: number, owner: Node | null, desc: boolean): boolean {
-    let found = false, descEnd = end, i = start;
+  function parseBody(start: number, end: number, owner: Node | null, top: boolean): boolean {
+    let found = false, i = start;
     while (i < end) {
       const b = skip[i] ? null : BULLET.exec(lines[i]);
       if (!b) { i++; continue; }
@@ -158,6 +170,7 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
       const label = prev.trim().endsWith(':') && !BULLET.test(prev) && !skip[i - 1] ? prev.trim().slice(0, -1).trim() : null;
       const list: List = { label, labelLine: label === null ? -1 : i - 1, bullet: b[1] + b[2] + ' ', items: [], end: i };
       let hasTask = false, j = i;
+      const before = owner?.lists.length ?? 0;
 
       // Items: contiguous bullets at the same column (a blank line ends the list)
       while (j < end) {
@@ -169,14 +182,13 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
           node.list = list;
           list.items.push(node);
           const body = readProps(node, e);
-          node.desc = node.own = { start: body, end: e };
+          node.own = { start: body, end: e };
           parseBody(body, e, node, true);
           hasTask = true;
         } else if (parseBody(j + 1, e, owner, false)) hasTask = true;
         list.end = j = e;
       }
 
-      if (hasTask) { found = true; if (desc && descEnd === end) descEnd = label === null ? i : i - 1; }
       if (list.items.length) {
         if (owner) owner.lists.push(list);
         else {
@@ -184,23 +196,31 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
           if (label !== null) diag(list.labelLine, 'warning', `Link list "${label}" has no owning task`);
         }
       }
+      if (hasTask) {
+        found = true;
+        if (top && owner) owner.spans.push({ start: label === null ? i : i - 1, end: j, labels: owner.lists.slice(before).map(l => l.label) });
+      }
       i = j;
     }
-    if (desc && owner) owner.desc = { start, end: descEnd };
     return found;
   }
 
-  // Pass 2: sections. Task headings nest under the nearest task heading above them.
+  // Pass 2: sections. Task headings nest under the nearest task heading above them. A task's body runs over its
+  // non-task sub-headings (sub-chapters) up to the next task heading or same-level heading; those are parsed with it.
   parseBody(0, heads[0]?.line ?? n, null, false);
   const stack: { level: number; node: Node | null }[] = [];
+  let covered = 0;
   heads.forEach((h, k) => {
     while (stack.length && stack[stack.length - 1].level >= h.level) stack.pop();
-    const owner = stack.findLast(s => s.node)?.node ?? null, end = heads[k + 1]?.line ?? n, t = matchTask(h.text);
+    const owner = stack.findLast(s => s.node)?.node ?? null, t = matchTask(h.text);
     if (!t) {
       stack.push({ level: h.level, node: null });
-      parseBody(h.line + 1, end, owner, false);
+      if (h.line >= covered) parseBody(h.line + 1, heads[k + 1]?.line ?? n, owner, false);
       return;
     }
+    let o = k + 1;
+    while (o < heads.length && heads[o].level > h.level && !matchTask(heads[o].text)) o++;
+    const end = covered = heads[o]?.line ?? n;
     let b = k + 1;
     while (b < heads.length && heads[b].level > h.level) b++;
     const line = lines[h.line];
@@ -208,7 +228,6 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
     (owner ? owner.children : pf.roots).push(node);
     const body = readProps(node, end);
     node.own = { start: body, end };
-    node.desc = { start: body, end };
     parseBody(body, end, node, true);
     stack.push({ level: h.level, node });
   });
