@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- back badge: cut out a ring around the front badge so the overlap reads on any background -->
+  <mask id="cut"><rect width="128" height="128" fill="#fff"/><circle cx="73" cy="64" r="50"/></mask>
+  <circle cx="55" cy="64" r="46" fill="#075a55" mask="url(#cut)"/>
+  <circle cx="73" cy="64" r="46" fill="#0d817a"/>
+  <!-- checkmark spanning the front badge -->
+  <path d="M44 74l21 21 39-39" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Markdown-mark arrow centered on the badge: its head's right edge runs parallel to the right arm, 7 units clear -->
+  <path d="M64 24h18v25h13l-22 22-22-22h13z" fill="#fff"/>
+</svg>

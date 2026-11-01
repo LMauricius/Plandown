@@ -1,13 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 427 128">
-  <style>.t{fill:#1b4fa8}@media (prefers-color-scheme:dark){.t{fill:#dbe7fd}}</style>
-  <!-- back badge: cut out a ring around the front badge so the overlap reads on any background -->
-  <mask id="cut"><rect width="128" height="128" fill="#fff"/><circle cx="73" cy="64" r="50"/></mask>
-  <circle cx="55" cy="64" r="46" fill="#1b4fa8" mask="url(#cut)"/>
-  <circle cx="73" cy="64" r="46" fill="#3b82f6"/>
-  <!-- checkmark spanning the front badge -->
-  <path d="M44 74l21 21 39-39" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- Markdown-mark arrow centered on the badge: its head's right edge runs parallel to the right arm, 7 units clear -->
-  <path d="M64 24h18v25h13l-22 22-22-22h13z" fill="#fff"/>
+  <style>.t{fill:#0b7f7a}@media (prefers-color-scheme:dark){.t{fill:#4cc2b8}}</style>
+  <defs>
+    <!-- badge bodies: lit from above -->
+    <linearGradient id="back" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#11736d"/><stop offset="1" stop-color="#064a46"/></linearGradient>
+    <linearGradient id="front" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2bb5a9"/><stop offset=".55" stop-color="#0d817a"/><stop offset="1" stop-color="#0a6c66"/></linearGradient>
+    <!-- soft top gloss (no hard glass split, which dates an icon) -->
+    <radialGradient id="gloss" cx=".5" cy="0" r="1"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <!-- 1px rim: light on top, dark at the bottom -->
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/></linearGradient>
+    <linearGradient id="glyph" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#d9f2ef"/></linearGradient>
+    <!-- drop shadow from basic primitives: feDropShadow is unsupported in some renderers -->
+    <filter id="drop" x="-20%" y="-20%" width="140%" height="150%"><feGaussianBlur in="SourceAlpha" stdDeviation="1.6"/><feOffset dy="2" result="s"/><feFlood flood-color="#032a28" flood-opacity=".35"/><feComposite in2="s" operator="in"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="face"><circle cx="73" cy="64" r="46"/></clipPath>
+    <!-- back badge: cut out a ring around the front badge so the overlap reads on any background -->
+    <mask id="cut"><rect width="128" height="128" fill="#fff"/><circle cx="73" cy="64" r="50"/></mask>
+  </defs>
+  <g filter="url(#drop)">
+    <circle cx="55" cy="64" r="46" fill="url(#back)" mask="url(#cut)"/>
+    <circle cx="73" cy="64" r="46" fill="url(#front)"/>
+  </g>
+  <ellipse cx="73" cy="30" rx="40" ry="26" fill="url(#gloss)" clip-path="url(#face)"/>
+  <circle cx="73" cy="64" r="45.25" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
+  <!-- glyphs as in sign.svg, raised by a short shadow -->
+  <g fill="url(#glyph)" filter="url(#drop)">
+    <path d="M44 74l21 21 39-39" fill="none" stroke="url(#glyph)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M64 24h18v25h13l-22 22-22-22h13z"/>
+  </g>
   <!-- "Plandown" in Ubuntu Medium 64, converted to outlines -->
   <g class="t" transform="translate(0 2)">
     <path d="M 137.504,86 V 42.416 q 2.688,-0.64 6.016,-0.896 3.328,-0.32 6.08,-0.32 9.536,0 14.4,3.584 4.928,3.584 4.928,10.688 0,5.12 -2.368,8.32 -2.304,3.136 -6.784,4.544 -4.48,1.408 -10.816,1.408 h -4.864 V 86 Z m 6.592,-21.888 h 4.608 q 4.16,0 7.168,-0.704 3.008,-0.768 4.608,-2.624 1.6,-1.92 1.6,-5.376 0,-3.392 -1.664,-5.184 -1.664,-1.856 -4.48,-2.56 -2.752,-0.768 -6.016,-0.768 -1.856,0 -3.328,0.128 -1.472,0.128 -2.496,0.256 z"/>
