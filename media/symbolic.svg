@@ -1,11 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 114 114" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
   <!-- one line width (8 = 1px at 16px) for outlines and checkmark; back outline stops short of the front one -->
   <mask id="cut"><rect width="128" height="128" fill="#fff"/><circle cx="73" cy="64" r="54" fill="#000"/></mask>
-  <circle cx="55" cy="64" r="44" mask="url(#cut)"/>
-  <circle cx="73" cy="64" r="44"/>
-  <!-- sign.svg's glyphs shrunk to clear the outline; stroke 8/0.85 keeps the line width at 8 -->
-  <g transform="translate(73 64) scale(.85) translate(-73 -64)">
-    <path d="M44 74l21 21 39-39" stroke-width="9.4"/>
-    <path d="M64 24h18v25h13l-22 22-22-22h13z" fill="currentColor" stroke="none"/>
+  <!-- drawn on a 128 grid; shift it so the cropped canvas starts at 0 0 -->
+  <g transform="translate(-7 -7)">
+    <circle cx="55" cy="64" r="44" mask="url(#cut)"/>
+    <circle cx="73" cy="64" r="44"/>
+    <!-- sign.svg's glyphs shrunk to clear the outline; stroke 8/0.85 keeps the line width at 8 -->
+    <g transform="translate(73 64) scale(.85) translate(-73 -64)">
+      <path d="M44 74l21 21 39-39" stroke-width="9.4"/>
+      <path d="M64 24h18v25h13l-22 22-22-22h13z" fill="currentColor" stroke="none"/>
+    </g>
   </g>
 </svg>

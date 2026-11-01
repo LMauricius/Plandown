@@ -1,4 +1,4 @@
-# Plandown for VSCode
+<h1><img src="logo.png" alt="Plandown" height="96"><br>for VSCode</h1>
 
 This extension brings the Plandown task manager into VSCode. It runs the same library and the same task editor as the standalone GUI described in [Usage.md](../Usage.md), so tasks behave exactly alike in both; only the surroundings change.
 

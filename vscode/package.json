@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "description": "Plandown task manager inside VSCode: task tree, task tabs, link graph and time view over a folder of Markdown files.",
   "icon": "icon.png",
+  "galleryBanner": { "color": "#0f2e2c", "theme": "dark" },
+  "repository": { "type": "git", "url": "https://github.com/LMauricius/plandown.git", "directory": "vscode" },
   "engines": { "vscode": "^1.90.0" },
   "main": "dist/extension.js",
   "activationEvents": ["workspaceContains:**/plandown-format.md", "onWebviewPanel:plandown.view"],
@@ -19,7 +21,7 @@
       { "viewType": "plandown.task", "displayName": "Plandown Task", "selector": [{ "filenamePattern": "**/.plandown-tasks/*" }], "priority": "option" }
     ],
     "viewsContainers": {
-      "activitybar": [{ "id": "plandown", "title": "Plandown", "icon": "$(checklist)" }]
+      "activitybar": [{ "id": "plandown", "title": "Plandown", "icon": "dist/symbolic.svg" }]
     },
     "views": {
       "plandown": [{ "id": "plandown.tree", "name": "Tasks" }]
@@ -60,7 +62,7 @@
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && node -e \"require('fs').copyFileSync('../media/symbolic.svg', 'dist/symbolic.svg')\""
   },
   "dependencies": {
     "plandown": "file:.."
