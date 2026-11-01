@@ -448,7 +448,7 @@ function read(raw: string, s: PropSchema): unknown {
   return v;
 }
 
-/** Description slot holding the link groups of one task-list block, at its place in the text. */
+/** Description slot marking one task-list block at its place in the text; its groups render below the description. */
 interface Slot { el: HTMLElement; kinds: string[] }
 interface Form { form: HTMLElement; props: HTMLElement; slots: Slot[] }
 
@@ -475,10 +475,19 @@ function taskForm(t: Task): Form {
   const title = mdEditor({ mode: 'line', parts: [t.title], multiline: false, label: 'Title', className: 'task-title', onInput: mark('title') });
   const done = h('input', { type: 'checkbox', checked: t.props.done === true, onchange: mark('p:done') });
   const fields = Object.entries(schema).map(([k, s]) => ({ k, s, el: field(s, t.props[k], mark('p:' + k)) }));
-  // Description: link lists stay where they are in the file; `live` refills their slots on every render
-  const slots = t.body.filter(x => typeof x !== 'string').map(x => ({ el: h('div'), kinds: x.links }));
+  // Description: each link list keeps its place in the text as a placeholder (refilled by `live`) pointing to the
+  // lists below the description; trailing ones (only whitespace after them) need none, so they hide
+  const slots = t.body.filter(x => typeof x !== 'string').map(x => ({ el: h('div', { className: 'list-ph' }), kinds: x.links }));
   let n = 0;
-  const desc = mdEditor({ mode: 'block', parts: t.body.map(x => typeof x === 'string' ? x : slots[n++].el), label: 'Description', placeholder: 'Description', onInput: mark('body') });
+  const trail = (anim: boolean) => {
+    const texts = desc.texts();
+    slots.forEach((s, i) => {
+      const on = texts.slice(i + 1).some(x => x.trim());
+      if (anim) show(s.el, on); else s.el.hidden = !on;
+    });
+  };
+  const desc = mdEditor({ mode: 'block', parts: t.body.map(x => typeof x === 'string' ? x : slots[n++].el), label: 'Description', placeholder: 'Description', onInput: () => { mark('body')(); trail(true); } });
+  trail(false);
   const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== 'done' && k !== 'started');
   const save = h('button', { className: 'good', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, icon('check'), 'Save');
   const revert = h('button', { className: 'neutral', hidden: true, onclick: () => { dirty = false; transition(render); } }, icon('undo'), 'Revert');
@@ -534,13 +543,13 @@ function live(t: Task, slots: Slot[]) {
     : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
   const timeSummary = `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`;
 
-  // Edges split by direction: outgoing ones are keyed by their own type (so they match a linkable kind),
-  // incoming ones by their reverse name (read-only here; adding that link happens from the other task).
-  const outgoing = new Map<string, { other: string; e: Edge }[]>();
-  const incoming = new Map<string, { other: string; e: Edge }[]>();
+  // Edges keyed by the kind as seen from this task: its own type when outgoing, its reverse name when incoming.
+  // A relation is stored once from whichever side was parsed first, so both directions must land in one list per kind.
+  const byKind = new Map<string, { other: string; e: Edge }[]>();
+  const add = (k: string, x: { other: string; e: Edge }) => byKind.set(k, [...byKind.get(k) ?? [], x]);
   for (const e of db.edges) {
-    if (e.from === t.id) outgoing.set(e.type, [...outgoing.get(e.type) ?? [], { other: e.to, e }]);
-    if (e.to === t.id) { const name = e.reverse ?? `${e.type} (reverse)`; incoming.set(name, [...incoming.get(name) ?? [], { other: e.from, e }]); }
+    if (e.from === t.id) add(e.type, { other: e.to, e });
+    if (e.to === t.id) add(e.reverse ?? `${e.type} (reverse)`, { other: e.from, e });
   }
   const li = ({ other, e }: { other: string; e: Edge }) => h('li', {},
     taskLink(other, { className: 'link' },
@@ -573,28 +582,29 @@ function live(t: Task, slots: Slot[]) {
   const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true, oninput: () => show(subTypes, !!subTitle.value.trim()) });
   const subAddLi = h('li', {}, h('form', { className: 'sub-add', onsubmit: (e: SubmitEvent) => { e.preventDefault(); run({ op: 'create', type: (e.submitter as HTMLButtonElement | null)?.value ?? t.type, title: subTitle.value, parent: t.id }); } },
     subTitle, subTypes));
-  // One group per link kind. Parent is stored as a flipped Subtask edge, so its links are the incoming "Parent" ones.
-  const entries = (kind: string) => (kind === PARENT ? incoming.get(PARENT) : outgoing.get(kind)) ?? [];
-  const group = (kind: string, focus = false) => h('div', { className: 'link-group' }, h('b', {}, kind),
-    h('ul', {}, ...entries(kind).map(li), kind === SUBTASK ? subAddLi : addRow(kind, focus)));
+  // One group per link kind; only kinds this task can declare get an add row (an untyped task can declare any)
+  const linkable = (kind: string) => kind === PARENT || kind in linkTypes || !db.format.types[t.type];
+  const group = (kind: string, focus: boolean) => h('div', { className: 'link-group' }, h('b', {}, kind),
+    h('ul', {}, ...(byKind.get(kind) ?? []).map(li), kind === SUBTASK ? subAddLi : linkable(kind) && addRow(kind, focus)));
 
-  // Description slots: the first task-list block of a kind shows its group, later blocks of that kind point to it
-  const placed = new Set<string>();
-  for (const s of slots) {
-    const fresh = [...new Set(s.kinds)].filter(k => !placed.has(k));
-    fresh.forEach(k => placed.add(k));
-    s.el.replaceChildren(...fresh.length ? fresh.map(k => group(k)) : [h('div', { className: 'muted' }, `More ${s.kinds.join(', ')} links, listed above`)]);
-  }
-
-  // Kinds without a block go below the description: Subtask always; others once linked or opened with their reveal button
-  const linkBlocks: HTMLElement[] = [], linkRevealBtns: HTMLElement[] = [];
-  for (const kind of [SUBTASK, PARENT, ...Object.keys(linkTypes)]) {
-    if (placed.has(kind)) continue;
-    const has = kind === SUBTASK || entries(kind).length > 0;
-    if (has || revealedLinkKinds.has(kind)) linkBlocks.push(group(kind, !has));
+  // Every kind gets exactly one place: a group (kinds with a list block in the file first, in file order; then Subtask,
+  // Parent, the format's kinds and any other linked ones) or, while empty and unopened, a reveal button after all groups
+  const slotKinds = new Set(slots.flatMap(s => s.kinds));
+  const placed = new Map<string, HTMLElement>(), linkRevealBtns: HTMLElement[] = [];
+  for (const kind of new Set([...slotKinds, SUBTASK, PARENT, ...Object.keys(linkTypes), ...byKind.keys()])) {
+    const has = byKind.has(kind);
+    if (has || kind === SUBTASK || slotKinds.has(kind) || revealedLinkKinds.has(kind)) placed.set(kind, group(kind, !has && revealedLinkKinds.has(kind)));
     else linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); transition(render); } }, icon('link'), kind));
   }
-  const incomingBlocks = [...incoming].filter(([name]) => name !== PARENT).map(([name, list]) => h('div', { className: 'link-group' }, h('b', {}, name), h('ul', {}, ...list.map(li))));
+
+  // Description slots: one bubble per kind, scrolling to its group
+  for (const s of slots) s.el.replaceChildren(...[...new Set(s.kinds)].map(k => h('button', {
+    type: 'button', className: 'ph-bubble', onclick: () => {
+      const g = placed.get(k)!;
+      g.scrollIntoView({ behavior: still() ? 'auto' : 'smooth', block: 'nearest' });
+      appear(g);
+    },
+  }, icon('link'), `"${k}" task list is below`)));
 
   // Delete: two clicks instead of confirm(), which webviews block. The collapsed sidebar hides labels, so the title warns too
   const deleteLbl = h('span', {}, 'Delete');
@@ -615,7 +625,7 @@ function live(t: Task, slots: Slot[]) {
     return embed ? h('button', { type: 'button', className: 'link', onclick: () => vs!.postMessage({ t: 'reveal', file: o.file, line: o.line }) }, text) : h('div', { className: 'muted' }, text);
   });
 
-  return { timerBtn, timeSummary, linkBlocks, linkRevealBtns, incomingBlocks, occurrences, deleteBtn };
+  return { timerBtn, timeSummary, linkBlocks: [...placed.values()], linkRevealBtns, occurrences, deleteBtn };
 }
 
 // ---- Graph tab ----
@@ -784,7 +794,7 @@ function render() {
   makeResizable(panes.props, resizeHandle, '.sidebar-panel', -1);
 
   const editorMain = h('div', { className: 'editor-main' }, bundle.form,
-    h('div', { className: 'links' }, h('h3', {}, 'Links'), ...lv.linkBlocks, ...lv.linkRevealBtns, ...lv.incomingBlocks));
+    h('div', { className: 'links' }, h('h3', {}, 'Links'), ...lv.linkBlocks, ...lv.linkRevealBtns));
 
   main.replaceChildren(...nav, h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, editorMain, panel)));
 }
