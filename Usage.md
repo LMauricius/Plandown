@@ -93,7 +93,7 @@ Changes in this part are collected until you press **Save** (or Ctrl+S). **Rever
 
 The rest of the editor acts immediately:
 
-- **Time.** *Start timer* records the start time in the task's `started` property. *Stop timer* adds the elapsed time to `spent`. Because the timer lives in the file, it keeps running when you close the browser or restart the server. The line next to the button sums effort and time over the task and all of its subtasks.
+- **Time.** *Start timer* records the start time in the task's `started` property. *Stop timer* adds the elapsed time to `spent`, and *Log elapsed* does the same while keeping the timer running from zero. To record time without the timer, type the hours into the field and press *Add*; they are added to `spent` (a negative number corrects an earlier entry). Because the timer lives in the file, it keeps running when you close the browser or restart the server. The line next to the button sums effort and time over the task and all of its subtasks.
 - **Links.** All links of the task, grouped by link type as seen from this task (a task that blocks this one is listed under *Blocked by*). Click a linked task to open it, or ✕ to remove the link. The ✕ is disabled for links that come from heading nesting, because those are changed by moving the heading in the file.
 - **Link.** Choose a link type, then pick the target task. The suggestions only offer tasks whose type the chosen link type allows.
 - **Add subtask.** Creates a new task as a bullet in the task's subtask list.

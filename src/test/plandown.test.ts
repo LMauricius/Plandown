@@ -94,6 +94,16 @@ test('edits: update, create, link, unlink, timer and delete rewrite only their l
   await m.apply({ op: 'stop', id: '[Task] Write docs' });
   assert.equal(m.db.tasks['[Task] Write docs'].props.started, undefined);
   assert.equal(typeof m.db.tasks['[Task] Write docs'].props.spent, 'number');
+  const spent = m.db.tasks['[Task] Write docs'].props.spent as number;
+  await m.apply({ op: 'log', id: '[Task] Write docs', hours: 1.5 });
+  assert.equal(m.db.tasks['[Task] Write docs'].props.spent, Math.round((spent + 1.5) * 100) / 100);
+  await assert.rejects(m.apply({ op: 'log', id: '[Task] Write docs', hours: '2' as unknown as number }));
+  await assert.rejects(m.apply({ op: 'log', id: '[Task] Write docs', hours: -1000 }));
+  await assert.rejects(m.apply({ op: 'lap', id: '[Task] Write docs' }), /No running timer/);
+  await m.apply({ op: 'start', id: '[Task] Write docs' });
+  await m.apply({ op: 'lap', id: '[Task] Write docs' });
+  assert.equal(typeof m.db.tasks['[Task] Write docs'].props.started, 'string', 'lap keeps the timer running');
+  await m.apply({ op: 'stop', id: '[Task] Write docs' });
 
   await m.apply({ op: 'delete', id: '[Task] Write docs' });
   await m.apply({ op: 'update', id: '[Task] Accounts', title: 'Account system', props: {}, body: ['Sign-in with an email address or a single sign-on provider.'] });

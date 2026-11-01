@@ -99,6 +99,8 @@ const transition = (f: () => void) => { if (document.startViewTransition && !sti
 const $ = (id: string) => document.getElementById(id)!;
 const hours = (v: number) => String(Math.round(v * 100) / 100);
 const clock = (ms: number) => { const t = Math.floor(ms / 1000); return [t / 3600, (t / 60) % 60, t % 60].map(x => String(Math.floor(x)).padStart(2, '0')).join(':'); };
+/** Start of `t`'s running timer in ms, NaN when none runs (or `started` is malformed, which the timer ops treat alike). */
+const startedAt = (t: Task) => Date.parse(String(t.props.started ?? ''));
 const trunc = (t: string, n: number) => t.length > n ? t.slice(0, n - 1) + '…' : t;
 /** Color per link type: golden-angle hues over the format's link types keep colors distinct and stable. */
 const hue = (t: string) => {
@@ -534,13 +536,26 @@ function compactProps(t: Task): HTMLElement[] {
   return vals.filter(({ v }) => v && v.length <= 6).map(({ k, v }) => h('div', { className: 'prop-compact', title: `${k}: ${v}` }, v));
 }
 
+/** Start/stop button for `t`'s timer, shared by the editor and the Time tab; a running one ticks through `data-started`. */
+function timerButton(t: Task): HTMLButtonElement {
+  const started = startedAt(t);
+  return isNaN(started)
+    ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), 'Start timer')
+    : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
+}
+
 /** Parts of the editor that act immediately (timer, links, subtasks, deletion); rebuilt on every refresh, refilling the form's link slots. */
 function live(t: Task, slots: Slot[]) {
   // Time
-  const started = Date.parse(String(t.props.started ?? '')), tot = db.totals[t.id];
-  const timerBtn = isNaN(started)
-    ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), 'Start timer')
-    : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
+  const tot = db.totals[t.id], timerBtn = timerButton(t);
+  const lapBtn = !isNaN(startedAt(t)) && h('button', {
+    className: 'warn', title: 'Add the elapsed time to spent and restart the timer', onclick: () => run({ op: 'lap', id: t.id }),
+  }, icon('check'), 'Log elapsed');
+  // Manual entry: hours added to `spent` (negative ones correct it); the Add button appears once the field holds a nonzero number
+  const logBtn = h('button', { hidden: true }, icon('plus'), 'Add');
+  const logIn = h('input', { type: 'number', step: 'any', placeholder: 'Hours to add', oninput: () => show(logBtn, !!logIn.valueAsNumber) });
+  const logForm = h('form', { className: 'inline log-add', onsubmit: (e: Event) => { e.preventDefault(); if (logIn.valueAsNumber) run({ op: 'log', id: t.id, hours: logIn.valueAsNumber }); } },
+    logIn, logBtn);
   const timeSummary = `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`;
 
   // Edges keyed by the kind as seen from this task: its own type when outgoing, its reverse name when incoming.
@@ -625,7 +640,7 @@ function live(t: Task, slots: Slot[]) {
     return embed ? h('button', { type: 'button', className: 'link', onclick: () => vs!.postMessage({ t: 'reveal', file: o.file, line: o.line }) }, text) : h('div', { className: 'muted' }, text);
   });
 
-  return { timerBtn, timeSummary, linkBlocks: [...placed.values()], linkRevealBtns, occurrences, deleteBtn };
+  return { timerBtn, lapBtn, logForm, timeSummary, linkBlocks: [...placed.values()], linkRevealBtns, occurrences, deleteBtn };
 }
 
 // ---- Graph tab ----
@@ -700,9 +715,10 @@ function time(): HTMLElement {
     const tot = db.totals[t.id], effort = Number(t.props.effort) || 0, spent = Number(t.props.spent) || 0;
     const name = h('td', {}, taskLink(t.id, { className: 'link' }, t.title));
     name.style.paddingLeft = `${8 + d * 16}px`;
-    rows.push(h('tr', { className: tot.effort && tot.spent > tot.effort ? 'over' : '' }, name, h('td', {}, badge(t.type)),
+    rows.push(h('tr', { className: [tot.effort && tot.spent > tot.effort && 'over', t.id === sel && 'sel'].filter(Boolean).join(' ') }, name, h('td', {}, badge(t.type)),
       n(effort), n(spent), n(tot.effort), n(tot.spent),
-      h('td', {}, tot.effort ? h('progress', { max: tot.effort, value: Math.min(tot.spent, tot.effort), title: `${Math.round(100 * tot.spent / tot.effort)}%` }) : '')));
+      h('td', {}, tot.effort ? h('progress', { max: tot.effort, value: Math.min(tot.spent, tot.effort), title: `${Math.round(100 * tot.spent / tot.effort)}%` }) : ''),
+      h('td', { className: 'row-time' }, timerButton(t))));
   });
   for (const t of Object.values(db.tasks)) {
     const b = byType.get(t.type) ?? { count: 0, done: 0, effort: 0, spent: 0 };
@@ -714,7 +730,7 @@ function time(): HTMLElement {
   }
   const th = (t: string, num = false) => h('th', { className: num ? 'n' : '' }, t);
   return h('div', { className: 'view' },
-    h('table', {}, h('thead', {}, h('tr', {}, th('Task'), th('Type'), th('Effort', true), th('Spent', true), th('Σ Effort', true), th('Σ Spent', true), th('Progress'))), h('tbody', {}, ...rows)),
+    h('table', {}, h('thead', {}, h('tr', {}, th('Task'), th('Type'), th('Effort', true), th('Spent', true), th('Σ Effort', true), th('Σ Spent', true), th('Progress'), th(''))), h('tbody', {}, ...rows)),
     h('p', { className: 'muted' }, 'Hours. Σ columns include every subtask once. Red rows have spent more than estimated.'),
     h('table', {}, h('thead', {}, h('tr', {}, th('Type'), th('Tasks', true), th('Done', true), th('Effort', true), th('Spent', true))),
       h('tbody', {}, ...[...byType].map(([type, b]) => h('tr', {}, h('td', {}, type), n(b.count), n(b.done), n(b.effort), n(b.spent))))));
@@ -779,10 +795,10 @@ function render() {
   const lv = live(t, bundle.slots);
 
   const sidebarContent = panes.props.collapsed
-    ? [...compactProps(t), lv.timerBtn, lv.deleteBtn]
+    ? [...compactProps(t), lv.timerBtn, lv.lapBtn, lv.deleteBtn]
     : [
         bundle.props,
-        h('div', { className: 'sidebar-section' }, h('h3', {}, 'Time'), h('div', { className: 'actions' }, lv.timerBtn, h('span', { className: 'muted' }, lv.timeSummary))),
+        h('div', { className: 'sidebar-section' }, h('h3', {}, 'Time'), h('div', { className: 'actions' }, lv.timerBtn, lv.lapBtn, lv.logForm, h('span', { className: 'muted' }, lv.timeSummary))),
         h('div', { className: 'sidebar-section' }, h('h3', {}, 'Stored in'), ...lv.occurrences),
         h('div', { className: 'sidebar-section actions' }, lv.deleteBtn),
       ];

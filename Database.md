@@ -87,7 +87,7 @@ Which properties a task may have is declared by its type in `plandown-format.md`
 | `done` | boolean | The task is finished. |
 | `effort` | number | Estimated effort in hours. |
 | `spent` | number | Time spent in hours. |
-| `started` | datetime | Start of the running timer. Managed by the timer; stopping it adds the elapsed time to `spent`. |
+| `started` | datetime | Start of the running timer. Managed by the timer; stopping it (or logging the elapsed time) adds that time to `spent`. |
 
 Undeclared properties are kept but reported as warnings; values of the wrong type are reported as errors.
 

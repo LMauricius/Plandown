@@ -16,7 +16,8 @@ export type Op =
   | { op: 'delete'; id: string }
   | { op: 'link'; from: string; type: string; to: string }
   | { op: 'unlink'; from: string; type: string; to: string }
-  | { op: 'start' | 'stop'; id: string };
+  | { op: 'start' | 'stop' | 'lap'; id: string }
+  | { op: 'log'; id: string; hours: number };
 
 /** Replace lines [start, end) of `file` (a missing file is created). */
 export interface Edit { file: string; start: number; end: number; lines: string[] }
@@ -230,17 +231,26 @@ function unlink(ctx: Ctx, op: Extract<Op, { op: 'unlink' }>): Plan {
   return { edits: [removeItem(o.pf, o.node)], id: op.from };
 }
 
-/** Timer: `started` holds the running timer, so it survives restarts and is shared by every front end. */
-function timer(ctx: Ctx, op: Extract<Op, { op: 'start' | 'stop' }>, now: Date): Plan {
+/**
+ * Timer: `started` holds the running timer, so it survives restarts and is shared by every front end. `stop` adds the
+ * elapsed time to `spent`; `lap` adds it too but restarts the timer at `now`; `log` adds `hours` with or without a timer.
+ */
+function timer(ctx: Ctx, op: Extract<Op, { op: 'start' | 'stop' | 'lap' | 'log' }>, now: Date): Plan {
   const t = need(ctx, op.id), props = { ...t.props }, started = Date.parse(String(props.started ?? ''));
   if (op.op === 'start') {
     if (!isNaN(started)) throw new Error('Timer is already running');
     props.started = now.toISOString();
   } else {
-    if (isNaN(started)) throw new Error('No running timer');
+    if (op.op !== 'log' && isNaN(started)) throw new Error('No running timer');
+    // `hours` arrives from untrusted clients; a negative one corrects earlier entries
+    if (op.op === 'log' && !(typeof op.hours === 'number' && Number.isFinite(op.hours))) throw new Error('Hours must be a number');
     const spent = typeof props.spent === 'number' && Number.isFinite(props.spent) ? props.spent : 0;
-    props.spent = Math.round((spent + Math.max(0, now.getTime() - started) / 36e5) * 100) / 100;
-    delete props.started;
+    const add = op.op === 'log' ? op.hours : Math.max(0, now.getTime() - started) / 36e5;
+    const total = Math.round((spent + add) * 100) / 100;
+    if (total < 0) throw new Error('Spent time cannot become negative');
+    props.spent = total;
+    if (op.op === 'stop') delete props.started;
+    else if (op.op === 'lap') props.started = now.toISOString();
   }
   return update(ctx, { op: 'update', id: t.id, props });
 }
@@ -253,7 +263,7 @@ export function plan(ctx: Ctx, op: Op, now = new Date()): Plan {
     case 'delete': return remove(ctx, op);
     case 'link': return link(ctx, op);
     case 'unlink': return unlink(ctx, op);
-    case 'start': case 'stop': return timer(ctx, op, now);
+    case 'start': case 'stop': case 'lap': case 'log': return timer(ctx, op, now);
     default: throw new Error(`Unknown operation ${JSON.stringify((op as { op?: unknown })?.op)}`);
   }
 }
