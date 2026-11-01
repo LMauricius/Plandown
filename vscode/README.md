@@ -55,6 +55,7 @@ Every running timer of every database appears in the status bar with its task ti
 | Plandown: Show Graph | Opens the link graph of the database |
 | Plandown: Show Timeline | Opens the time table of the database |
 | Plandown: Filter Tasks / Clear Filter | Filters the task tree |
+| Plandown: Open in Browser | Opens the database in the standalone GUI, in the default browser |
 | Plandown: Rescan Workspace | Searches the workspace for databases again |
 
 **Show Graph**, **Show Timeline** and **New Task** also appear as buttons to the right of the tabs whenever a Plandown tab is focused. When a command needs a database, it uses the selected tree row, then the focused Plandown tab, and asks only when there are several candidates.

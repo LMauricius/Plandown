@@ -10,7 +10,7 @@ import { TaskTree, type Item } from './tree.js';
 import { Panels } from './panels.js';
 
 /** One loaded database: the folder holding a `plandown-format.md`. */
-export interface Root { uri: vscode.Uri; pd: Plandown; diags: vscode.DiagnosticCollection; unwatch(): void }
+export interface Root { uri: vscode.Uri; pd: Plandown; diags: vscode.DiagnosticCollection; unwatch(): void; server?: Promise<{ url: string; close(): void }> }
 
 /** Applies an operation to a root and refreshes every view of it; throws as `Plandown.apply` does. */
 export type Apply = (root: Root, op: Op) => Promise<string | undefined>;
@@ -50,14 +50,14 @@ const isItem = (a: unknown): a is Item => typeof a === 'object' && a !== null &&
 // ---- Activation ----
 
 export async function activate(ctx: vscode.ExtensionContext) {
-  const { Plandown } = await import('plandown');
+  const { Plandown, serve } = await import('plandown');
   let roots: Root[] = [], loading = Promise.resolve();
 
   // ---- Databases ----
 
   const changed = (r: Root) => { report(r); tree.refresh(); panels.changed(r); showTimers(); };
   const apply: Apply = async (r, op) => { try { return await r.pd.apply(op); } finally { changed(r); } };
-  const close = (r: Root) => { r.unwatch(); r.diags.dispose(); panels.drop(r); };
+  const close = (r: Root) => { r.unwatch(); r.diags.dispose(); panels.drop(r); r.server?.then(s => s.close(), () => {}); };
 
   /** Rescans the workspace: opens new roots, closes vanished ones. Rescans run one at a time. */
   // shortcut: a plandown-format.md created later is found only on a rescan trigger; add a file watcher if that matters
@@ -159,6 +159,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
   reg('plandown.filter', async () => { const text = await vscode.window.showInputBox({ prompt: 'Filter tasks by title or description', value: tree.filter }); if (text !== undefined) filter(text.trim()); });
   reg('plandown.clearFilter', () => filter(''));
   reg('plandown.refresh', load);
+  // One GUI server per root, started on first use on a free port (4848 may be taken by the CLI server) and closed with the root
+  reg('plandown.openBrowser', async (arg?: unknown) => {
+    const r = isItem(arg) ? arg.root : await pickRoot();
+    if (!r) return;
+    try { await vscode.env.openExternal(vscode.Uri.parse((await (r.server ??= serve(r.pd, 0))).url)); }
+    catch (e) { r.server = undefined; vscode.window.showErrorMessage(`Plandown: cannot start the GUI server: ${(e as Error).message}`); }
+  });
   // Opening the same task twice within 500 ms (a double click on a tree row) pins its tab, as the Explorer does for files
   let last = { r: undefined as Root | undefined, id: '', at: 0 };
   reg('plandown.open', (r: Root, id: string) => {
