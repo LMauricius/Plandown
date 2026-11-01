@@ -3,6 +3,7 @@
   "displayName": "Plandown",
   "version": "0.1.0",
   "description": "Plandown task manager inside VSCode: task tree, task tabs, link graph and time view over a folder of Markdown files.",
+  "icon": "icon.png",
   "engines": { "vscode": "^1.90.0" },
   "main": "dist/extension.js",
   "activationEvents": ["workspaceContains:**/plandown-format.md", "onWebviewPanel:plandown.view"],
