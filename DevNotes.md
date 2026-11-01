@@ -31,9 +31,18 @@ flowchart LR
 - Description = body (`own`) minus task-list spans → `Task.body` alternates texts and `{ links }`. Heading body runs over non-task sub-headings. `update.body` is per gap; fewer texts than gaps keep trailing gaps (lists appended meanwhile), more texts are rejected.
 - GUI editor (`gui/mdedit.ts`): live-preview over raw source (lossless), markers absolutely positioned outside what they mark, shown when caret near. Own undo stack (DOM is repainted per input). Shared fixed toolbox. Save/Revert page-wide in the title row; links save immediately into description slots refilled by `live()`.
 
+## VSCode extension
+
+- Native TreeView (user choice) over `db.tree`; task tabs reuse the GUI page in tab mode (`data-view`), so editor logic is not duplicated.
+- Roots: `plandown-format.md` up to `plandown.searchDepth` below a workspace folder; nested roots dropped.
+- Tab key = root + task id; the `Open With` editor of a file is the tab of its first task. Rename rekeys (host sees the op's returned id); delete closes.
+- `retainContextWhenHidden` on (user accepted the memory) so unsaved forms survive tab switches. Tabs restored via serializer from the GUI's `setState(body.dataset)`.
+- Tree checkboxes: `manageCheckboxStateManually`, else VSCode ticks children.
+- Running timers lost their header spot in tabs (status bar not wanted).
+
 ## Roadmap
 
-- VSCode extension: webview loads `dist/gui/*`, replace `api` with postMessage; `Plandown.watch` or VSCode file watcher; map `db.diagnostics` to a DiagnosticCollection; "Stored in" entries open the file at line.
+- VSCode: watch for `plandown-format.md` created after activation (now only on rescan triggers); Marketplace packaging needs a bundler (the `file:..` dependency is a symlink).
 - Graph: dummy nodes for long edges (see `shortcut:` in app.ts).
 - Time log per day (`spent` is a total today) if per-day allocation reports are needed.
 - Sub-formats: `plandown-format.md` inside a subfolder extending the root format for that subtree.

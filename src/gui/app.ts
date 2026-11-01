@@ -13,8 +13,32 @@ const SUBTASK = 'Subtask', PARENT = 'Parent';
 
 // ---- Transport ----
 
-/** HTTP transport of the standalone server. A VSCode webview replaces these three functions with postMessage calls. */
-const api = {
+/** Defined only inside a VSCode webview. */
+declare function acquireVsCodeApi(): { postMessage(m: unknown): void; setState(s: unknown): void };
+const vs = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
+
+/**
+ * Tab mode (VSCode): the host picks one view (`task`, `graph` or `time`) in `<body data-view>`; the page has no header,
+ * no navigation sidebar and no routing, and links to other tasks open their own tabs.
+ */
+const embed = document.body.dataset.view;
+
+/** Webview requests carry an id that the host's reply echoes; `changed` is the host's only unrequested message. */
+const waiting = new Map<number, (r: any) => void>();
+let rid = 0, onChanged = () => {};
+const ask = (m: object) => new Promise<any>(ok => { waiting.set(++rid, ok); vs!.postMessage({ ...m, rid }); });
+if (vs) addEventListener('message', (e: MessageEvent) => {
+  if (e.data.t === 'changed') return onChanged();
+  waiting.get(e.data.rid)?.(e.data);
+  waiting.delete(e.data.rid);
+});
+
+/** Transport: HTTP for the standalone server, postMessage to the extension host inside VSCode (same replies). */
+const api = vs ? {
+  state: async (): Promise<Db> => (await ask({ t: 'state' })).db,
+  op: (op: Op): Promise<{ id?: string; db: Db; error?: string }> => ask({ t: 'op', op }),
+  subscribe(cb: () => void) { onChanged = cb; },
+} : {
   state: async (): Promise<Db> => (await fetch('api/state')).json(),
   async op(op: Op): Promise<{ id?: string; db: Db; error?: string }> {
     const r = await fetch('api/op', { method: 'POST', headers: { 'content-type': 'application/json', 'x-plandown': '1' }, body: JSON.stringify(op) });
@@ -172,6 +196,7 @@ const taskLink = (id: string, props: Record<string, unknown>, ...kids: (Node | s
 
 /** Navigates to a task; returns false (without rendering) when unsaved edits block it. */
 function select(id: string): boolean {
+  if (embed) { if (id !== sel) vs!.postMessage({ t: 'open', id }); return true; }
   if (dirty && id !== sel) { toast('Save or revert your changes first'); return false; }
   if (id !== sel) revealedLinkKinds = new Set();
   sel = id;
@@ -203,7 +228,7 @@ function route(): { tab: typeof tab; sel?: string | null } {
 
 /** User navigation adds a history entry; state changes from data (renames, deletes, refreshes) only replace it in `render`. */
 function go() {
-  if (url() !== location.pathname) history.pushState(null, '', url());
+  if (!embed && url() !== location.pathname) history.pushState(null, '', url());
   transition(render);
 }
 
@@ -238,9 +263,16 @@ function applyTheme(t: typeof THEMES[number]) {
     applyTheme(next);
   };
 }
-let savedTheme: string | null = null;
-try { savedTheme = localStorage.getItem('plandown-theme'); } catch { /* auto */ }
-applyTheme(THEMES.find(t => t === savedTheme) ?? 'auto');
+if (embed) {
+  // VSCode marks its theme kind on <body> and changes it live; `light-dark()` fallbacks follow it
+  const sync = () => { document.documentElement.dataset.theme = /\bvscode(-high-contrast)?-light\b/.test(document.body.className) ? 'light' : 'dark'; };
+  sync();
+  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+} else {
+  let savedTheme: string | null = null;
+  try { savedTheme = localStorage.getItem('plandown-theme'); } catch { /* auto */ }
+  applyTheme(THEMES.find(t => t === savedTheme) ?? 'auto');
+}
 
 // ---- Header ----
 
@@ -568,8 +600,11 @@ function live(t: Task, slots: Slot[]) {
     },
   }, icon('trash'), deleteLbl);
 
-  const occurrences = t.occurrences.map(o => h('div', { className: 'muted' },
-    `${o.file}:${o.line + 1}${o.file === t.home.file && o.line === t.home.line ? ' (properties and description)' : ''}`));
+  // In VSCode each occurrence opens the file at its line
+  const occurrences = t.occurrences.map(o => {
+    const text = `${o.file}:${o.line + 1}${o.file === t.home.file && o.line === t.home.line ? ' (properties and description)' : ''}`;
+    return embed ? h('button', { type: 'button', className: 'link', onclick: () => vs!.postMessage({ t: 'reveal', file: o.file, line: o.line }) }, text) : h('div', { className: 'muted' }, text);
+  });
 
   return { timerBtn, timeSummary, linkBlocks, linkRevealBtns, incomingBlocks, occurrences, deleteBtn };
 }
@@ -703,17 +738,20 @@ function makeResizable(pane: Pane, handle: HTMLElement, sel: string, dir: 1 | -1
 }
 
 function render() {
-  if (url() !== location.pathname) history.replaceState(null, '', url());
+  // In VSCode the host restores closed tabs from this state (the task follows renames)
+  if (embed) vs!.setState({ ...document.body.dataset, task: sel ?? undefined });
+  else if (url() !== location.pathname) history.replaceState(null, '', url());
   // Every collapse change ends in a render
   try { sessionStorage.setItem('plandown-collapsed', Object.entries(panes).filter(([, p]) => p.collapsed).map(([k]) => k).join(',')); } catch { /* not persisted */ }
-  header();
+  if (!embed) header();
   const main = $('main');
   if (tab === 'Graph') return main.replaceChildren(graph());
   if (tab === 'Time') return main.replaceChildren(time());
   const t = sel ? db.tasks[sel] : undefined;
+  const nav = embed ? [] : [sidebar()];
   if (!t) { sel = null; dirty = false; }
   if (!t) {
-    main.replaceChildren(sidebar(), h('section', { className: 'editor muted' }, 'Select a task, or add one in the sidebar.'));
+    main.replaceChildren(...nav, h('section', { className: 'editor muted' }, embed ? 'This task no longer exists.' : 'Select a task, or add one in the sidebar.'));
     return;
   }
 
@@ -739,11 +777,12 @@ function render() {
   const editorMain = h('div', { className: 'editor-main' }, bundle.form,
     h('div', { className: 'links' }, h('h3', {}, 'Links'), ...lv.linkBlocks, ...lv.linkRevealBtns, ...lv.incomingBlocks));
 
-  main.replaceChildren(sidebar(), h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, editorMain, panel)));
+  main.replaceChildren(...nav, h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, editorMain, panel)));
 }
 
 setInterval(() => document.querySelectorAll<HTMLElement>('[data-started]').forEach(el => { el.textContent = clock(Date.now() - Number(el.dataset.started)); }), 1000);
 db = await api.state();
-({ tab, sel = null } = route());
+if (embed) { tab = embed === 'graph' ? 'Graph' : embed === 'time' ? 'Time' : 'Tasks'; sel = document.body.dataset.task ?? null; }
+else ({ tab, sel = null } = route());
 render();
 api.subscribe(async () => { db = await api.state(); render(); });

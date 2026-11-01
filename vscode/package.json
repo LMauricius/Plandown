@@ -1,0 +1,64 @@
+{
+  "name": "plandown-vscode",
+  "displayName": "Plandown",
+  "version": "0.1.0",
+  "description": "Plandown task manager inside VSCode: task tree, task tabs, link graph and time view over a folder of Markdown files.",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "dist/extension.js",
+  "activationEvents": ["workspaceContains:**/plandown-format.md", "onWebviewPanel:plandown.view"],
+  "contributes": {
+    "configuration": {
+      "title": "Plandown",
+      "properties": {
+        "plandown.searchDepth": { "type": "integer", "default": 3, "minimum": 0, "description": "How many folders deep below a workspace folder to look for plandown-format.md." }
+      }
+    },
+    "customEditors": [
+      { "viewType": "plandown.file", "displayName": "Plandown", "selector": [{ "filenamePattern": "*.md" }], "priority": "option" }
+    ],
+    "viewsContainers": {
+      "activitybar": [{ "id": "plandown", "title": "Plandown", "icon": "$(checklist)" }]
+    },
+    "views": {
+      "plandown": [{ "id": "plandown.tree", "name": "Tasks" }]
+    },
+    "commands": [
+      { "command": "plandown.create", "title": "New Task", "category": "Plandown", "icon": "$(add)" },
+      { "command": "plandown.createGroup", "title": "New Group", "category": "Plandown", "icon": "$(new-folder)" },
+      { "command": "plandown.graph", "title": "Show Graph", "category": "Plandown", "icon": "$(type-hierarchy)" },
+      { "command": "plandown.time", "title": "Show Timeline", "category": "Plandown", "icon": "$(clock)" },
+      { "command": "plandown.filter", "title": "Filter Tasks", "category": "Plandown", "icon": "$(filter)" },
+      { "command": "plandown.clearFilter", "title": "Clear Filter", "category": "Plandown", "icon": "$(clear-all)" },
+      { "command": "plandown.refresh", "title": "Rescan Workspace", "category": "Plandown", "icon": "$(refresh)" }
+    ],
+    "menus": {
+      "editor/title": [
+        { "command": "plandown.graph", "group": "navigation@1", "when": "plandown.active" },
+        { "command": "plandown.time", "group": "navigation@2", "when": "plandown.active" },
+        { "command": "plandown.create", "group": "navigation@3", "when": "plandown.active" }
+      ],
+      "view/title": [
+        { "command": "plandown.create", "group": "navigation@1", "when": "view == plandown.tree" },
+        { "command": "plandown.createGroup", "group": "navigation@2", "when": "view == plandown.tree" },
+        { "command": "plandown.filter", "group": "navigation@3", "when": "view == plandown.tree && !plandown.filtered" },
+        { "command": "plandown.clearFilter", "group": "navigation@3", "when": "view == plandown.tree && plandown.filtered" },
+        { "command": "plandown.refresh", "group": "navigation@4", "when": "view == plandown.tree" }
+      ],
+      "view/item/context": [
+        { "command": "plandown.create", "group": "inline@1", "when": "view == plandown.tree" },
+        { "command": "plandown.createGroup", "group": "inline@2", "when": "view == plandown.tree && viewItem == node" }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "plandown": "file:.."
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.90.0",
+    "typescript": "^5.9.0"
+  }
+}

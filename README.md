@@ -4,6 +4,7 @@ Plandown is a task manager whose database is a folder of plain Markdown files. H
 
 - [Database.md](Database.md) describes the file format.
 - [Usage.md](Usage.md) describes the GUI.
+- [vscode/README.md](vscode/README.md) describes the VSCode extension.
 
 ## Quick start
 
