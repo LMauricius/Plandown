@@ -1,6 +1,7 @@
 {
   "name": "plandown-vscode",
   "displayName": "Plandown",
+  "publisher": "lmauricius",
   "version": "0.1.0",
   "description": "Plandown task manager inside VSCode: task tree, task tabs, link graph and time view over a folder of Markdown files.",
   "icon": "icon.png",
