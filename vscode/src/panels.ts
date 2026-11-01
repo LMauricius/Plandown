@@ -1,5 +1,6 @@
 /**
- * Webview tabs running the library's GUI (`dist/gui`): one tab per task, one graph and one time tab per root, and the
+ * Webview tabs running the library's GUI (`dist/gui`): one graph and one time tab per root (webview panels), task tabs
+ * (the `plandown.task` custom editor on virtual URIs, see `taskUri`, so they get VSCode's preview tabs and history) and the
  * `plandown.file` custom editor that shows the first task of a `.md` file. The GUI talks to the host through
  * postMessage (see `Msg`); the host answers from the root's `Plandown` instance.
  */
@@ -10,21 +11,33 @@ import type { Apply, Root } from './extension.js';
 
 /**
  * Webview → host: `state` and `op` carry a request id `rid` answered with `{ rid, db }` / `{ rid, id, db, error }`
- * (the HTTP API's responses); `open` asks for another task's tab; `reveal` opens a file at a line in a text editor.
+ * (the HTTP API's responses); `open` asks for another task's tab (`pin`: a pinned one, not a preview); `reveal` opens a file at a line in a text editor.
  * Host → webview: `changed` (the folder was reloaded; the GUI refetches state, as on its SSE event).
  */
-type Msg = { t: 'state'; rid: number } | { t: 'op'; rid: number; op: Op } | { t: 'open'; id: string } | { t: 'reveal'; file: string; line: number };
+type Msg = { t: 'state'; rid: number } | { t: 'op'; rid: number; op: Op } | { t: 'open'; id: string; pin?: boolean } | { t: 'reveal'; file: string; line: number };
 
 /** What a tab shows; `task` tabs follow their task across renames. */
 type View = { kind: 'task'; id: string } | { kind: 'graph' } | { kind: 'time' };
 
-interface Tab { panel: vscode.WebviewPanel; root: Root; view: View; key: string }
+/** `uri`: the virtual URI of a `plandown.task` tab. */
+interface Tab { panel: vscode.WebviewPanel; root: Root; view: View; key: string; uri?: vscode.Uri }
 
 // ---- Utilities ----
 
 const keyOf = (root: Root, view: View) => `${root.uri.fsPath}\0${view.kind === 'task' ? view.id : view.kind}`;
 const TITLES = { graph: 'Graph', time: 'Timeline' };
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+/**
+ * Virtual URI of a task tab: `<root>/.plandown-tasks/<title>?root=…&id=…` (no such file exists). Custom editor tabs are
+ * labeled with the URI's basename (`panel.title` is ignored), so the basename is the title (`/` swapped for a lookalike);
+ * the query names the task. It stays in the root's own scheme (`file`, or the remote one) because VSCode's Go Back/Forward
+ * history drops closed editors of other schemes, which would forget every replaced preview tab.
+ */
+const taskUri = (root: Root, id: string) => root.uri.with({
+  path: `${root.uri.path}/.plandown-tasks/${(root.pd.db.tasks[id]?.title ?? id).replace(/\//g, '∕')}`,
+  query: new URLSearchParams({ root: root.uri.fsPath, id }).toString(),
+});
 
 /** Webview page with nothing but a message (files outside a root or without tasks). */
 const note = (text: string) => `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'"><p>${esc(text)}</p>`;
@@ -68,36 +81,49 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   /** The focused Plandown tab, if any. */
   active(): Tab | undefined { return [...this.tabs.values()].find(t => t.panel.active); }
 
-  /** Reveals the task's tab or opens one. */
-  openTask(root: Root, id: string): void { this.open(root, { kind: 'task', id }, root.pd.db.tasks[id]?.title ?? id); }
+  /**
+   * Reveals the task's tab or opens it as a preview tab (replacing the group's preview tab, as for files). `pin` opens a
+   * pinned tab instead; reopening a task tab's own URI pins it if it is the active group's preview tab.
+   */
+  openTask(root: Root, id: string, pin = false): void {
+    const hit = this.tabs.get(keyOf(root, { kind: 'task', id }));
+    if (hit && !(pin && hit.uri)) return hit.panel.reveal();
+    vscode.commands.executeCommand('vscode.openWith', hit?.uri ?? taskUri(root, id), 'plandown.task', { preview: !pin, viewColumn: vscode.ViewColumn.Active });
+  }
 
   /** Reveals or opens the root's graph or time tab. */
-  openView(root: Root, kind: 'graph' | 'time'): void { this.open(root, { kind }, TITLES[kind]); }
-
-  /** Tells every tab of `root` to refetch; retitles task tabs (tabs of vanished tasks stay, the GUI says so). */
-  changed(root: Root): void {
-    for (const t of this.tabs.values()) if (t.root === root) {
-      if (t.view.kind === 'task' && root.pd.db.tasks[t.view.id]) t.panel.title = root.pd.db.tasks[t.view.id].title;
-      t.panel.webview.postMessage({ t: 'changed' });
-    }
+  openView(root: Root, kind: 'graph' | 'time'): void {
+    const hit = this.tabs.get(keyOf(root, { kind }));
+    if (hit) return hit.panel.reveal();
+    const panel = vscode.window.createWebviewPanel('plandown.view', TITLES[kind], vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [this.gui] });
+    this.bind(panel, root, { kind });
   }
+
+  /** Tells every tab of `root` to refetch (tabs of vanished tasks stay, the GUI says so). */
+  changed(root: Root): void { for (const t of this.tabs.values()) if (t.root === root) t.panel.webview.postMessage({ t: 'changed' }); }
 
   /** Closes every tab of a root that is no longer loaded. */
   drop(root: Root): void { for (const t of [...this.tabs.values()]) if (t.root === root) t.panel.dispose(); }
 
-  private open(root: Root, view: View, title: string) {
-    const hit = this.tabs.get(keyOf(root, view));
-    if (hit) return hit.panel.reveal();
-    const panel = vscode.window.createWebviewPanel('plandown.view', title, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [this.gui] });
-    this.bind(panel, root, view);
+  /**
+   * Reopens a `plandown.task` tab under its renamed task's URI (its label follows only the URI), in the same group and
+   * preview state. A preview tab is replaced by the new preview tab; a pinned one is closed.
+   */
+  private async relabel(old: vscode.Uri, root: Root, id: string): Promise<void> {
+    for (const g of vscode.window.tabGroups.all) for (const t of g.tabs) {
+      if (!(t.input instanceof vscode.TabInputCustom) || t.input.uri.toString() !== old.toString()) continue;
+      await vscode.commands.executeCommand('vscode.openWith', taskUri(root, id), 'plandown.task', { preview: t.isPreview, viewColumn: g.viewColumn });
+      if (!t.isPreview) await vscode.window.tabGroups.close(t);
+      return;
+    }
   }
 
   /**
    * Wires a panel: html, message handler, `plandown.active` context key, and removal from `tabs` on dispose (only its
    * own entry: a file editor and a task tab may show the same task, the later one owns the key).
    */
-  private bind(panel: vscode.WebviewPanel, root: Root, view: View): void {
-    const tab: Tab = { panel, root, view, key: keyOf(root, view) };
+  private bind(panel: vscode.WebviewPanel, root: Root, view: View, uri?: vscode.Uri): void {
+    const tab: Tab = { panel, root, view, key: keyOf(root, view), uri };
     this.tabs.set(tab.key, tab);
     const focus = () => vscode.commands.executeCommand('setContext', 'plandown.active', [...this.tabs.values()].some(t => t.panel.active));
     panel.webview.options = { enableScripts: true, localResourceRoots: [this.gui] };
@@ -109,7 +135,7 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
     panel.webview.onDidReceiveMessage(async (m: Msg) => {
       const db = () => root.pd.db, post = (r: object) => panel.webview.postMessage(r);
       if (m.t === 'state') return post({ rid: m.rid, db: db() });
-      if (m.t === 'open') { if (db().tasks[m.id]) this.openTask(root, m.id); return; }
+      if (m.t === 'open') { if (db().tasks[m.id]) this.openTask(root, m.id, m.pin === true); return; }
       // Only files of the database (no paths from the page are trusted)
       if (m.t === 'reveal') {
         if (db().files.includes(m.file)) vscode.window.showTextDocument(vscode.Uri.joinPath(root.uri, m.file), { selection: new vscode.Range(m.line, 0, m.line, 0) });
@@ -118,27 +144,34 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
       if (m.t !== 'op') return;
       let id: string | undefined, error: string | undefined;
       try { id = await this.apply(root, m.op); } catch (e) { error = (e as Error).message; }
-      // A save that renamed this tab's task rekeys the tab; deleting it closes the tab
+      // A save that renamed this tab's task rekeys the tab (a virtual one is reopened under the new URI); deleting it closes the tab
       const v = tab.view;
+      let renamed = false;
       if (!error && v.kind === 'task' && 'id' in m.op && m.op.id === v.id) {
         if (m.op.op === 'delete') return panel.dispose();
         if (m.op.op === 'update' && id && id !== v.id) {
           if (this.tabs.get(tab.key) === tab) this.tabs.delete(tab.key);
           tab.view = { kind: 'task', id };
           this.tabs.set(tab.key = keyOf(root, tab.view), tab);
-          panel.title = db().tasks[id]?.title ?? id;
+          renamed = true;
         }
       }
       post({ rid: m.rid, id, db: db(), error });
+      // Editing pins a preview tab, as for text editors (`keepEditor` acts on the active editor)
+      if (tab.uri && panel.active) await vscode.commands.executeCommand('workbench.action.keepEditor');
+      if (renamed && tab.uri) this.relabel(tab.uri, root, id!);
     });
   }
 
   // ---- Restoring tabs after a window reload ----
 
-  /** Rebinds a tab from the GUI's saved state (`data-*` of its page); tabs of roots no longer loaded are closed. */
-  async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: { view?: string; root?: string; task?: string } | undefined): Promise<void> {
+  /**
+   * Rebinds a graph or time tab from the GUI's saved state (`data-*` of its page); tabs of roots no longer loaded are
+   * closed. Task tabs are custom editors, which VSCode restores from their URIs.
+   */
+  async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: { view?: string; root?: string } | undefined): Promise<void> {
     const root = (await this.roots()).find(r => r.uri.fsPath === state?.root);
-    const view: View | undefined = state?.view === 'graph' || state?.view === 'time' ? { kind: state.view } : state?.view === 'task' && state.task ? { kind: 'task', id: state.task } : undefined;
+    const view: View | undefined = state?.view === 'graph' || state?.view === 'time' ? { kind: state.view } : undefined;
     if (!root || !view || this.tabs.has(keyOf(root, view))) return panel.dispose();
     this.bind(panel, root, view);
   }
@@ -149,11 +182,19 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   openCustomDocument(uri: vscode.Uri): vscode.CustomDocument { return { uri, dispose() {} }; }
 
   /**
-   * Binds the editor's panel as the task tab of the file's first task (so tree clicks reveal it). Files outside any
-   * root, or without tasks, get a short message page instead.
+   * `plandown.task`: binds the panel as the tab of the task its URI names (only loaded roots). `plandown.file`: binds it
+   * as the task tab of the file's first task (so tree clicks reveal it). Otherwise a short message page.
    */
   async resolveCustomEditor(doc: vscode.CustomDocument, panel: vscode.WebviewPanel): Promise<void> {
-    const at = rootOf(await this.roots(), doc.uri), id = at && firstTask(at.root, at.file);
+    const roots = await this.roots();
+    const q = new URLSearchParams(doc.uri.query);
+    if (q.has('id')) {
+      const root = roots.find(r => r.uri.fsPath === q.get('root')), id = q.get('id');
+      if (root && id) return this.bind(panel, root, { kind: 'task', id }, doc.uri);
+      panel.webview.html = note('This task\'s Plandown database is not loaded.');
+      return;
+    }
+    const at = rootOf(roots, doc.uri), id = at && firstTask(at.root, at.file);
     if (id) return this.bind(panel, at.root, { kind: 'task', id });
     panel.webview.html = note(at ? 'This file has no Plandown tasks.' : 'This file is not inside a Plandown database (a folder with plandown-format.md).');
   }

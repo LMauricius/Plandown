@@ -14,7 +14,8 @@
       }
     },
     "customEditors": [
-      { "viewType": "plandown.file", "displayName": "Plandown", "selector": [{ "filenamePattern": "*.md" }], "priority": "option" }
+      { "viewType": "plandown.file", "displayName": "Plandown", "selector": [{ "filenamePattern": "*.md" }], "priority": "option" },
+      { "viewType": "plandown.task", "displayName": "Plandown Task", "selector": [{ "filenamePattern": "**/.plandown-tasks/*" }], "priority": "option" }
     ],
     "viewsContainers": {
       "activitybar": [{ "id": "plandown", "title": "Plandown", "icon": "$(checklist)" }]
@@ -29,9 +30,15 @@
       { "command": "plandown.time", "title": "Show Timeline", "category": "Plandown", "icon": "$(clock)" },
       { "command": "plandown.filter", "title": "Filter Tasks", "category": "Plandown", "icon": "$(filter)" },
       { "command": "plandown.clearFilter", "title": "Clear Filter", "category": "Plandown", "icon": "$(clear-all)" },
+      { "command": "plandown.openPinned", "title": "Open in New Tab", "category": "Plandown" },
       { "command": "plandown.refresh", "title": "Rescan Workspace", "category": "Plandown", "icon": "$(refresh)" }
     ],
+    "keybindings": [
+      { "key": "alt+left", "mac": "cmd+[", "command": "workbench.action.navigateBack", "when": "activeCustomEditorId == 'plandown.task' || activeCustomEditorId == 'plandown.file' || activeWebviewPanelId == 'plandown.view'" },
+      { "key": "alt+right", "mac": "cmd+]", "command": "workbench.action.navigateForward", "when": "activeCustomEditorId == 'plandown.task' || activeCustomEditorId == 'plandown.file' || activeWebviewPanelId == 'plandown.view'" }
+    ],
     "menus": {
+      "commandPalette": [{ "command": "plandown.openPinned", "when": "false" }],
       "editor/title": [
         { "command": "plandown.graph", "group": "navigation@1", "when": "plandown.active" },
         { "command": "plandown.time", "group": "navigation@2", "when": "plandown.active" },
@@ -46,7 +53,8 @@
       ],
       "view/item/context": [
         { "command": "plandown.create", "group": "inline@1", "when": "view == plandown.tree" },
-        { "command": "plandown.createGroup", "group": "inline@2", "when": "view == plandown.tree && viewItem == node" }
+        { "command": "plandown.createGroup", "group": "inline@2", "when": "view == plandown.tree && viewItem =~ /^node/" },
+        { "command": "plandown.openPinned", "group": "navigation@1", "when": "view == plandown.tree && viewItem =~ /^(task|nodeTask)$/" }
       ]
     }
   },

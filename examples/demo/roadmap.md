@@ -2,6 +2,7 @@
 ---
 Priority: 1
 effort: 4
+spent: 0
 ---
 Make VitraeEngine ready for both graphics research and production.
 

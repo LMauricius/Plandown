@@ -69,7 +69,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
     if (item.kind === 'node') {
       const n = item.node;
       ti = new vscode.TreeItem(basename(n.path), n.kids.length || (n.task ? hasSubtasks : n.tasks.length) ? closed : none);
-      Object.assign(ti, { id: `${root.uri.fsPath}\0${n.path}`, contextValue: 'node', iconPath: new vscode.ThemeIcon(n.folder ? 'folder' : 'file'), tooltip: n.file ?? n.path + '/' });
+      Object.assign(ti, { id: `${root.uri.fsPath}\0${n.path}`, contextValue: n.task ? 'nodeTask' : 'node', iconPath: new vscode.ThemeIcon(n.folder ? 'folder' : 'file'), tooltip: n.file ?? n.path + '/' });
     } else {
       ti = new vscode.TreeItem('', !item.leaf && hasSubtasks ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${item.near}\0${[...item.up, id].join('\0')}`, contextValue: 'task' });

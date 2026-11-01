@@ -190,9 +190,18 @@ async function run(op: Op, fromEditor = false): Promise<boolean> {
 /** Click handler running `f` for plain clicks only; modified clicks (new tab or window) stay with the browser, as middle clicks do. */
 const inApp = (f: () => void) => (e: MouseEvent) => { if (e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; e.preventDefault(); f(); };
 
-/** Link to a task's view: a real `href` gives it the browser's link controls; plain clicks `select` in-app (or run `props.onclick`). */
+/**
+ * Link to a task's view: a real `href` gives it the browser's link controls; plain clicks `select` in-app (or run
+ * `props.onclick`). `data-id` serves middle clicks inside VSCode (see below).
+ */
 const taskLink = (id: string, props: Record<string, unknown>, ...kids: (Node | string | null)[]) =>
-  h('a', { href: db.tasks[id] && viewUrl(db.tasks[id]), onclick: inApp(() => select(id)), ...props }, ...kids);
+  h('a', { href: db.tasks[id] && viewUrl(db.tasks[id]), 'data-id': id, onclick: inApp(() => select(id)), ...props }, ...kids);
+
+// A webview has no browser tabs: inside VSCode a middle click on a task link asks for a pinned tab (not a preview one)
+if (embed) document.addEventListener('auxclick', e => {
+  const a = (e.target as Element).closest<HTMLElement>('a[data-id]');
+  if (e.button === 1 && a) { e.preventDefault(); vs!.postMessage({ t: 'open', id: a.dataset.id, pin: true }); }
+});
 
 /** Navigates to a task; returns false (without rendering) when unsaved edits block it. */
 function select(id: string): boolean {
@@ -657,7 +666,7 @@ function graph(): HTMLElement {
   }
   for (const v of ids) {
     const t = db.tasks[v];
-    const a = s('a', { href: viewUrl(t), transform: `translate(${x(v)},${y(v)})` },
+    const a = s('a', { href: viewUrl(t), 'data-id': v, transform: `translate(${x(v)},${y(v)})` },
       s('rect', { width: W, height: H, rx: 6, class: t.props.done === true ? 'done' : '' }),
       s('text', { x: 8, y: H / 2 + 4 }, trunc(v, 30)), s('title', {}, v));
     a.addEventListener('click', inApp(() => select(v)));

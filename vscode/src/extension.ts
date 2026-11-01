@@ -42,6 +42,9 @@ function report(root: Root): void {
   root.diags.set([...byFile].map(([f, list]) => [vscode.Uri.joinPath(root.uri, f), list]));
 }
 
+/** Elapsed time as `hh:mm:ss`, the GUI's timer format. */
+const clock = (ms: number) => { const t = Math.floor(ms / 1000); return [t / 3600, (t / 60) % 60, t % 60].map(x => String(Math.floor(x)).padStart(2, '0')).join(':'); };
+
 const isItem = (a: unknown): a is Item => typeof a === 'object' && a !== null && 'kind' in a && 'root' in a;
 
 // ---- Activation ----
@@ -52,7 +55,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   // ---- Databases ----
 
-  const changed = (r: Root) => { report(r); tree.refresh(); panels.changed(r); };
+  const changed = (r: Root) => { report(r); tree.refresh(); panels.changed(r); showTimers(); };
   const apply: Apply = async (r, op) => { try { return await r.pd.apply(op); } finally { changed(r); } };
   const close = (r: Root) => { r.unwatch(); r.diags.dispose(); panels.drop(r); };
 
@@ -75,7 +78,28 @@ export async function activate(ctx: vscode.ExtensionContext) {
     }
     roots.sort((a, b) => a.uri.fsPath < b.uri.fsPath ? -1 : 1);
     tree.refresh();
+    showTimers();
   });
+
+  // ---- Status bar: running timers ----
+
+  /** One item per running timer (`started` set) of every root, as the GUI header lists them; click opens the task. */
+  let timers: { item: vscode.StatusBarItem; started: number; title: string }[] = [];
+  const tick = () => timers.forEach(t => t.item.text = `$(clock) ${t.title} ${clock(Date.now() - t.started)}`);
+  const showTimers = () => {
+    timers.forEach(t => t.item.dispose());
+    timers = roots.flatMap(r => Object.values(r.pd.db.tasks).flatMap(t => {
+      const started = Date.parse(String(t.props.started ?? ''));
+      if (isNaN(started)) return [];
+      const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+      item.tooltip = `Running timer: ${t.id}`;
+      item.command = { title: 'Open task', command: 'plandown.open', arguments: [r, t.id] };
+      item.show();
+      return [{ item, started, title: t.title.length > 30 ? t.title.slice(0, 29) + '…' : t.title }];
+    }));
+    tick();
+  };
+  const ticker = setInterval(tick, 1000);
 
   // ---- Views ----
 
@@ -85,10 +109,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const panels = new Panels(vscode.Uri.file(join(dirname(require.resolve('plandown')), 'gui')), () => loading.then(() => roots), apply);
   ctx.subscriptions.push(view, view.onDidChangeCheckboxState(e => tree.checked(e)),
     vscode.window.registerCustomEditorProvider('plandown.file', panels, { webviewOptions: { retainContextWhenHidden: true } }),
-    vscode.window.registerWebviewPanelSerializer('plandown.view', panels),
+    vscode.window.registerCustomEditorProvider('plandown.task', panels, { webviewOptions: { retainContextWhenHidden: true } }),    vscode.window.registerWebviewPanelSerializer('plandown.view', panels),
     vscode.workspace.onDidChangeWorkspaceFolders(load),
     vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('plandown.searchDepth')) load(); }),
-    { dispose: () => roots.forEach(close) });
+    { dispose: () => { roots.forEach(close); clearInterval(ticker); timers.forEach(t => t.item.dispose()); } });
 
   // ---- Commands ----
 
@@ -135,7 +159,17 @@ export async function activate(ctx: vscode.ExtensionContext) {
   reg('plandown.filter', async () => { const text = await vscode.window.showInputBox({ prompt: 'Filter tasks by title or description', value: tree.filter }); if (text !== undefined) filter(text.trim()); });
   reg('plandown.clearFilter', () => filter(''));
   reg('plandown.refresh', load);
-  reg('plandown.open', (r: Root, id: string) => panels.openTask(r, id));
+  // Opening the same task twice within 500 ms (a double click on a tree row) pins its tab, as the Explorer does for files
+  let last = { r: undefined as Root | undefined, id: '', at: 0 };
+  reg('plandown.open', (r: Root, id: string) => {
+    const pin = last.r === r && last.id === id && Date.now() - last.at < 500;
+    last = { r, id, at: Date.now() };
+    panels.openTask(r, id, pin);
+  });
+  reg('plandown.openPinned', (item: Item) => {
+    const id = item.kind === 'node' ? item.node.task : item.kind === 'task' ? item.id : undefined;
+    if (id) panels.openTask(item.root, id, true);
+  });
 
   await load();
 }

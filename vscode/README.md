@@ -24,7 +24,7 @@ Changing the setting or the workspace folders triggers a new search. A `plandown
 
 The checklist icon in the activity bar opens the task tree. It holds what the GUI's navigation sidebar holds: folders, files, top-level tasks and their subtasks, merged the same way. With several databases, each one is a top-level entry.
 
-- Click a task to open it in its own tab.
+- Click a task to open it in a preview tab. Double-click it, or choose **Open in New Tab** from its context menu, to open a regular tab.
 - Tick the checkbox to mark a task done; subtasks keep their own state.
 - Each row shows the task type and, when set, `spent/effort` hours including subtasks.
 - **New Task** and **New Group** (in the panel title, or on a row) create next to the selected row, or at the top of the database when nothing is selected.
@@ -32,13 +32,19 @@ The checklist icon in the activity bar opens the task tree. It holds what the GU
 
 ## Task tabs
 
-Each task opens in a tab of its own, showing the GUI's editor without its header and navigation sidebar. Opening the same task again brings its tab forward. Links to other tasks (in the link lists, the graph or the timeline) open those tasks in their own tabs. A tab follows its task when you rename it and closes when you delete it.
+Each task opens in a tab of its own, showing the GUI's editor without its header and navigation sidebar. Opening the same task again brings its tab forward. Clicking a task in the tree, or a link to another task (in the link lists, the graph or the timeline), opens it as a preview tab, just like single-clicking a file in the Explorer: the next task opened replaces it. Double-click the tab title, or save a change in the task, to keep the tab open. Middle-click a link to open the task in a regular tab right away. A tab follows its task when you rename it and closes when you delete it.
+
+**Alt+Left** and **Alt+Right** (**Cmd+[** and **Cmd+]** on macOS) go back and forward through the tabs you visited, preview tabs included, while a Plandown tab is focused. They run VSCode's own **Go Back** and **Go Forward**, so the history is shared with text editors.
 
 The **Stored in** entries open the Markdown file at that line in a text editor.
 
 Any Markdown file can also be opened with Plandown: right-click it and choose **Open With... → Plandown** (or run **Reopen Editor With...**). Plandown then shows the first task of that file. The text editor stays the default for `.md` files.
 
 Tabs are restored when the window reloads.
+
+## Running timers
+
+Every running timer of every database appears in the status bar with its task title and elapsed time. Click it to open the task.
 
 ## Commands
 
