@@ -34,21 +34,21 @@ test('parser: checkboxes, links and code are not tasks; lists end at blank lines
 test('db: interwoven files merge into one task with links from headings and lists', async () => {
   const m = await Plandown.open(DEMO);
   assert.deepEqual(m.db.diagnostics, []);
-  const anim = m.db.tasks['[Task] Animation system'];
+  const anim = m.db.tasks['[Task] Offline mode'];
   assert.equal(anim.home.file, 'roadmap.md');
   assert.equal(anim.occurrences.length, 2);
   assert.equal(anim.props.effort, 16);
   assert.deepEqual(links(m, anim.id), [
-    'Blocked by [Task] Smart scene graph',
-    'Subtask [Task] High-level design of animation system',
-    'Subtask [Task] Implementation of a modular system',
-    'Subtask [Task] Implementation of common methods as examples',
-    'Subtask [Task] Programming interface for the system',
+    'Blocked by [Task] Account system',
+    'Subtask [Task] Conflict resolution',
+    'Subtask [Task] Design the sync protocol',
+    'Subtask [Task] Local recipe cache',
+    'Subtask [Task] Sync status indicator',
   ]);
-  assert.equal(m.db.edges.find(e => e.to === anim.id)?.from, '[Task] Game-ready 3D engine');
-  assert.equal(m.db.tasks['[Task] Stabilize the SQueLe core API'].body[0], 'The query library everything else builds on.');
-  assert.deepEqual(m.db.totals['[Task] Game-ready 3D engine'], { effort: 26, spent: 3.5 });
-  assert.equal(m.db.tasks['[Task] Port EAA shadows'].occurrences.length, 2);
+  assert.equal(m.db.edges.find(e => e.to === anim.id)?.from, '[Task] Pantry 1.0');
+  assert.equal(m.db.tasks['[Task] Choose an auth provider'].body[0], 'The hosted provider with passkeys and a free tier won.');
+  assert.deepEqual(m.db.totals['[Task] Pantry 1.0'], { effort: 37, spent: 6.5 });
+  assert.equal(m.db.tasks['[Task] Recipe import'].occurrences.length, 2);
 });
 
 test('db: anchors follow GitHub heading slugs and stay unique', () => {
@@ -73,21 +73,21 @@ test('db: invalid links and properties are reported', async () => {
 test('edits: update, create, link, unlink, timer and delete rewrite only their lines', async () => {
   const d = copy(), m = await Plandown.open(d), before = read(d, 'roadmap.md');
 
-  await m.apply({ op: 'update', id: '[Task] Smart scene graph', title: 'Scene graph', props: { Priority: 2 }, body: ['Flat prop list.'] });
-  const sg = m.db.tasks['[Task] Scene graph'];
-  assert.equal(sg.body[0], 'Flat prop list.');
+  await m.apply({ op: 'update', id: '[Task] Account system', title: 'Accounts', props: { Priority: 2 }, body: ['Email sign-in only.'] });
+  const sg = m.db.tasks['[Task] Accounts'];
+  assert.equal(sg.body[0], 'Email sign-in only.');
   assert.equal(sg.props.Priority, 2);
-  assert.ok(read(d, '2026-11.md').includes('- [Task] Scene graph'), 'renamed in every file');
-  assert.ok(links(m, '[Task] Animation system').includes('Blocked by [Task] Scene graph'));
+  assert.ok(read(d, 'notes/2026-11.md').includes('## [Task] Accounts'), 'renamed in every file');
+  assert.ok(links(m, '[Task] Offline mode').includes('Blocked by [Task] Accounts'));
 
-  await m.apply({ op: 'create', type: 'Task', title: 'Write docs', parent: '[Task] Port EAA shadows' });
-  await m.apply({ op: 'link', from: '[Task] Write docs', type: 'Blocked by', to: '[Bug] Shadow acne on EAA shadows' });
-  assert.ok(links(m, '[Task] Port EAA shadows').includes('Subtask [Task] Write docs'));
-  assert.ok(links(m, '[Task] Write docs').includes('Blocked by [Bug] Shadow acne on EAA shadows'));
-  await assert.rejects(m.apply({ op: 'link', from: '[Task] Write docs', type: 'Discovered during', to: '[Bug] Shadow acne on EAA shadows' }));
+  await m.apply({ op: 'create', type: 'Task', title: 'Write docs', parent: '[Task] Recipe import' });
+  await m.apply({ op: 'link', from: '[Task] Write docs', type: 'Blocked by', to: '[Bug] Imported recipes lose their photos' });
+  assert.ok(links(m, '[Task] Recipe import').includes('Subtask [Task] Write docs'));
+  assert.ok(links(m, '[Task] Write docs').includes('Blocked by [Bug] Imported recipes lose their photos'));
+  await assert.rejects(m.apply({ op: 'link', from: '[Task] Write docs', type: 'Discovered during', to: '[Bug] Imported recipes lose their photos' }));
 
-  await m.apply({ op: 'unlink', from: '[Task] Write docs', type: 'Blocked by', to: '[Bug] Shadow acne on EAA shadows' });
-  assert.ok(!read(d, '2026-11.md').includes('Blocked by:'), 'label removed with its last item');
+  await m.apply({ op: 'unlink', from: '[Task] Write docs', type: 'Blocked by', to: '[Bug] Imported recipes lose their photos' });
+  assert.ok(!read(d, 'notes/2026-11.md').includes('Blocked by:'), 'label removed with its last item');
 
   await m.apply({ op: 'start', id: '[Task] Write docs' });
   assert.equal(typeof m.db.tasks['[Task] Write docs'].props.started, 'string');
@@ -96,16 +96,16 @@ test('edits: update, create, link, unlink, timer and delete rewrite only their l
   assert.equal(typeof m.db.tasks['[Task] Write docs'].props.spent, 'number');
 
   await m.apply({ op: 'delete', id: '[Task] Write docs' });
-  await m.apply({ op: 'update', id: '[Task] Scene graph', title: 'Smart scene graph', props: {}, body: ['The scene is a flat list of props; the engine builds the optimal structure.'] });
+  await m.apply({ op: 'update', id: '[Task] Accounts', title: 'Account system', props: {}, body: ['Sign-in with an email address or a single sign-on provider.'] });
   assert.equal(read(d, 'roadmap.md'), before, 'round trip restores the file byte for byte');
   assert.deepEqual(m.db.diagnostics, []);
 });
 
 test('edits: refuse to write over files changed on disk', async () => {
   const d = copy(), m = await Plandown.open(d);
-  writeFileSync(join(d, 'roadmap.md'), read(d, 'roadmap.md') + '\nexternal\n');
-  await assert.rejects(m.apply({ op: 'delete', id: '[Bug] Shadow acne on EAA shadows' }), /changed on disk/);
-  assert.ok(read(d, 'roadmap.md').endsWith('external\n'));
+  writeFileSync(join(d, 'bugs.md'), read(d, 'bugs.md') + '\nexternal\n');
+  await assert.rejects(m.apply({ op: 'delete', id: '[Bug] Imported recipes lose their photos' }), /changed on disk/);
+  assert.ok(read(d, 'bugs.md').endsWith('external\n'));
 });
 
 test('body: text gaps around task lists, sub-chapters included, edited gap by gap', async () => {

@@ -2,7 +2,9 @@
 ---
 $meta:
   color: '#2f6fbf'
-Due-date: date
+Due-date:
+  type: date
+  description: The day the task must be finished.
 Priority:
   type: number
   enum: [1, 2, 3]
@@ -30,7 +32,9 @@ $meta:
 Severity:
   type: string
   enum: [low, medium, high]
-Fix-in-release: string
+Fix-in-release:
+  type: string
+  description: Version that must ship the fix.
 ---
 
 Blocks:

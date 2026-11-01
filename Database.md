@@ -15,7 +15,7 @@ Every `.md` file inside the folder and its subfolders is read. Hidden files and 
 flowchart LR
   F[plandown-format.md] -->|types, properties, link types| DB[(Task database)]
   A[roadmap.md] -->|tasks| DB
-  B[2026-11.md] -->|tasks| DB
+  B[notes/2026-11.md] -->|tasks| DB
   DB --> G[GUI and API]
   G -->|surgical line edits| A
   G -->|surgical line edits| B
@@ -26,8 +26,8 @@ flowchart LR
 Every heading or bullet point whose text starts with `[<Task type>]` is a task. The rest of the line is the task's title.
 
 ```markdown
-# [Task] Game-ready 3D engine
-- [Bug] Shadow acne on EAA shadows
+# [Task] Pantry 1.0
+- [Bug] Imported recipes lose their photos
 1. [Task] Numbered items work too
 - [x] [Task] A checkbox in front of the type is allowed
 ```
@@ -36,13 +36,13 @@ Lines that do not start with a task type are ordinary Markdown and are left alon
 
 ### Identity and interwoven files
 
-A task is identified by its type and title together: `[Task] Animation system`. Wherever that combination appears, in any file, it is the same task. This is how files interweave. A dated notes file can mention a task defined in the roadmap and add subtasks or links to it:
+A task is identified by its type and title together: `[Task] Offline mode`. Wherever that combination appears, in any file, it is the same task. This is how files interweave. A dated notes file can mention a task defined in the roadmap and add subtasks or links to it:
 
 ```markdown
 # Notes for November
 
-## [Task] Animation system
-- [Task] Implementation of common methods as examples
+## [Task] Offline mode
+- [Task] Sync status indicator
 ```
 
 Because of this, titles must be unique within a task type. Two different tasks named `[Task] Cleanup` would be merged into one.
@@ -58,20 +58,20 @@ Tasks that are not nested under another task are top-level tasks. Usually these 
 Right after a task's title line, a YAML block between two `---` lines holds its properties:
 
 ```markdown
-## [Task] Animation system
+## [Task] Offline mode
 ---
 Due-date: 2026-12-01
 Priority: 1
 effort: 16
 spent: 3.5
 ---
-Skeletal, mesh-morphing and dynamic animation in one modular system.
+Recipes, shopping lists and edits keep working without a network and sync when it returns.
 ```
 
 For a bullet task, indent the block to the bullet's text:
 
 ```markdown
-- [Task] Stabilize the SQueLe core API
+- [Task] Choose an auth provider
   ---
   effort: 6
   done: true
@@ -109,15 +109,15 @@ There are two ways to make a subtask:
 2. **Unlabeled lists.** A list of task bullets that has no text directly above it (a blank line, the title, or the property block is fine) contains subtasks of the task it belongs to.
 
 ```markdown
-# [Task] Game-ready 3D engine
+# [Task] Pantry 1.0
 
-## [Task] Animation system
+## [Task] Offline mode
 
-- [Task] High-level design of animation system
-- [Task] Programming interface for the system
+- [Task] Design the sync protocol
+- [Task] Local recipe cache
 ```
 
-Here `Animation system` is a subtask of `Game-ready 3D engine`, and both bullets are subtasks of `Animation system`. Each subtask in turn has its parent linked as `Parent`. A list labeled `Parent:` declares parents explicitly.
+Here `Offline mode` is a subtask of `Pantry 1.0`, and both bullets are subtasks of `Offline mode`. Each subtask in turn has its parent linked as `Parent`. A list labeled `Parent:` declares parents explicitly.
 
 Bullet tasks can have their own nested lists, so subtasks can be nested as deep as you like.
 
@@ -126,17 +126,17 @@ Bullet tasks can have their own nested lists, so subtasks can be nested as deep 
 To use any other link type, put a line of the form `<Link type>:` directly above the list:
 
 ```markdown
-## [Task] Animation system
+## [Task] Offline mode
 
 Blocked by:
-- [Task] Smart scene graph
+- [Task] Account system
 ```
 
-The entries are ordinary task occurrences. If `[Task] Smart scene graph` is defined elsewhere, this is a reference to it; if not, this line defines it.
+The entries are ordinary task occurrences. If `[Task] Account system` is defined elsewhere, this is a reference to it; if not, this line defines it.
 
 A blank line ends a list. Keep the items of one list together, and start a new list (with its own label, or none for subtasks) after a blank line.
 
-The same relation only needs to be written once. Writing `Blocked by: [Task] Smart scene graph` under Animation system is equivalent to writing `Blocks: [Task] Animation system` under Smart scene graph; if both are written, Plandown counts the link once.
+The same relation only needs to be written once. Writing `Blocked by: [Task] Account system` under Offline mode is equivalent to writing `Blocks: [Task] Offline mode` under Account system; if both are written, Plandown counts the link once.
 
 ## The format file
 

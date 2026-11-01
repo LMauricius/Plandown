@@ -14,8 +14,8 @@ A Plandown folder is a task database: every `.md` file under it (except hidden o
 A heading or bullet whose text starts with `[<Type>]` is a task; the rest of the line is its title.
 
 ```markdown
-# [Task] Game-ready 3D engine
-- [Bug] Shadow acne on EAA shadows
+# [Task] Pantry 1.0
+- [Bug] Imported recipes lose their photos
 1. [Task] Numbered items work too
 - [x] [Task] A checkbox before the type is allowed
 ```
@@ -38,7 +38,7 @@ Each place a task appears is an *occurrence*. The first one (in natural file ord
 A YAML block directly under the title line (no blank line between):
 
 ```markdown
-## [Task] Animation system
+## [Task] Offline mode
 ---
 Due-date: 2026-12-01
 Priority: 1
@@ -50,7 +50,7 @@ Description text starts here.
 For a bullet task, indent the block to the bullet's text column:
 
 ```markdown
-- [Task] Stabilize the core API
+- [Task] Choose an auth provider
   ---
   effort: 6
   done: true
@@ -81,12 +81,12 @@ Two ways, both equivalent:
 2. **Unlabeled list:** a list of task bullets with no text line directly above it (blank line, title or property block above is fine).
 
 ```markdown
-# [Task] Game-ready 3D engine
+# [Task] Pantry 1.0
 
-## [Task] Animation system
+## [Task] Offline mode
 
-- [Task] High-level design
-- [Task] Programming interface
+- [Task] Design the sync protocol
+- [Task] Local recipe cache
   - [Task] Nested subtasks work too
 ```
 
@@ -97,11 +97,11 @@ A list labeled `Parent:` declares parents explicitly. Never write `Subtask:` as 
 Put a `<Link type>:` line **directly above** the list (no blank line):
 
 ```markdown
-## [Task] Animation system
+## [Task] Offline mode
 
 Blocked by:
-- [Task] Smart scene graph
-- [Bug] Shadow acne on EAA shadows
+- [Task] Account system
+- [Bug] Imported recipes lose their photos
 ```
 
 - The link name must be declared by the **source** task's type, and must allow the **target**'s type. Check the format file each time.

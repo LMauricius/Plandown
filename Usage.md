@@ -40,7 +40,7 @@ The address bar follows what you look at, so you can bookmark a view, share it w
 | `/graph` | The Graph tab |
 | `/time` | The Time tab |
 
-A task's ID is the anchor a Markdown viewer gives its heading: `[Task] Animation system` becomes `task-animation-system`. If two tasks produce the same ID, later ones (in loading order) get `-1`, `-2` and so on appended. Renaming a task changes its ID, so old links to it stop selecting it.
+A task's ID is the anchor a Markdown viewer gives its heading: `[Task] Offline mode` becomes `task-offline-mode`. If two tasks produce the same ID, later ones (in loading order) get `-1`, `-2` and so on appended. Renaming a task changes its ID, so old links to it stop selecting it.
 
 ## Tasks tab
 

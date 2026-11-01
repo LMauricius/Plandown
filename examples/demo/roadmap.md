@@ -1,47 +1,56 @@
-# [Task] Game-ready 3D engine
+# [Task] Pantry 1.0
 ---
 Priority: 1
 effort: 4
-spent: 0
+spent: 1
 ---
-Make VitraeEngine ready for both graphics research and production.
+The first public release of Pantry, a recipe app that keeps working in the kitchen without a connection.
 
-## [Task] Animation system
+## [Task] Offline mode
 ---
 Due-date: 2026-12-01
+Priority: 1
 effort: 16
 spent: 3.5
 ---
-Skeletal, mesh-morphing and dynamic (IK) animation in one modular system.
+Recipes, shopping lists and edits keep working without a network and sync when it returns.
 
-- [Task] High-level design of animation system
+- [Task] Design the sync protocol
   ---
-  spent: 0
+  effort: 4
+  spent: 2
   ---
-  This **needs** description.
+  Last-write-wins or per-field merges? This **needs** a short write-up.
 
-- [Task] Programming interface for the system
-- [Task] Implementation of a modular system
+- [Task] Local recipe cache
+- [Task] Conflict resolution
 
 Blocked by:
-- [Task] Smart scene graph
+- [Task] Account system
 
-## [Task] Smart scene graph
-The scene is a flat list of props; the engine builds the optimal structure.
+Sync starts only after sign-in, so offline data always belongs to an account.
 
-- [Task] Stabilize the SQueLe core API
+### Open questions
+- Should photos be cached, or only the text?
+- How long are deleted recipes kept?
+
+## [Task] Account system
+Sign-in with an email address or a single sign-on provider.
+
+- [Task] Choose an auth provider
   ---
   effort: 6
   done: true
   ---
-  The query library everything else builds on.
-- [Task] Design a prop and LoD structure
+  The hosted provider with passkeys and a free tier won.
+- [Task] Password reset flow
 
-# [Bug] Shadow acne on EAA shadows
+## [Task] Onboarding screens
 ---
-Severity: high
+Priority: 2
+effort: 5
 ---
-Visible at grazing angles after the port.
+Three screens that introduce offline mode and recipe import. They reuse the store listing's wording, and the listing needs screenshots of them, so the two are written side by side.
 
-Discovered during:
-- [Task] Port EAA shadows
+Blocked by:
+- [Task] Store listing

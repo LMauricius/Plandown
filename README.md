@@ -24,11 +24,11 @@ Plandown is a standalone library; the GUI server is one front end for it.
 import { Plandown } from 'plandown';
 
 const plandown = await Plandown.open('path/to/folder');
-console.log(plandown.db.tasks['[Task] Animation system']);
+console.log(plandown.db.tasks['[Task] Offline mode']);
 
-await plandown.apply({ op: 'update', id: '[Task] Animation system', props: { effort: 20 } });
-await plandown.apply({ op: 'link', from: '[Task] Animation system', type: 'Blocked by', to: '[Task] Smart scene graph' });
-await plandown.apply({ op: 'start', id: '[Task] Animation system' });
+await plandown.apply({ op: 'update', id: '[Task] Offline mode', props: { effort: 20 } });
+await plandown.apply({ op: 'link', from: '[Task] Offline mode', type: 'Blocked by', to: '[Task] Account system' });
+await plandown.apply({ op: 'start', id: '[Task] Offline mode' });
 
 const stop = plandown.watch(() => console.log('folder changed'));
 ```
