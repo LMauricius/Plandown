@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { dirname, join, relative, sep } from 'node:path';
 import type { Op, Plandown } from 'plandown' with { 'resolution-mode': 'import' };
-import { TaskTree, type Item } from './tree.js';
+import { TaskTree, typeDecorations, type Item } from './tree.js';
 import { Panels } from './panels.js';
 
 /** One loaded database: the folder holding a `plandown-format.md`. */
@@ -107,7 +107,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const view = vscode.window.createTreeView('plandown.tree', { treeDataProvider: tree, manageCheckboxStateManually: true });   // a parent's Done never ticks its subtasks
   // `require.resolve` follows the `file:..` symlink to the library, whose `dist/gui` the webviews load
   const panels = new Panels(vscode.Uri.file(join(dirname(require.resolve('plandown')), 'gui')), () => loading.then(() => roots), apply);
-  ctx.subscriptions.push(view, view.onDidChangeCheckboxState(e => tree.checked(e)),
+  ctx.subscriptions.push(view, view.onDidChangeCheckboxState(e => tree.checked(e)), vscode.window.registerFileDecorationProvider(typeDecorations),
     vscode.window.registerCustomEditorProvider('plandown.file', panels, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerCustomEditorProvider('plandown.task', panels, { webviewOptions: { retainContextWhenHidden: true } }),    vscode.window.registerWebviewPanelSerializer('plandown.view', panels),
     vscode.workspace.onDidChangeWorkspaceFolders(load),
