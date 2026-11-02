@@ -553,12 +553,15 @@ function compactProps(t: Task): HTMLElement[] {
   return vals.filter(({ v }) => v && v.length <= 6).map(({ k, v }) => h('div', { className: 'prop-compact', title: `${k}: ${v}` }, v));
 }
 
-/** Start/stop button for `t`'s timer, shared by the editor and the Time tab; a running one ticks through `data-started`. */
-function timerButton(t: Task): HTMLButtonElement {
+/**
+ * Start/stop button for `t`'s timer, shared by the editor, the Time tab and task widgets; a running one ticks through
+ * `data-started`. `iconOnly` drops the label and the clock (the title still names the action).
+ */
+function timerButton(t: Task, iconOnly = false): HTMLButtonElement {
   const started = startedAt(t);
   return isNaN(started)
-    ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), 'Start timer')
-    : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
+    ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), !iconOnly && 'Start timer')
+    : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), !iconOnly && 'Stop timer ', !iconOnly && h('span', { 'data-started': started }, clock(Date.now() - started)));
 }
 
 /**
@@ -567,7 +570,7 @@ function timerButton(t: Task): HTMLButtonElement {
  * Shared by link lists and any view listing tasks.
  */
 function taskControls(t: Task): HTMLElement {
-  const done = h('input', { type: 'checkbox', checked: t.props.done === true, title: 'Done', onchange: () => setProp(t.id, 'done', done.checked || undefined) });
+  const done = h('input', { type: 'checkbox', checked: t.props.done === true, title: 'Done', 'data-col': 'done', onchange: () => setProp(t.id, 'done', done.checked || undefined) });
   // A stored value that is no number stays visible as text; an emptied field removes the property.
   // A span, not a label: a label would forward clicks on its text to the "+h" button, its first labelable element
   const hoursIn = (k: 'effort' | 'spent', pre?: HTMLElement) => {
@@ -579,9 +582,26 @@ function taskControls(t: Task): HTMLElement {
         if (n === undefined || Number.isFinite(n)) setProp(t.id, k, n); else toast(`${k} must be a number of hours`);
       },
     });
-    return h('span', { className: 'hours' }, k, ' ', pre, el, ' h');
+    // The name shows as a hover bubble (CSS, from data-label); the unit sits inside the box
+    return h('span', { className: 'hours', 'data-label': k, 'data-col': k }, pre, el, h('span', { className: 'unit' }, 'h'));
   };
-  return h('div', { className: 'controls' }, done, hoursIn('effort'), hoursIn('spent', logAdd(t)), timerButton(t));
+  const timer = timerButton(t, true);
+  timer.dataset.col = 'timer';
+  // Each control names its column (`data-col`): `columns` aligns equal ones across a list
+  return h('div', { className: 'controls' }, done, hoursIn('effort'), hoursIn('spent', logAdd(t)), timer);
+}
+
+/**
+ * Aligns the task widgets of one list as a table: one grid column per control name (`data-col`), in first-seen order,
+ * between the references (first) and the row ends (last). Rows lacking a control leave its cell empty. The CSS
+ * subgrids rows and widgets down to the controls, so every column takes its widest cell.
+ */
+function columns(list: HTMLElement): HTMLElement {
+  const els = Array.from(list.querySelectorAll<HTMLElement>('[data-col]')), keys = [...new Set(els.map(e => e.dataset.col!))];
+  // Numeric lines: the widget subgrid starts at the list's first column, so numbers mean the same column in both
+  for (const e of els) e.style.gridColumn = String(keys.indexOf(e.dataset.col!) + 2);
+  list.style.gridTemplateColumns = `repeat(${keys.length + 2}, auto)`;
+  return list;
 }
 
 /** `taskRef` and `taskControls` in one bubble. Siblings, not nested: an anchor may not hold controls (and their clicks would navigate). */
@@ -598,7 +618,7 @@ function logAdd(t: Task): HTMLElement {
     onsubmit: (e: Event) => { e.preventDefault(); if (input.valueAsNumber) run({ op: 'log', id: t.id, hours: input.valueAsNumber }); },
     onkeydown: (e: KeyboardEvent) => { if (e.key === 'Escape') { show(pop, false); plus.focus(); } },
   }, spinbox(input, () => {}), h('button', {}, icon('plus'), 'Add'));
-  const plus = h('button', { type: 'button', className: 'icon', title: 'Add hours to spent', onclick: () => { const open = pop.hidden; show(pop, open); if (open) input.focus(); } }, '+h');
+  const plus = h('button', { type: 'button', className: 'neutral', title: 'Add hours to spent', onclick: () => { const open = pop.hidden; show(pop, open); if (open) input.focus(); } }, '+h');
   // A null relatedTarget (a click on bare page, or on a button some browsers do not focus) keeps it open
   const wrap = h('span', { className: 'log-add', onfocusout: (e: FocusEvent) => { const to = e.relatedTarget as Node | null; if (to && !wrap.contains(to)) show(pop, false); } }, plus, pop);
   return wrap;
@@ -654,7 +674,7 @@ function live(t: Task, slots: Slot[]) {
   // One group per link kind; only kinds this task can declare get an add row (an untyped task can declare any)
   const linkable = (kind: string) => kind === PARENT || kind in linkTypes || !db.format.types[t.type];
   const group = (kind: string, focus: boolean) => h('div', { className: 'link-group' }, h('b', {}, kind),
-    h('ul', {}, ...(byKind.get(kind) ?? []).map(li), kind === SUBTASK ? subAddLi : linkable(kind) && addRow(kind, focus)));
+    columns(h('ul', {}, ...(byKind.get(kind) ?? []).map(li), kind === SUBTASK ? subAddLi : linkable(kind) && addRow(kind, focus))));
 
   // Every kind gets exactly one place: a group (kinds with a list block in the file first, in file order; then Subtask,
   // Parent, the format's kinds and any other linked ones) or, while empty and unopened, a reveal button after all groups
