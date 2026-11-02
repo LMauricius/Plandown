@@ -23,8 +23,11 @@ export interface Task {
   occurrences: Loc[];
 }
 
-/** `from --type--> to`; Parent links are stored flipped as Subtask so hierarchy has one direction. */
-export interface Edge { from: string; type: string; to: string; reverse: string | null; at: Loc; heading: boolean }
+/**
+ * `from --type--> to`; Parent links are stored flipped as Subtask so hierarchy has one direction. `at` is the declaring
+ * list entry (in `from`); `back` is `to`'s own declaration of the same relation (as `reverse`), if it states it too.
+ */
+export interface Edge { from: string; type: string; to: string; reverse: string | null; at: Loc; back: Loc | null; heading: boolean }
 
 /** Own value plus every unique Subtask descendant's value. */
 export interface Totals { effort: number; spent: number }
@@ -75,7 +78,7 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
   const diagnostics = [...formatDiagnostics];
   const diag = (at: Loc, severity: Diagnostic['severity'], message: string) => diagnostics.push({ ...at, severity, message });
   const occ = new Map<string, Occ[]>();
-  const edges: Edge[] = [], seen = new Set<string>();
+  const edges: Edge[] = [], seen = new Map<string, Edge>();   // `from\0type\0to` → edge
   const id = (n: Node) => taskId(n.type, n.title);
 
   // Links: declared by lists and by heading nesting; the same relation stated from both sides is kept once
@@ -90,9 +93,13 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
     }
     let reverse = linkReverse(format, from.type, type, to.type);
     if (type === PARENT) [a, b, type, reverse] = [b, a, SUBTASK, PARENT];
-    if (seen.has(`${a}\0${type}\0${b}`) || (reverse && seen.has(`${b}\0${reverse}\0${a}`))) return;
-    seen.add(`${a}\0${type}\0${b}`);
-    edges.push({ from: a, type, to: b, reverse, at: loc, heading });
+    if (seen.has(`${a}\0${type}\0${b}`)) return;
+    // Stated from the other side too: kept once, remembering the other declaration (the first one) for removal
+    const twin = reverse && seen.get(`${b}\0${reverse}\0${a}`);
+    if (twin) { twin.back ??= loc; return; }
+    const e: Edge = { from: a, type, to: b, reverse, at: loc, back: null, heading };
+    seen.set(`${a}\0${type}\0${b}`, e);
+    edges.push(e);
   }
 
   for (const pf of files) {

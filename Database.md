@@ -237,5 +237,5 @@ Some changes are made where they are declared:
 
 - **Renaming** a task (or changing its type) rewrites its title in every occurrence, in every file.
 - **Adding a link** appends an entry to the matching list of the task's home occurrence, creating the `<Link type>:` list if needed.
-- **Removing a link** deletes the list entry that declares it. An entry that also defines the task's content (properties, description or nested lists) is not removed; links that come from heading nesting are changed by moving the heading.
+- **Removing a link** deletes the list entry that declares it. When both tasks declare the same link, removing it from one task deletes only that task's entry; the other declaration remains. An entry that also defines the task's content (properties, description or nested lists) is not removed; links that come from heading nesting are changed by moving the heading.
 - **Deleting a task** removes every occurrence, including everything nested inside it.

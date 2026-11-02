@@ -329,6 +329,9 @@ button.pane-toggle { height: 20px; padding: 0 8px; font-size: 11px; line-height:
 .link-group li > :is(.ref, .ref-box) { grid-column: 1 / -2; }
 .link-group li > .ref { justify-self: start; }
 .link-group li > button { grid-column: -2; }
+/* Row buttons (outside the widget) show only while their row is hovered or focused; they keep their space */
+.link-group li > button { transition: opacity .15s, visibility .15s, background-color .15s, box-shadow .15s, filter .15s, transform .1s; }
+.link-group li:not(:hover, :focus-within) > button { opacity: 0; visibility: hidden; }
 .link-group li > form { grid-column: 1 / -1; }
 .link-group .ref-box { display: grid; grid-template-columns: subgrid; }
 .link-group .ref-box > .controls { display: contents; }

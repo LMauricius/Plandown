@@ -189,3 +189,19 @@ test('editor tokenizer: blocks, nested inline marks, fences and unclosed delimit
   assert.deepEqual([t[1].check, t[1].inl.map(i => [i.kind, i.url])], ['x', [['link', 'http://u']]]);
   assert.deepEqual([t[3].inl, t[5].inl], [[], []]);
 });
+
+test('links declared from both sides: kept once, each side unlinks only its own declaration', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  w('plandown-format.md', '# [A] a\n\nBlocks:\n- [B] Blocked by\n\n# [B] b\n\nBlocked by:\n- [A] Blocks\n');
+  w('t.md', '# [A] One\n\nBlocks:\n- [B] Two\n\n# [B] Two\n\nBlocked by:\n- [A] One\n');
+  const m = await Plandown.open(d), edge = () => m.db.edges.map(e => [e.from, e.at.line, e.back?.line ?? null]);
+  assert.deepEqual(m.db.diagnostics, []);
+  assert.deepEqual(edge(), [['[A] One', 3, 8]]);
+  // Two's own declaration goes; One's stays and now stands alone
+  await m.apply({ op: 'unlink', from: '[B] Two', type: 'Blocked by', to: '[A] One' });
+  assert.ok(read(d, 't.md').includes('Blocks:\n- [B] Two') && !read(d, 't.md').includes('Blocked by:'));
+  assert.deepEqual(edge(), [['[A] One', 3, null]]);
+  // Without a declaration of its own, Two unlinks One's
+  await m.apply({ op: 'unlink', from: '[B] Two', type: 'Blocked by', to: '[A] One' });
+  assert.deepEqual(m.db.edges, []);
+});

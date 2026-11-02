@@ -87,6 +87,7 @@ const ICONS = {
   stop: 'M4 4h8v8H4z',
   link: 'M6.5 9.5l3-3M7 4.5l1-1a2.8 2.8 0 0 1 4 4l-1 1M9 11.5l-1 1a2.8 2.8 0 0 1-4-4l1-1',
   x: 'M4 4l8 8M12 4l-8 8',
+  unlink: 'M7 4.5l1-1a2.8 2.8 0 0 1 4 4l-1 1M9 11.5l-1 1a2.8 2.8 0 0 1-4-4l1-1M2 2l2.5 2.5M14 14l-2.5-2.5',
   trash: 'M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 6.5v4.5M9.5 6.5v4.5',
   left: 'M10 3L5 8l5 5',
   right: 'M6 3l5 5-5 5',
@@ -641,12 +642,23 @@ function live(t: Task, slots: Slot[]) {
     if (e.from === t.id) add(e.type, { other: e.to, e });
     if (e.to === t.id) add(e.reverse ?? `${e.type} (reverse)`, { other: e.from, e });
   }
-  const li = ({ other, e }: { other: string; e: Edge }) => h('li', {},
-    db.tasks[other] ? taskRefControls(db.tasks[other]) : taskRef(other), ' ',
-    h('button', {
-      className: 'bad', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
-      title: e.heading ? 'Comes from heading nesting; move the heading in the file' : `Remove (declared at ${e.at.file}:${e.at.line + 1})`,
-    }, icon('x')));
+  // Removal: none for Subtask/Parent (moved via the tree and files). A link declared by this task (as the edge's `from`,
+  // or as `to` stating it back) is deleted here only, so a declaration by the other task survives and the row turns
+  // incoming; an incoming one is unlinked by editing the other task
+  const li = ({ other, e }: { other: string; e: Edge }) => {
+    const out = e.from === t.id, own = out ? e.at : e.back;
+    return h('li', {},
+      db.tasks[other] ? taskRefControls(db.tasks[other]) : taskRef(other), ' ',
+      e.type !== SUBTASK && (own
+        ? h('button', {
+          className: 'bad', title: `Delete link (declared at ${own.file}:${own.line + 1})`,
+          onclick: () => run({ op: 'unlink', from: t.id, type: out ? e.type : e.reverse!, to: other }),
+        }, icon('x'))
+        : h('button', {
+          className: 'bad', title: `Unlink: removes this link from the linked task (declared at ${e.at.file}:${e.at.line + 1})`,
+          onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
+        }, icon('unlink'))));
+  };
 
   // One target-picker row per link kind, appended as the last list item instead of a separate form with a type combobox.
   const linkTypes = db.format.types[t.type]?.links ?? {};

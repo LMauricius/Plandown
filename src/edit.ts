@@ -226,8 +226,10 @@ function unlink(ctx: Ctx, op: Extract<Op, { op: 'unlink' }>): Plan {
   const e = ctx.db.edges.find(e => (e.from === op.from && e.type === op.type && e.to === op.to) || (e.to === op.from && e.reverse === op.type && e.from === op.to));
   if (!e) throw new Error('No such link');
   if (e.heading) throw new Error('This link comes from heading nesting; move the heading in the file instead');
-  const o = [...ctx.occ.get(e.from)!, ...ctx.occ.get(e.to)!].find(o => o.pf.file === e.at.file && o.node.line === e.at.line)!;
-  if (hasBody(o.pf, o.node)) throw new Error(`${e.at.file}:${e.at.line + 1} defines this task's content; delete the task or edit the file instead`);
+  // `op.from`'s own declaration: `at` when it is the edge's `from`, else `back`; without one, the other side's (`at`)
+  const at = e.from !== op.from && e.back || e.at;
+  const o = [...ctx.occ.get(e.from)!, ...ctx.occ.get(e.to)!].find(o => o.pf.file === at.file && o.node.line === at.line)!;
+  if (hasBody(o.pf, o.node)) throw new Error(`${at.file}:${at.line + 1} defines this task's content; delete the task or edit the file instead`);
   return { edits: [removeItem(o.pf, o.node)], id: op.from };
 }
 
