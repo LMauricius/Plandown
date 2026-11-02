@@ -69,13 +69,37 @@ button.neutral { --c: var(--neutral); }
 /* Text links: buttons, and task links (`taskLink` in app.ts), which are real anchors */
 .link { border: none; background: none; box-shadow: none; text-shadow: none; padding: 0; color: var(--accent); text-decoration: none; }
 .link:hover:not(:disabled) { text-decoration: underline; filter: none; }
+/* Task references (`taskRef` in app.ts): a chip outlined in the type's color, holding the type bubble, the title and extras */
+.ref, .ref-box {
+  --c: var(--accent);
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; vertical-align: middle;
+  padding: 0 7px 0 0; border-radius: 999px 6px 6px 999px; text-decoration: none; color: var(--fg);
+  background: var(--surface); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); box-shadow: var(--shadow);
+  transition: background-color .15s, border-color .15s;
+}
+:is(.ref, .ref-box):hover { background: color-mix(in srgb, var(--c) 8%, var(--surface)); border-color: color-mix(in srgb, var(--c) 60%, transparent); }
+.ref .badge { border-color: transparent; align-self: stretch; display: inline-flex; align-items: center; }
+/* A reference with its controls (`taskRefControls`): one fully rounded bubble; the link inside drops its own outline */
+.ref-box { flex-wrap: wrap; gap: 4px 10px; padding-right: 12px; border-radius: 999px; }
+.ref-box > .ref, .ref-box > .ref:hover { border: none; background: none; box-shadow: none; }
+/* Built-in property controls (`taskControls`) */
+.controls { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+.controls .hours > input { width: 5em; padding: 1px 6px; }
+/*
+ * Task widget at rest (neither hovered nor focused inside): buttons fade out but keep their space, and inputs fade
+ * into plain values (borders stay, transparent, so nothing moves). A running timer stays visible.
+ */
+.ref-box .controls :is(button, input:not([type=checkbox])) { transition: opacity .15s, visibility .15s, background-color .15s, box-shadow .15s, filter .15s, transform .1s, --face .15s, --edge .15s, --ink .15s; }
+.ref-box:not(:hover, :focus-within) .controls button:not(.warn) { opacity: 0; visibility: hidden; }
+.ref-box:not(:hover, :focus-within) .controls input:not([type=checkbox]) { --face: transparent; --edge: transparent; --ink: transparent; box-shadow: none; }
+.controls > button { padding: 1px 8px; }
 
 /*
  * Bubbles (badges, editor markers, plain icon buttons): `--c` faded into the surface, so light in light mode and
  * dark in dark mode. Flatter than buttons: a soft top gloss and bottom shade suggest a rounded, extruded edge.
  * Round on one side (the side facing away from what they mark), thin padding.
  */
-.badge, .mk, button.icon, #timers a {
+.badge, .mk, button.icon {
   --c: var(--accent);
   color: color-mix(in srgb, var(--c) 72%, var(--fg));
   background: color-mix(in srgb, var(--c) 16%, var(--surface));
@@ -93,16 +117,21 @@ button.icon:active:not(:disabled) { background: color-mix(in srgb, var(--c) 38%,
 /*
  * Input fields: white (light mode) and sunken. Top, left and right are a thin brushed stroke (an uneven horizontal
  * gradient layered under the padding box) with an inner shadow falling from them; the bottom is a solid, darker
- * 3px writing line with no shadow. `--edge` is set here, not on :root, so focus can recolor it.
+ * 3px writing line with no shadow. `--edge` is set here, not on :root, so focus can recolor it; `--face` (fill) and
+ * `--ink` (writing line) likewise, so a field can fade into plain text (task widgets at rest).
  * `:where` keeps specificity 0, so `select` below can add layers.
  */
+/* Registered as colors so transitions interpolate them (unregistered custom properties switch instantly) */
+@property --face { syntax: '<color>'; inherits: true; initial-value: transparent; }
+@property --edge { syntax: '<color>'; inherits: true; initial-value: transparent; }
+@property --ink { syntax: '<color>'; inherits: true; initial-value: transparent; }
 :where(input:not([type=checkbox]), select, .mdedit:focus-within, .props-sidebar .mdedit) {
-  --edge: var(--field-edge);
+  --edge: var(--field-edge); --face: var(--field); --ink: var(--fg);
   --sunk: inset 0 3px 4px -1px light-dark(#00000030, #000000a0), inset 3px 0 3px -2px light-dark(#0000001f, #00000080), inset -3px 0 3px -2px light-dark(#0000001f, #00000080);
   border: 1px solid transparent; border-bottom-width: 3px; border-radius: var(--radius);
   background:
-    linear-gradient(var(--field), var(--field)) padding-box,
-    linear-gradient(to top, color-mix(in srgb, var(--edge) 40%, var(--fg)) 3px, transparent 3px) border-box,
+    linear-gradient(var(--face), var(--face)) padding-box,
+    linear-gradient(to top, color-mix(in srgb, var(--edge) 40%, var(--ink)) 3px, transparent 3px) border-box,
     linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 40%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 60%, transparent) 76%, var(--edge)) border-box;
   box-shadow: var(--sunk);
 }
@@ -124,8 +153,8 @@ select {
     linear-gradient(color-mix(in srgb, var(--c) 65%, #000), color-mix(in srgb, var(--c) 65%, #000)) right 24px top / 1px 100% no-repeat padding-box,
     var(--shine) right / 24px 100% no-repeat padding-box,
     var(--body) right / 24px 100% no-repeat padding-box,
-    linear-gradient(var(--field), var(--field)) padding-box,
-    linear-gradient(to top, color-mix(in srgb, var(--edge) 40%, var(--fg)) 3px, transparent 3px) border-box,
+    linear-gradient(var(--face), var(--face)) padding-box,
+    linear-gradient(to top, color-mix(in srgb, var(--edge) 40%, var(--ink)) 3px, transparent 3px) border-box,
     linear-gradient(100deg, var(--edge), color-mix(in srgb, var(--edge) 40%, transparent) 22%, var(--edge) 48%, color-mix(in srgb, var(--edge) 60%, transparent) 76%, var(--edge)) border-box;
 }
 select:hover { filter: brightness(1.03); }
@@ -174,7 +203,6 @@ header > b { font-size: 16px; letter-spacing: .02em; color: var(--accent); }
 #tabs button.on { font-weight: 500; }
 #timers { display: flex; gap: 12px; flex: 1; }
 #timers a { font-variant-numeric: tabular-nums; }
-#timers a:hover { text-decoration: none; filter: brightness(1.05); }
 #theme { font-size: 16px; line-height: 1.2; }
 #diags { max-height: 30vh; overflow: auto; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--panel); font-family: ui-monospace, monospace; font-size: 12px; }
 .error { color: var(--error); }
@@ -216,7 +244,19 @@ main { flex: 1; display: flex; min-height: 0; }
 .muted { color: var(--muted); font-size: 12px; }
 form.inline { display: flex; gap: 6px; flex-wrap: wrap; }
 form.inline input[type=text] { flex: 1; min-width: 8em; }
-form.log-add input { width: 8em; }
+/* "+h" log entry (`logAdd` in app.ts): a popup bubble under its button, pointing up at it */
+.log-add { position: relative; display: inline-block; }
+.log-pop {
+  /* max-content: an absolute box shrinks to its narrow containing block (the "+h" button), squeezing the row into a column */
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 10; width: max-content; display: flex; align-items: center; gap: 6px; padding: 6px; white-space: nowrap;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 12px #0003;
+}
+.log-pop[hidden] { display: none; }
+.log-pop::before {
+  content: ''; position: absolute; top: -6px; left: 10px; width: 10px; height: 10px; rotate: 45deg;
+  background: var(--surface); border: solid var(--border); border-width: 1px 0 0 1px;
+}
+.log-pop input { width: 8em; }
 
 /* ---- Tasks tab: editor ---- */
 .editor { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -259,6 +299,7 @@ button.pane-toggle { height: 20px; padding: 0 8px; font-size: 11px; line-height:
 .props-sidebar .prop { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; }
 .props-sidebar label { min-width: 5.5em; font-size: 12px; font-weight: 500; color: var(--muted); }
 .props-sidebar .prop > :not(label) { flex: 1 1 9em; min-width: 0; }
+.props-sidebar .prop > .log-add { flex: none; }
 .props-sidebar .prop > input[type=checkbox] { flex: none; width: 16px; height: 16px; }
 .prop-compact { font-size: 11px; color: var(--muted); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Long unbroken titles wrap like in the description editor instead of widening the pane */

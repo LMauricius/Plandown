@@ -199,6 +199,19 @@ const inApp = (f: () => void) => (e: MouseEvent) => { if (e.button || e.ctrlKey 
 const taskLink = (id: string, props: Record<string, unknown>, ...kids: (Node | string | null)[]) =>
   h('a', { href: db.tasks[id] && viewUrl(db.tasks[id]), 'data-id': id, onclick: inApp(() => select(id)), ...props }, ...kids);
 
+/**
+ * Reference to a task wherever one is mentioned outside the tree (link lists, Time tab, header timers): a chip in the
+ * type's color opening with its type bubble, then the title and `extra`. A link to a missing task shows its raw id.
+ */
+const taskRef = (id: string, ...extra: (Node | string | null)[]) => {
+  const t = db.tasks[id];
+  return typed(taskLink(id, { className: `ref${t?.props.done === true ? ' done' : ''}`, title: id },
+    badge(t?.type ?? ''), h('span', { className: 'title' }, t?.title ?? id), ...extra), t?.type ?? '');
+};
+
+/** Sets one property merged onto the latest state, so concurrent file edits survive; undefined removes it. */
+const setProp = (id: string, k: string, v: unknown) => run({ op: 'update', id, props: { ...db.tasks[id].props, [k]: v } });
+
 // A webview has no browser tabs: inside VSCode a middle click on a task link asks for a pinned tab (not a preview one)
 if (embed) document.addEventListener('auxclick', e => {
   const a = (e.target as Element).closest<HTMLElement>('a[data-id]');
@@ -292,7 +305,7 @@ function header() {
   $('tabs').replaceChildren(...(['Tasks', 'Graph', 'Time'] as const).map(n => h('button', { className: n === tab ? 'on' : '', onclick: () => { tab = n; go(); } }, icon(tabIcon[n]), n)));
   $('timers').replaceChildren(...Object.values(db.tasks).filter(t => t.props.started).map(t => {
     const st = Date.parse(String(t.props.started));
-    return taskLink(t.id, { className: 'link', title: 'Running timer' }, icon('clock'), `${trunc(t.title, 30)} `, h('span', { 'data-started': st }, clock(Date.now() - st)));
+    return taskRef(t.id, icon('clock'), h('span', { 'data-started': st }, clock(Date.now() - st)));
   }));
   const errors = db.diagnostics.filter(d => d.severity === 'error').length, warnings = db.diagnostics.length - errors;
   const dt = $('diag-toggle');
@@ -352,7 +365,7 @@ function row(t: Task, depth: number, near: string, merged?: TreeNode): HTMLEleme
   const cb = h('input', {
     type: 'checkbox', checked: done, title: 'Done',
     onclick: (e: Event) => e.stopPropagation(),
-    onchange: () => run({ op: 'update', id: t.id, props: { ...t.props, done: cb.checked || undefined } }),
+    onchange: () => setProp(t.id, 'done', cb.checked || undefined),
   });
   const r = taskLink(t.id, {
     className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
@@ -435,10 +448,14 @@ function field(s: PropSchema, v: unknown, mark: () => void): { el: HTMLElement; 
   const fits = s.type === 'number' ? typeof v === 'number' : s.type === 'date' ? typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) : true;
   const type = !fits && str ? 'text' : s.type === 'number' ? 'number' : s.type === 'date' ? 'date' : 'text';
   const input = h('input', { type, step: s.type === 'number' ? 'any' : undefined, value: str, title: s.description, oninput: mark });
-  if (type !== 'number') return { el: input, value: () => input.value };
-  // Own spin buttons: native ones cannot be styled. Manual math, since stepUp() throws on step="any"
-  const spin = (d: number, label: string) => h('button', { type: 'button', tabIndex: -1, onclick: () => { input.value = String((Number(input.value) || 0) + d); mark(); } }, label);
-  return { el: h('span', { className: 'spin' }, input, spin(1, '▲'), spin(-1, '▼')), value: () => input.value };
+  return { el: type === 'number' ? spinbox(input, mark) : input, value: () => input.value };
+}
+
+/** Number input with own spin buttons (native ones cannot be styled); `onInput` also runs on spins, which fire no input event. */
+function spinbox(input: HTMLInputElement, onInput: () => void): HTMLElement {
+  // Manual math, since stepUp() throws on step="any"
+  const spin = (d: number, label: string) => h('button', { type: 'button', tabIndex: -1, onclick: () => { input.value = String((Number(input.value) || 0) + d); onInput(); } }, label);
+  return h('span', { className: 'spin' }, input, spin(1, '▲'), spin(-1, '▼'));
 }
 
 function read(raw: string, s: PropSchema): unknown {
@@ -516,7 +533,7 @@ function taskForm(t: Task): Form {
   const props = h('div', { className: 'props-sidebar' },
     h('div', { className: 'prop' }, h('label', {}, 'Type'), type),
     h('div', { className: 'prop' }, h('label', {}, 'Done'), done),
-    ...fields.map(({ k, s, el }) => h('div', { className: 'prop' }, h('label', { title: s.description ?? '' }, k === 'effort' || k === 'spent' ? `${k} (h)` : k), el.el)),
+    ...fields.map(({ k, s, el }) => h('div', { className: 'prop' }, h('label', { title: s.description ?? '' }, k === 'effort' || k === 'spent' ? `${k} (h)` : k), k === 'spent' && logAdd(t), el.el)),
     ...extra.map(k => h('div', { className: 'prop' }, h('label', { className: 'muted' }, k), h('span', { className: 'muted' }, `${JSON.stringify(t.props[k])} (not in the schema; edit it in the file)`))));
   return { form: f, props, slots };
 }
@@ -544,6 +561,49 @@ function timerButton(t: Task): HTMLButtonElement {
     : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), 'Stop timer ', h('span', { 'data-started': started }, clock(Date.now() - started)));
 }
 
+/**
+ * `t`'s built-in properties, editable in place without opening the task: done, effort and spent (each committing on
+ * change, i.e. blur or Enter), a "+h" button opening a spinbox of hours to add to spent, and the timer.
+ * Shared by link lists and any view listing tasks.
+ */
+function taskControls(t: Task): HTMLElement {
+  const done = h('input', { type: 'checkbox', checked: t.props.done === true, title: 'Done', onchange: () => setProp(t.id, 'done', done.checked || undefined) });
+  // A stored value that is no number stays visible as text; an emptied field removes the property.
+  // A span, not a label: a label would forward clicks on its text to the "+h" button, its first labelable element
+  const hoursIn = (k: 'effort' | 'spent', pre?: HTMLElement) => {
+    const v = t.props[k];
+    const el = h('input', {
+      type: v == null || typeof v === 'number' ? 'number' : 'text', step: 'any', value: v == null ? '' : String(v), placeholder: '-', ariaLabel: `${k} (hours)`,
+      onchange: () => {
+        const n = el.value.trim() ? Number(el.value) : undefined;
+        if (n === undefined || Number.isFinite(n)) setProp(t.id, k, n); else toast(`${k} must be a number of hours`);
+      },
+    });
+    return h('span', { className: 'hours' }, k, ' ', pre, el, ' h');
+  };
+  return h('div', { className: 'controls' }, done, hoursIn('effort'), hoursIn('spent', logAdd(t)), timerButton(t));
+}
+
+/** `taskRef` and `taskControls` in one bubble. Siblings, not nested: an anchor may not hold controls (and their clicks would navigate). */
+const taskRefControls = (t: Task) => typed(h('span', { className: 'ref-box' }, taskRef(t.id), taskControls(t)), t.type);
+
+/**
+ * "+h" button toggling a popup bubble under it, with a spinbox of hours to add to `t`'s spent (negative ones correct it).
+ * Enter or Add logs them; Escape, or focus moving to another control, closes it. Shared by the props pane and `taskControls`.
+ */
+function logAdd(t: Task): HTMLElement {
+  const input = h('input', { type: 'number', step: 'any', placeholder: 'Hours to add' });
+  const pop = h('form', {
+    className: 'log-pop', hidden: true,
+    onsubmit: (e: Event) => { e.preventDefault(); if (input.valueAsNumber) run({ op: 'log', id: t.id, hours: input.valueAsNumber }); },
+    onkeydown: (e: KeyboardEvent) => { if (e.key === 'Escape') { show(pop, false); plus.focus(); } },
+  }, spinbox(input, () => {}), h('button', {}, icon('plus'), 'Add'));
+  const plus = h('button', { type: 'button', className: 'icon', title: 'Add hours to spent', onclick: () => { const open = pop.hidden; show(pop, open); if (open) input.focus(); } }, '+h');
+  // A null relatedTarget (a click on bare page, or on a button some browsers do not focus) keeps it open
+  const wrap = h('span', { className: 'log-add', onfocusout: (e: FocusEvent) => { const to = e.relatedTarget as Node | null; if (to && !wrap.contains(to)) show(pop, false); } }, plus, pop);
+  return wrap;
+}
+
 /** Parts of the editor that act immediately (timer, links, subtasks, deletion); rebuilt on every refresh, refilling the form's link slots. */
 function live(t: Task, slots: Slot[]) {
   // Time
@@ -551,11 +611,6 @@ function live(t: Task, slots: Slot[]) {
   const lapBtn = !isNaN(startedAt(t)) && h('button', {
     className: 'warn', title: 'Add the elapsed time to spent and restart the timer', onclick: () => run({ op: 'lap', id: t.id }),
   }, icon('check'), 'Log elapsed');
-  // Manual entry: hours added to `spent` (negative ones correct it); the Add button appears once the field holds a nonzero number
-  const logBtn = h('button', { hidden: true }, icon('plus'), 'Add');
-  const logIn = h('input', { type: 'number', step: 'any', placeholder: 'Hours to add', oninput: () => show(logBtn, !!logIn.valueAsNumber) });
-  const logForm = h('form', { className: 'inline log-add', onsubmit: (e: Event) => { e.preventDefault(); if (logIn.valueAsNumber) run({ op: 'log', id: t.id, hours: logIn.valueAsNumber }); } },
-    logIn, logBtn);
   const timeSummary = `Including subtasks: ${hours(tot.spent)} h spent of ${hours(tot.effort)} h estimated`;
 
   // Edges keyed by the kind as seen from this task: its own type when outgoing, its reverse name when incoming.
@@ -567,8 +622,7 @@ function live(t: Task, slots: Slot[]) {
     if (e.to === t.id) add(e.reverse ?? `${e.type} (reverse)`, { other: e.from, e });
   }
   const li = ({ other, e }: { other: string; e: Edge }) => h('li', {},
-    taskLink(other, { className: 'link' },
-      badge(db.tasks[other]?.type ?? ''), ' ', db.tasks[other]?.title ?? other), ' ',
+    db.tasks[other] ? taskRefControls(db.tasks[other]) : taskRef(other), ' ',
     h('button', {
       className: 'bad', disabled: e.heading, onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
       title: e.heading ? 'Comes from heading nesting; move the heading in the file' : `Remove (declared at ${e.at.file}:${e.at.line + 1})`,
@@ -640,7 +694,7 @@ function live(t: Task, slots: Slot[]) {
     return embed ? h('button', { type: 'button', className: 'link', onclick: () => vs!.postMessage({ t: 'reveal', file: o.file, line: o.line }) }, text) : h('div', { className: 'muted' }, text);
   });
 
-  return { timerBtn, lapBtn, logForm, timeSummary, linkBlocks: [...placed.values()], linkRevealBtns, occurrences, deleteBtn };
+  return { timerBtn, lapBtn, timeSummary, linkBlocks: [...placed.values()], linkRevealBtns, occurrences, deleteBtn };
 }
 
 // ---- Graph tab ----
@@ -717,9 +771,9 @@ function time(): HTMLElement {
   const rows: HTMLElement[] = [], byType = new Map<string, { count: number; done: number; effort: number; spent: number }>();
   walk((t, d) => {
     const tot = db.totals[t.id];
-    const name = h('td', {}, taskLink(t.id, { className: 'link' }, t.title));
+    const name = h('td', {}, taskRef(t.id));
     name.style.paddingLeft = `${8 + d * 16}px`;
-    rows.push(h('tr', { className: [tot.effort && tot.spent > tot.effort && 'over', t.id === sel && 'sel'].filter(Boolean).join(' ') }, name, h('td', {}, badge(t.type)),
+    rows.push(h('tr', { className: [tot.effort && tot.spent > tot.effort && 'over', t.id === sel && 'sel'].filter(Boolean).join(' ') }, name,
       own(t, 'effort'), own(t, 'spent'), n(tot.effort), n(tot.spent),
       h('td', {}, tot.effort ? h('progress', { max: tot.effort, value: Math.min(tot.spent, tot.effort), title: `${Math.round(100 * tot.spent / tot.effort)}%` }) : ''),
       h('td', { className: 'row-time' }, timerButton(t))));
@@ -734,7 +788,7 @@ function time(): HTMLElement {
   }
   const th = (t: string, num = false) => h('th', { className: num ? 'n' : '' }, t);
   return h('div', { className: 'view' },
-    h('table', {}, h('thead', {}, h('tr', {}, th('Task'), th('Type'), th('Effort', true), th('Spent', true), th('Σ Effort', true), th('Σ Spent', true), th('Progress'), th(''))), h('tbody', {}, ...rows)),
+    h('table', {}, h('thead', {}, h('tr', {}, th('Task'), th('Effort', true), th('Spent', true), th('Σ Effort', true), th('Σ Spent', true), th('Progress'), th(''))), h('tbody', {}, ...rows)),
     h('p', { className: 'muted' }, 'Hours. Σ columns include every subtask once. Red rows have spent more than estimated.'),
     h('table', {}, h('thead', {}, h('tr', {}, th('Type'), th('Tasks', true), th('Done', true), th('Effort', true), th('Spent', true))),
       h('tbody', {}, ...[...byType].map(([type, b]) => h('tr', {}, h('td', {}, type), n(b.count), n(b.done), n(b.effort), n(b.spent))))));
@@ -802,7 +856,7 @@ function render() {
     ? [...compactProps(t), lv.timerBtn, lv.lapBtn, lv.deleteBtn]
     : [
         bundle.props,
-        h('div', { className: 'sidebar-section' }, h('h3', {}, 'Time'), h('div', { className: 'actions' }, lv.timerBtn, lv.lapBtn, lv.logForm, h('span', { className: 'muted' }, lv.timeSummary))),
+        h('div', { className: 'sidebar-section' }, h('h3', {}, 'Time'), h('div', { className: 'actions' }, lv.timerBtn, lv.lapBtn, h('span', { className: 'muted' }, lv.timeSummary))),
         h('div', { className: 'sidebar-section' }, h('h3', {}, 'Stored in'), ...lv.occurrences),
         h('div', { className: 'sidebar-section actions' }, lv.deleteBtn),
       ];
