@@ -35,6 +35,7 @@
       { "command": "plandown.filter", "title": "Filter Tasks", "category": "Plandown", "icon": "$(filter)" },
       { "command": "plandown.clearFilter", "title": "Clear Filter", "category": "Plandown", "icon": "$(clear-all)" },
       { "command": "plandown.openPinned", "title": "Open in New Tab", "category": "Plandown" },
+      { "command": "plandown.openNode", "title": "Open Group", "category": "Plandown" },
       { "command": "plandown.openBrowser", "title": "Open in Browser", "category": "Plandown", "icon": "$(globe)" },
       { "command": "plandown.refresh", "title": "Rescan Workspace", "category": "Plandown", "icon": "$(refresh)" }
     ],
@@ -43,7 +44,7 @@
       { "key": "alt+right", "mac": "cmd+]", "command": "workbench.action.navigateForward", "when": "activeCustomEditorId == 'plandown.task' || activeCustomEditorId == 'plandown.file' || activeWebviewPanelId == 'plandown.view'" }
     ],
     "menus": {
-      "commandPalette": [{ "command": "plandown.openPinned", "when": "false" }],
+      "commandPalette": [{ "command": "plandown.openPinned", "when": "false" }, { "command": "plandown.openNode", "when": "false" }],
       "editor/title": [
         { "command": "plandown.graph", "group": "navigation@1", "when": "plandown.active" },
         { "command": "plandown.time", "group": "navigation@2", "when": "plandown.active" },
@@ -60,7 +61,7 @@
       "view/item/context": [
         { "command": "plandown.create", "group": "inline@1", "when": "view == plandown.tree" },
         { "command": "plandown.createGroup", "group": "inline@2", "when": "view == plandown.tree && viewItem =~ /^node/" },
-        { "command": "plandown.openPinned", "group": "navigation@1", "when": "view == plandown.tree && viewItem =~ /^(task|nodeTask)$/" }
+        { "command": "plandown.openPinned", "group": "navigation@1", "when": "view == plandown.tree && viewItem =~ /^(task|node|nodeTask)$/" }
       ]
     }
   },

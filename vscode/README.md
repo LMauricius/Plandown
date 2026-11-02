@@ -25,6 +25,8 @@ Changing the setting or the workspace folders triggers a new search. A `plandown
 The checklist icon in the activity bar opens the task tree. It holds what the GUI's navigation sidebar holds: folders, files, top-level tasks and their subtasks, merged the same way. With several databases, each one is a top-level entry.
 
 - Click a task to open it in a preview tab. Double-click it, or choose **Open in New Tab** from its context menu, to open a regular tab.
+- Click a folder or a file to open its page in the same way: the outline of everything inside it, as described in [Usage.md](../Usage.md#group-pages). Inside a page, clicking a nested folder or file opens its own page.
+- Clicking a row also expands it.
 - Tick the checkbox to mark a task done; subtasks keep their own state.
 - Each row shows the task type and, when set, `spent/effort` hours including subtasks.
 - **New Task** and **New Group** (in the panel title, or on a row) create next to the selected row, or at the top of the database when nothing is selected.

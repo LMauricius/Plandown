@@ -47,7 +47,7 @@ export function serve(plandown: Plandown, port = 4848): Promise<{ url: string; c
       const path = new URL(req.url ?? '/', 'http://localhost').pathname;
 
       // GUI routes (see `url()` in gui/app.ts) all load the page, which reads the view from its location
-      const file = STATIC[path] ?? (/^\/(view\/[^/]+|graph|time)$/.test(path) ? STATIC['/'] : undefined);
+      const file = STATIC[path] ?? (/^\/(view\/[^/]+|group\/.+|graph|time)$/.test(path) ? STATIC['/'] : undefined);
       if (req.method === 'GET' && file) return send(res, 200, file[1], await readFile(GUI + file[0]));
       if (req.method === 'GET' && path === '/api/state') return json(200, plandown.db);
       if (req.method === 'GET' && path === '/api/events') {

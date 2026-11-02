@@ -1,44 +1,51 @@
 /**
- * Webview tabs running the library's GUI (`dist/gui`): one graph and one time tab per root (webview panels), task tabs
- * (the `plandown.task` custom editor on virtual URIs, see `taskUri`, so they get VSCode's preview tabs and history) and the
+ * Webview tabs running the library's GUI (`dist/gui`): one graph and one time tab per root (webview panels), task and
+ * group pages (the `plandown.task` custom editor on virtual URIs, see `pageUri`, so they get VSCode's preview tabs and history) and the
  * `plandown.file` custom editor that shows the first task of a `.md` file. The GUI talks to the host through
  * postMessage (see `Msg`); the host answers from the root's `Plandown` instance.
  */
 import * as vscode from 'vscode';
 import { relative, sep } from 'node:path';
-import type { Op } from 'plandown' with { 'resolution-mode': 'import' };
+import type { Op, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
 import { typeIcon } from './tree.js';
 
 /**
  * Webview → host: `state` and `op` carry a request id `rid` answered with `{ rid, db }` / `{ rid, id, db, error }`
- * (the HTTP API's responses); `open` asks for another task's tab (`pin`: a pinned one, not a preview); `reveal` opens a file at a line in a text editor.
+ * (the HTTP API's responses); `open` asks for another task's tab (`pin`: a pinned one, not a preview), `openNode` for a group
+ * or file page; `reveal` opens a file at a line in a text editor.
  * Host → webview: `changed` (the folder was reloaded; the GUI refetches state, as on its SSE event).
  */
-type Msg = { t: 'state'; rid: number } | { t: 'op'; rid: number; op: Op } | { t: 'open'; id: string; pin?: boolean } | { t: 'reveal'; file: string; line: number };
+type Msg = { t: 'state'; rid: number } | { t: 'op'; rid: number; op: Op } | { t: 'open'; id: string; pin?: boolean } | { t: 'openNode'; path: string; pin?: boolean }
+  | { t: 'reveal'; file: string; line: number };
 
-/** What a tab shows; `task` tabs follow their task across renames. */
-type View = { kind: 'task'; id: string } | { kind: 'graph' } | { kind: 'time' };
+/** What a tab shows; `task` tabs follow their task across renames, `node` tabs (a tree node's page) stay on their path. */
+type View = { kind: 'task'; id: string } | { kind: 'node'; path: string } | { kind: 'graph' } | { kind: 'time' };
+type Page = Extract<View, { kind: 'task' | 'node' }>;
 
 /** `uri`: the virtual URI of a `plandown.task` tab. */
 interface Tab { panel: vscode.WebviewPanel; root: Root; view: View; key: string; uri?: vscode.Uri }
 
 // ---- Utilities ----
 
-const keyOf = (root: Root, view: View) => `${root.uri.fsPath}\0${view.kind === 'task' ? view.id : view.kind}`;
+// Node paths get a leading `/`, which neither task ids (`[Type] Title`) nor view kinds have
+const keyOf = (root: Root, view: View) => `${root.uri.fsPath}\0${view.kind === 'task' ? view.id : view.kind === 'node' ? '/' + view.path : view.kind}`;
 const TITLES = { graph: 'Graph', time: 'Timeline' };
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
 /**
- * Virtual URI of a task tab: `<root>/.plandown-tasks/<title>?root=…&id=…` (no such file exists). Custom editor tabs are
- * labeled with the URI's basename (`panel.title` is ignored), so the basename is the title (`/` swapped for a lookalike);
- * the query names the task. It stays in the root's own scheme (`file`, or the remote one) because VSCode's Go Back/Forward
+ * Virtual URI of a page tab: `<root>/.plandown-tasks/<title>?root=…&id=…` for a task, `…/<name>?root=…&node=<path>` for a
+ * tree node (no such file exists). Custom editor tabs are labeled with the URI's basename (`panel.title` is ignored), so
+ * the basename is the title (`/` swapped for a lookalike); the query names the page. It stays in the root's own scheme (`file`, or the remote one) because VSCode's Go Back/Forward
  * history drops closed editors of other schemes, which would forget every replaced preview tab.
  */
-const taskUri = (root: Root, id: string) => root.uri.with({
-  path: `${root.uri.path}/.plandown-tasks/${(root.pd.db.tasks[id]?.title ?? id).replace(/\//g, '∕')}`,
-  query: new URLSearchParams({ root: root.uri.fsPath, id }).toString(),
+const pageUri = (root: Root, page: Page) => root.uri.with({
+  path: `${root.uri.path}/.plandown-tasks/${(page.kind === 'node' ? page.path.slice(page.path.lastIndexOf('/') + 1) : root.pd.db.tasks[page.id]?.title ?? page.id).replace(/\//g, '∕')}`,
+  query: new URLSearchParams(page.kind === 'node' ? { root: root.uri.fsPath, node: page.path } : { root: root.uri.fsPath, id: page.id }).toString(),
 });
+
+/** Whether `path` names a node of `tree` (paths from a page are not trusted). */
+const hasNode = (tree: TreeNode[], path: string): boolean => tree.some(n => n.path === path || (path.startsWith(n.path + '/') && hasNode(n.kids, path)));
 
 /** Webview page with nothing but a message (files outside a root or without tasks). */
 const note = (text: string) => `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'"><p>${esc(text)}</p>`;
@@ -53,7 +60,7 @@ function html(webview: vscode.Webview, gui: vscode.Uri, root: Root, view: View):
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src ${webview.cspSource}">
 <link rel="stylesheet" href="${src('style.css')}"></head>
-<body data-view="${view.kind}" data-root="${esc(root.uri.fsPath)}"${view.kind === 'task' ? ` data-task="${esc(view.id)}"` : ''}>
+<body data-view="${view.kind}" data-root="${esc(root.uri.fsPath)}"${view.kind === 'task' ? ` data-task="${esc(view.id)}"` : view.kind === 'node' ? ` data-node="${esc(view.path)}"` : ''}>
 <main id="main"></main><div id="toast" hidden></div>
 <script type="module" src="${src('app.js')}"></script></body></html>`;
 }
@@ -86,10 +93,15 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
    * Reveals the task's tab or opens it as a preview tab (replacing the group's preview tab, as for files). `pin` opens a
    * pinned tab instead; reopening a task tab's own URI pins it if it is the active group's preview tab.
    */
-  openTask(root: Root, id: string, pin = false): void {
-    const hit = this.tabs.get(keyOf(root, { kind: 'task', id }));
+  openTask(root: Root, id: string, pin = false): void { this.openPage(root, { kind: 'task', id }, pin); }
+
+  /** Reveals or opens a group or file page, as `openTask`. */
+  openNode(root: Root, path: string, pin = false): void { this.openPage(root, { kind: 'node', path }, pin); }
+
+  private openPage(root: Root, page: Page, pin: boolean): void {
+    const hit = this.tabs.get(keyOf(root, page));
     if (hit && !(pin && hit.uri)) return hit.panel.reveal();
-    vscode.commands.executeCommand('vscode.openWith', hit?.uri ?? taskUri(root, id), 'plandown.task', { preview: !pin, viewColumn: vscode.ViewColumn.Active });
+    vscode.commands.executeCommand('vscode.openWith', hit?.uri ?? pageUri(root, page), 'plandown.task', { preview: !pin, viewColumn: vscode.ViewColumn.Active });
   }
 
   /** Reveals or opens the root's graph or time tab. */
@@ -119,7 +131,7 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   private async relabel(old: vscode.Uri, root: Root, id: string): Promise<void> {
     for (const g of vscode.window.tabGroups.all) for (const t of g.tabs) {
       if (!(t.input instanceof vscode.TabInputCustom) || t.input.uri.toString() !== old.toString()) continue;
-      await vscode.commands.executeCommand('vscode.openWith', taskUri(root, id), 'plandown.task', { preview: t.isPreview, viewColumn: g.viewColumn });
+      await vscode.commands.executeCommand('vscode.openWith', pageUri(root, { kind: 'task', id }), 'plandown.task', { preview: t.isPreview, viewColumn: g.viewColumn });
       if (!t.isPreview) await vscode.window.tabGroups.close(t);
       return;
     }
@@ -144,6 +156,7 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
       const db = () => root.pd.db, post = (r: object) => panel.webview.postMessage(r);
       if (m.t === 'state') return post({ rid: m.rid, db: db() });
       if (m.t === 'open') { if (db().tasks[m.id]) this.openTask(root, m.id, m.pin === true); return; }
+      if (m.t === 'openNode') { if (hasNode(db().tree, m.path)) this.openNode(root, m.path, m.pin === true); return; }
       // Only files of the database (no paths from the page are trusted)
       if (m.t === 'reveal') {
         if (db().files.includes(m.file)) vscode.window.showTextDocument(vscode.Uri.joinPath(root.uri, m.file), { selection: new vscode.Range(m.line, 0, m.line, 0) });
@@ -191,16 +204,16 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   openCustomDocument(uri: vscode.Uri): vscode.CustomDocument { return { uri, dispose() {} }; }
 
   /**
-   * `plandown.task`: binds the panel as the tab of the task its URI names (only loaded roots). `plandown.file`: binds it
+   * `plandown.task`: binds the panel as the tab of the task or tree node its URI names (only loaded roots). `plandown.file`: binds it
    * as the task tab of the file's first task (so tree clicks reveal it). Otherwise a short message page.
    */
   async resolveCustomEditor(doc: vscode.CustomDocument, panel: vscode.WebviewPanel): Promise<void> {
     const roots = await this.roots();
     const q = new URLSearchParams(doc.uri.query);
-    if (q.has('id')) {
-      const root = roots.find(r => r.uri.fsPath === q.get('root')), id = q.get('id');
-      if (root && id) return this.bind(panel, root, { kind: 'task', id }, doc.uri);
-      panel.webview.html = note('This task\'s Plandown database is not loaded.');
+    if (q.has('id') || q.has('node')) {
+      const root = roots.find(r => r.uri.fsPath === q.get('root')), id = q.get('id'), path = q.get('node');
+      if (root && (id || path)) return this.bind(panel, root, id ? { kind: 'task', id } : { kind: 'node', path: path! }, doc.uri);
+      panel.webview.html = note('This page\'s Plandown database is not loaded.');
       return;
     }
     const at = rootOf(roots, doc.uri), id = at && firstTask(at.root, at.file);

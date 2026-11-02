@@ -14,11 +14,11 @@ const SUBTASK = 'Subtask';
 // ---- Transport ----
 
 /** Defined only inside a VSCode webview. */
-declare function acquireVsCodeApi(): { postMessage(m: unknown): void; setState(s: unknown): void };
+declare function acquireVsCodeApi(): { postMessage(m: unknown): void; setState(s: unknown): void; getState(): any };
 const vs = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
 
 /**
- * Tab mode (VSCode): the host picks one view (`task`, `graph` or `time`) in `<body data-view>`; the page has no header,
+ * Tab mode (VSCode): the host picks one view (`task`, `node`, `graph` or `time`) in `<body data-view>`; the page has no header,
  * no navigation sidebar and no routing, and links to other tasks open their own tabs.
  */
 const embed = document.body.dataset.view;
@@ -98,6 +98,12 @@ const icon = (n: keyof typeof ICONS) => s('svg', { class: 'ico', viewBox: '0 0 1
 const transition = (f: () => void) => { if (document.startViewTransition && !still()) document.startViewTransition(f); else f(); };
 
 const $ = (id: string) => document.getElementById(id)!;
+/** Last segment of a `/`-separated tree path (the GUI loads no library code, so not `tree.ts`'s `baseName`). */
+const base = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+/** Tree node by path, descending only into the node whose path prefixes it. */
+const findNode = (list: TreeNode[], path: string): TreeNode | undefined => {
+  for (const n of list) if (n.path === path) return n; else if (path.startsWith(n.path + '/')) return findNode(n.kids, path);
+};
 const hours = (v: number) => String(Math.round(v * 100) / 100);
 const clock = (ms: number) => { const t = Math.floor(ms / 1000); return [t / 3600, (t / 60) % 60, t % 60].map(x => String(Math.floor(x)).padStart(2, '0')).join(':'); };
 /** Start of `t`'s running timer in ms, NaN when none runs (or `started` is malformed, which the timer ops treat alike). */
@@ -144,10 +150,40 @@ function walk(visit: (t: Task, depth: number) => void, roots?: string[], depth =
   for (const id in db.tasks) if (!seen.has(id)) go(id, 0);
 }
 
+/** One row of a tree outline: a task (`merged`: the node it stands for) or an unmerged node, under node path `near`. */
+interface Entry { key: string; depth: number; near: string; t?: Task; n?: TreeNode; merged?: TreeNode }
+
+/** `roots` of node `n` with their subtasks (see `walk`), keyed `near\0id` like the sidebar rows. */
+const taskEntries = (n: TreeNode, roots: string[], depth: number, out: Entry[]) =>
+  walk((t, d) => out.push({ key: `${n.path}\0${t.id}`, depth: d, near: n.path, t, merged: n.task === t.id && d === depth ? n : undefined }), roots, depth);
+
+/** Outline of `nodes` in tree order: each node's row (or its merged task), its top-level tasks with subtasks, then its child nodes. */
+function outline(nodes: TreeNode[], depth = 0, out: Entry[] = []): Entry[] {
+  for (const n of nodes) {
+    if (n.task) taskEntries(n, [n.task], depth, out);
+    else { out.push({ key: n.path + '\0', depth, near: n.path, n }); taskEntries(n, n.tasks, depth + 1, out); }
+    outline(n.kids, depth + 1, out);
+  }
+  return out;
+}
+
+/** Entries not inside a collapsed one (keys in `fold`), each telling whether it has children (the next entry is deeper). */
+function visible(all: Entry[], fold: Set<string>): { e: Entry; kids: boolean }[] {
+  const out: { e: Entry; kids: boolean }[] = [];
+  let hide = Infinity;   // depth of the collapsed entry being skipped
+  all.forEach((e, i) => {
+    if (e.depth > hide) return;
+    hide = fold.has(e.key) ? e.depth : Infinity;
+    out.push({ e, kids: (all[i + 1]?.depth ?? -1) > e.depth });
+  });
+  return out;
+}
+
 // ---- State ----
 
 let db: Db;
 let sel: string | null = null;
+let node: string | null = null;   // path of the group or file page shown instead of a task (never both)
 let tab: 'Tasks' | 'Graph' | 'Time' = 'Tasks';
 let filter = '';
 let showSubtasks = false;
@@ -165,6 +201,20 @@ let pick: { key: string; near: string } | null = null;
 let pickSel = true;                                               // the first tree build picks the row of `sel` (the page's URL)
 let adding: { type: string | null; text: string } | null = null;   // open "create" row; type null: a group
 let focusAdd = false;                                             // focus the create row once it is built
+/**
+ * Collapsed outline rows by key: the sidebar's and the group pages' (their keys hold node paths, so pages share one set).
+ * The browser keeps them and the sidebar's scroll offset per tab session (saved on `pagehide`); a VSCode tab keeps its
+ * page set in its webview state (saved by `render`).
+ */
+const folds = { nav: new Set<string>(), page: new Set<string>() };
+let navScroll = 0;
+try {
+  const ui = (embed ? vs!.getState() : JSON.parse(sessionStorage.getItem('plandown-ui') ?? 'null')) ?? {};
+  folds.nav = new Set(ui.nav); folds.page = new Set(ui.page); navScroll = Number(ui.scroll) || 0;
+} catch { /* not persisted, or malformed */ }
+if (!embed) addEventListener('pagehide', () => {
+  try { sessionStorage.setItem('plandown-ui', JSON.stringify({ nav: [...folds.nav], page: [...folds.page], scroll: navScroll })); } catch { /* not persisted */ }
+});
 
 /**
  * Runs an operation, adopts the returned state and tells whether it succeeded. Only editor saves clear `dirty`;
@@ -215,8 +265,8 @@ const setProp = (id: string, k: string, v: unknown) => run({ op: 'update', id, p
 
 // A webview has no browser tabs: inside VSCode a middle click on a task link asks for a pinned tab (not a preview one)
 if (embed) document.addEventListener('auxclick', e => {
-  const a = (e.target as Element).closest<HTMLElement>('a[data-id]');
-  if (e.button === 1 && a) { e.preventDefault(); vs!.postMessage({ t: 'open', id: a.dataset.id, pin: true }); }
+  const a = (e.target as Element).closest<HTMLElement>('a[data-id], a[data-node]');
+  if (e.button === 1 && a) { e.preventDefault(); vs!.postMessage(a.dataset.id ? { t: 'open', id: a.dataset.id, pin: true } : { t: 'openNode', path: a.dataset.node, pin: true }); }
 });
 
 /** Navigates to a task; returns false (without rendering) when unsaved edits block it. */
@@ -225,30 +275,48 @@ function select(id: string): boolean {
   if (dirty && id !== sel) { toast('Save or revert your changes first'); return false; }
   if (id !== sel) revealedLinkKinds = new Set();
   sel = id;
+  node = null;
   tab = 'Tasks';
   go();
   return true;
 }
 
+/** Navigates to a group or file page, as `select` does to a task. */
+function selectNode(path: string): boolean {
+  if (embed) { if (path !== node) vs!.postMessage({ t: 'openNode', path }); return true; }
+  if (dirty) { toast('Save or revert your changes first'); return false; }
+  sel = null;
+  node = path;
+  tab = 'Tasks';
+  go();
+  return true;
+}
+
+/** Link to a group or file page; `data-node` serves middle clicks inside VSCode, as `data-id` for tasks. */
+const nodeLink = (n: TreeNode, props: Record<string, unknown>, ...kids: (Node | string | null)[]) =>
+  h('a', { href: nodeUrl(n.path), 'data-node': n.path, title: n.file ?? n.path + '/', onclick: inApp(() => selectNode(n.path)), ...props }, ...kids);
+
 // ---- Routing ----
 
 const viewUrl = (t: Task) => '/view/' + encodeURIComponent(t.anchor);
+const nodeUrl = (path: string) => '/group/' + path.split('/').map(encodeURIComponent).join('/');
 
-/** Path naming the current view: `/view/<anchor>` (selected task), `/graph`, `/time`, or `/`. */
+/** Path naming the current view: `/view/<anchor>` (selected task), `/group/<path>` (group or file page), `/graph`, `/time`, or `/`. */
 function url(): string {
   if (tab !== 'Tasks') return '/' + tab.toLowerCase();
+  if (node !== null) return nodeUrl(node);
   const t = sel ? db.tasks[sel] : undefined;
   return t ? viewUrl(t) : '/';
 }
 
-/** The view `location` names. `sel` is absent for tab paths, which keep the current selection. */
-function route(): { tab: typeof tab; sel?: string | null } {
-  const p = location.pathname, m = /^\/view\/([^/]+)$/.exec(p);
+/** The view `location` names. `sel` and `node` are absent for tab paths, which keep the current selection. */
+function route(): { tab: typeof tab; sel?: string | null; node?: string | null } {
+  const p = location.pathname, m = /^\/view\/([^/]+)$/.exec(p), g = /^\/group\/(.+)$/.exec(p);
   if (p === '/graph') return { tab: 'Graph' };
   if (p === '/time') return { tab: 'Time' };
-  let a = '';
-  try { a = m ? decodeURIComponent(m[1]) : ''; } catch { /* malformed %-escape: no task */ }
-  return { tab: 'Tasks', sel: a ? Object.values(db.tasks).find(t => t.anchor === a)?.id ?? null : null };
+  let a = '', path: string | null = null;
+  try { a = m ? decodeURIComponent(m[1]) : ''; path = g && g[1].split('/').map(decodeURIComponent).join('/'); } catch { /* malformed %-escape: no task */ }
+  return { tab: 'Tasks', sel: a ? Object.values(db.tasks).find(t => t.anchor === a)?.id ?? null : null, node: path };
 }
 
 /** User navigation adds a history entry; state changes from data (renames, deletes, refreshes) only replace it in `render`. */
@@ -260,9 +328,10 @@ function go() {
 /** Back/forward. Unsaved edits block leaving the task, as `select` does, by restoring the URL. */
 addEventListener('popstate', () => {
   const r = route();
-  if (r.sel !== undefined && r.sel !== sel) {
+  if (r.sel !== undefined && (r.sel !== sel || r.node !== node)) {
     if (dirty) { toast('Save or revert your changes first'); history.pushState(null, '', url()); return; }
     sel = r.sel;
+    node = r.node!;
     revealedLinkKinds = new Set();
   }
   tab = r.tab;
@@ -323,7 +392,7 @@ function sidebar(): HTMLElement {
   makeResizable(panes.nav, handle, '.sidebar', 1);
   if (panes.nav.collapsed) return h('aside', { className: 'sidebar collapsed' }, handle, head, createSection());
   // Clicking empty tree space drops the tree selection (new items then go to the root); navigation stays
-  const tree = h('div', { id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } } });
+  const tree = h('div', { id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } }, onscroll: () => { navScroll = tree.scrollTop; } });
   const search = h('input', { type: 'search', placeholder: 'Filter tasks', value: filter, oninput: () => { filter = search.value; fillTree(tree); } });
   fillTree(tree);
   const aside = h('aside', { className: 'sidebar' }, handle, head, search, tree, createSection());
@@ -331,37 +400,67 @@ function sidebar(): HTMLElement {
   return aside;
 }
 
-/** Filtered: a flat list of matches. Otherwise each node: its row (or its merged task), top-level tasks with subtasks, child nodes, and the create row if it targets the node. */
+/**
+ * Filtered: a flat list of matches. Otherwise the `outline` of the tree without collapsed branches, and the create row
+ * after the subtree of the node it targets (inside an unmerged node, which therefore opens; beside a merged one).
+ */
 function fillTree(tree = $('tree')) {
-  const rows: HTMLElement[] = [], q = filter.toLowerCase();
+  const q = filter.toLowerCase();
   if (q) {
+    const rows: HTMLElement[] = [];
     for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0, t.home.file.slice(0, -3)));
     return tree.replaceChildren(...rows);
   }
-  let slot: [number, number] | null = null;   // row index and depth of the create row
-  const node = (n: TreeNode, d: number) => {
-    if (n.task) walk((t, td) => rows.push(row(t, td, n.path, td === d ? n : undefined)), [n.task], d);
-    else { rows.push(nodeRow(n, d)); walk((t, td) => rows.push(row(t, td, n.path)), n.tasks, d + 1); }
-    n.kids.forEach(k => node(k, d + 1));
-    if (pick?.near === n.path) slot = [rows.length, n.task ? d : d + 1];   // a merged node gets a sibling
-  };
-  db.tree.forEach(n => node(n, 0));
+  const all = outline(db.tree);
   // A picked row that vanished (deleted, renamed, merged) no longer names a target
-  if (pick && !rows.some(r => r.dataset.key === pick!.key)) { pick = null; slot = null; }
+  if (pick && !all.some(e => e.key === pick!.key)) pick = null;
   // A page opened on a task picks the task's first row (once, so dropping the pick later sticks)
   if (pickSel) {
     pickSel = false;
-    const r = sel && rows.find(r => r.dataset.key!.endsWith('\0' + sel));
-    if (r) { pick = { key: r.dataset.key!, near: r.dataset.key!.split('\0')[0] }; r.classList.add('sel'); }
+    const e = all.find(e => sel ? e.t?.id === sel : node !== null && e.n?.path === node);
+    if (e) pick = { key: e.key, near: e.near };
   }
-  if (adding) { const [i, d] = slot ?? [rows.length, 0]; rows.splice(i, 0, addRow(d)); }
+  // The create row's node and its ancestors open
+  if (adding && pick) for (const e of all) if ((e.n || e.merged) && (pick.near + '/').startsWith(e.near + '/')) folds.nav.delete(e.key);
+  const vis = visible(all, folds.nav);
+  const rows = vis.map(({ e, kids }) => {
+    const tw = twisty(e.key, kids, folds.nav, () => fillTree());
+    return e.n ? nodeRow(e.n, e.depth, tw) : row(e.t!, e.depth, e.near, e.merged, tw);
+  });
+  if (adding) {
+    let at = rows.length, depth = 0;
+    const i = pick ? vis.findIndex(({ e }) => e.near === pick!.near && (e.n || e.merged)) : -1;
+    if (i >= 0) {
+      const d = vis[i].e.depth;
+      for (at = i + 1; at < vis.length && vis[at].e.depth > d; at++);
+      depth = vis[i].e.merged ? d : d + 1;
+    }
+    rows.splice(at, 0, addRow(depth));
+  }
   tree.replaceChildren(...rows);
 }
 
 const nodeIcon = (n: TreeNode) => h('span', { className: 'icon' }, n.folder ? '📁' : '📄');
 
-/** Task row under tree node `near`; `merged` is the node the task is merged with (shown with its icon). */
-function row(t: Task, depth: number, near: string, merged?: TreeNode): HTMLElement {
+/**
+ * Expand/collapse toggle of an outline row with children (keys in `fold` are collapsed), shown with `redraw`; rows without
+ * children get an empty spacer, keeping titles aligned. Its clicks never reach the row (no navigation).
+ */
+function twisty(key: string, kids: boolean, fold: Set<string>, redraw: () => void): HTMLElement {
+  const open = !fold.has(key);
+  const toggle = (e: Event) => {
+    e.preventDefault(); e.stopPropagation();
+    if (open) fold.add(key); else fold.delete(key);
+    transition(redraw);
+  };
+  return kids
+    ? h('span', { className: `twisty${open ? ' open' : ''}`, role: 'button', tabIndex: 0, ariaExpanded: String(open), ariaLabel: open ? 'Collapse' : 'Expand',
+      onclick: toggle, onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); } }, icon('right'))
+    : h('span', { className: 'twisty' });
+}
+
+/** Task row under tree node `near`; `merged` is the node the task is merged with (shown with its icon). Clicking opens the task and expands its row. */
+function row(t: Task, depth: number, near: string, merged?: TreeNode, tw: HTMLElement | null = null): HTMLElement {
   const done = t.props.done === true, tot = db.totals[t.id], key = `${near}\0${t.id}`;
   const cb = h('input', {
     type: 'checkbox', checked: done, title: 'Done',
@@ -370,18 +469,20 @@ function row(t: Task, depth: number, near: string, merged?: TreeNode): HTMLEleme
   });
   const r = taskLink(t.id, {
     className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
-    onclick: inApp(() => { pick = { key, near }; if (!select(t.id)) fillTree(); }),
-  }, cb, merged ? nodeIcon(merged) : null, badge(t.type), h('span', { className: 'title' }, t.title),
+    onclick: inApp(() => { pick = { key, near }; folds.nav.delete(key); if (!select(t.id)) fillTree(); }),
+  }, tw, cb, merged ? nodeIcon(merged) : null, badge(t.type), h('span', { className: 'title' }, t.title),
     tot.effort || tot.spent ? h('span', { className: 'muted' }, `${hours(tot.spent)}/${hours(tot.effort)} h`) : null);
   r.style.paddingLeft = `${4 + depth * 16}px`;
   return r;
 }
 
-/** Folder and/or file row; picking it only sets where new items go. */
-function nodeRow(n: TreeNode, depth: number): HTMLElement {
+/** Folder and/or file row; clicking opens its page, expands it and sets where new items go. */
+function nodeRow(n: TreeNode, depth: number, tw: HTMLElement): HTMLElement {
   const key = n.path + '\0';
-  const r = h('div', { className: `row node${pick?.key === key ? ' sel' : ''}`, title: n.file ?? n.path + '/', 'data-key': key, onclick: () => { pick = { key, near: n.path }; fillTree(); } },
-    nodeIcon(n), h('span', { className: 'title' }, n.path.slice(n.path.lastIndexOf('/') + 1)));
+  const r = nodeLink(n, {
+    className: `row node${pick?.key === key ? ' sel' : ''}${n.path === node ? ' cur' : ''}`, 'data-key': key,
+    onclick: inApp(() => { pick = { key, near: n.path }; folds.nav.delete(key); if (!selectNode(n.path)) fillTree(); }),
+  }, tw, nodeIcon(n), h('span', { className: 'title' }, base(n.path)));
   r.style.paddingLeft = `${4 + depth * 16}px`;
   return r;
 }
@@ -731,6 +832,25 @@ function live(t: Task, slots: Slot[]) {
   return { timerBtn, lapBtn, timeSummary, linkBlocks: [...placed.values()], linkRevealBtns, occurrences, deleteBtn };
 }
 
+// ---- Tasks tab: group and file pages ----
+
+/** Page of a group or unmerged file: its tasks and child nodes as an outline of task widgets, indented by depth, branches collapsible. */
+function nodePage(n: TreeNode): HTMLElement {
+  const all: Entry[] = [];
+  taskEntries(n, n.task ? [n.task] : n.tasks, 0, all);   // a merged node (only reachable by address) lists its task
+  outline(n.kids, 0, all);
+  // `--depth` indents the widget (CSS); the toggle sits left of it, like the link lists' bullets
+  const items = visible(all, folds.page).map(({ e, kids }) => {
+    const li = h('li', {}, twisty(e.key, kids, folds.page, render),
+      e.n ? nodeLink(e.n, { className: 'ref node' }, nodeIcon(e.n), h('span', { className: 'title' }, base(e.n.path))) : taskRefControls(e.t!));
+    li.style.setProperty('--depth', String(e.depth));
+    return li;
+  });
+  return h('div', { className: 'editor-main' },
+    h('div', { className: 'title-row', title: n.file ?? n.path + '/' }, nodeIcon(n), h('span', { className: 'task-title' }, base(n.path))),
+    items.length ? h('div', { className: 'link-group outline' }, columns(h('ul', {}, ...items))) : h('p', { className: 'muted' }, 'Nothing here yet.'));
+}
+
 // ---- Graph tab ----
 
 function graph(): HTMLElement {
@@ -866,7 +986,9 @@ function makeResizable(pane: Pane, handle: HTMLElement, sel: string, dir: 1 | -1
 
 function render() {
   // In VSCode the host restores closed tabs from this state (the task follows renames)
-  if (embed) vs!.setState({ ...document.body.dataset, task: sel ?? undefined });
+  // A vanished group page falls back to no selection (a VSCode tab says it is gone)
+  if (!embed && node !== null && !findNode(db.tree, node)) node = null;
+  if (embed) vs!.setState({ ...document.body.dataset, task: sel ?? undefined, page: [...folds.page] });
   else if (url() !== location.pathname) history.replaceState(null, '', url());
   // Every collapse change ends in a render
   try { sessionStorage.setItem('plandown-collapsed', Object.entries(panes).filter(([, p]) => p.collapsed).map(([k]) => k).join(',')); } catch { /* not persisted */ }
@@ -874,13 +996,13 @@ function render() {
   const main = $('main');
   if (tab === 'Graph') return main.replaceChildren(graph());
   if (tab === 'Time') return main.replaceChildren(time());
-  const t = sel ? db.tasks[sel] : undefined;
+  const t = sel ? db.tasks[sel] : undefined, n = node !== null ? findNode(db.tree, node) : undefined;
   const nav = embed ? [] : [sidebar()];
+  // The rebuilt tree gets its scroll offset back once attached
+  const attach = (page: HTMLElement) => { main.replaceChildren(...nav, page); if (!embed && !panes.nav.collapsed) $('tree').scrollTop = navScroll; };
+  if (n) return attach(h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, nodePage(n))));
   if (!t) { sel = null; dirty = false; }
-  if (!t) {
-    main.replaceChildren(...nav, h('section', { className: 'editor muted' }, embed ? 'This task no longer exists.' : 'Select a task, or add one in the sidebar.'));
-    return;
-  }
+  if (!t) return attach(h('section', { className: 'editor muted' }, embed ? `This ${embed === 'node' ? 'group' : 'task'} no longer exists.` : 'Select a task, or add one in the sidebar.'));
 
   const keep = dirty && formBundle && formFor === sel;
   const bundle = keep ? formBundle! : (formBundle = taskForm(t));
@@ -904,12 +1026,12 @@ function render() {
   const editorMain = h('div', { className: 'editor-main' }, bundle.form,
     h('div', { className: 'links' }, h('h3', {}, 'Links'), ...lv.linkBlocks, ...lv.linkRevealBtns));
 
-  main.replaceChildren(...nav, h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, editorMain, panel)));
+  attach(h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, editorMain, panel)));
 }
 
 setInterval(() => document.querySelectorAll<HTMLElement>('[data-started]').forEach(el => { el.textContent = clock(Date.now() - Number(el.dataset.started)); }), 1000);
 db = await api.state();
-if (embed) { tab = embed === 'graph' ? 'Graph' : embed === 'time' ? 'Time' : 'Tasks'; sel = document.body.dataset.task ?? null; }
-else ({ tab, sel = null } = route());
+if (embed) { tab = embed === 'graph' ? 'Graph' : embed === 'time' ? 'Time' : 'Tasks'; sel = document.body.dataset.task ?? null; node = document.body.dataset.node ?? null; }
+else ({ tab, sel = null, node = null } = route());
 render();
 api.subscribe(async () => { db = await api.state(); render(); });

@@ -63,12 +63,13 @@ export const typeDecorations: vscode.FileDecorationProvider = {
  * Tree element. `node`: a folder and/or file row (or a task merged into it). `task`: a task row under node path `near`
  * (new tasks and groups created from it go there, as from the GUI's picked row). `up` holds the ancestors' ids and
  * `leaf` stops expansion: a task met again below itself (a Subtask cycle) is listed but not expanded, like the GUI's
- * `walk`, and filter matches are a flat list. With more than one root, roots are the top level.
+ * `walk`, and filter matches are a flat list. With more than one root, roots are the top level. `parent` serves `getParent`
+ * (for `reveal`; none at the top level).
  */
 export type Item =
   | { kind: 'root'; root: Root }
-  | { kind: 'node'; root: Root; node: TreeNode }
-  | { kind: 'task'; root: Root; id: string; near: string; up: string[]; leaf: boolean };
+  | { kind: 'node'; root: Root; node: TreeNode; parent?: Item }
+  | { kind: 'task'; root: Root; id: string; near: string; up: string[]; leaf: boolean; parent?: Item };
 
 export class TaskTree implements vscode.TreeDataProvider<Item> {
   /** Filter text; non-empty shows a flat list of tasks whose id or description contains it (case-insensitive), as the GUI does. */
@@ -81,11 +82,14 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
   /** Rebuilds the whole tree (after any reload; it is cheap). */
   refresh(): void { this.change.fire(); }
 
+  getParent(item: Item): Item | undefined { return item.kind === 'root' ? undefined : item.parent; }
+
   getChildren(item?: Item): Item[] {
-    const task = (root: Root, id: string, near: string, up: string[]): Item => ({ kind: 'task', root, id, near, up, leaf: up.includes(id) });
+    const parent = item;
+    const task = (root: Root, id: string, near: string, up: string[]): Item => ({ kind: 'task', root, id, near, up, leaf: up.includes(id), parent });
     const subtasks = (root: Root, id: string, near: string, up: string[]) =>
       root.pd.db.edges.filter(e => e.type === SUBTASK && e.from === id).map(e => task(root, e.to, near, up));
-    const nodes = (root: Root, list: TreeNode[]) => list.map((node): Item => ({ kind: 'node', root, node }));
+    const nodes = (root: Root, list: TreeNode[]) => list.map((node): Item => ({ kind: 'node', root, node, parent }));
 
     if (!item) {
       const roots = this.roots(), q = this.filter.toLowerCase();
@@ -102,9 +106,9 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
   }
 
   /**
-   * Root: folder name. Node: folder/file icon and base name. Task (and merged node): title, type and `spent/effort h`
-   * as description, Done checkbox, click opens its tab. Task rows (and merged nodes) carry
-   * their type marker (see `typeDecorations`) and type icon (replacing a merged node's folder/file icon). Done
+   * Root: folder name. Node: folder/file icon and base name, click opens its page. Task (and merged node): title, type and
+   * `spent/effort h` as description, Done checkbox, click opens its tab. Clicks also expand the row (the item rides along).
+   * Task rows (and merged nodes) carry their type marker (see `typeDecorations`) and type icon (replacing a merged node's folder/file icon). Done
    * titles are crossed out with combining strokes (tree labels have no text styling). Ids follow the path from the root, so expansion survives refreshes.
    */
   getTreeItem(item: Item): vscode.TreeItem {
@@ -120,6 +124,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
       const n = item.node;
       ti = new vscode.TreeItem(basename(n.path), n.kids.length || (n.task ? hasSubtasks : n.tasks.length) ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${n.path}`, contextValue: n.task ? 'nodeTask' : 'node', iconPath: new vscode.ThemeIcon(n.folder ? 'folder' : 'file'), tooltip: n.file ?? n.path + '/' });
+      if (!n.task) ti.command = { command: 'plandown.openNode', title: 'Open', arguments: [root, n.path, item] };
     } else {
       ti = new vscode.TreeItem('', !item.leaf && hasSubtasks ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${item.near}\0${[...item.up, id].join('\0')}`, contextValue: 'task' });
@@ -133,7 +138,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
     ti.description = tot.effort || tot.spent ? `${t.type} · ${hours(tot.spent)}/${hours(tot.effort)} h` : t.type;
     ti.tooltip = `${t.id}\n${t.home.file}`;
     ti.checkboxState = done ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
-    ti.command = { command: 'plandown.open', title: 'Open', arguments: [root, t.id] };
+    ti.command = { command: 'plandown.open', title: 'Open', arguments: [root, t.id, item] };
     ti.iconPath = typeIcon(t.type, db.format.types[t.type]?.color, done);
     ti.resourceUri = vscode.Uri.from({ scheme: TYPE_SCHEME, path: '/' + t.type });
     return ti;

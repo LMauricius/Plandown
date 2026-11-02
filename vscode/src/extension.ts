@@ -166,14 +166,19 @@ export async function activate(ctx: vscode.ExtensionContext) {
     try { await vscode.env.openExternal(vscode.Uri.parse((await (r.server ??= serve(r.pd, 0))).url)); }
     catch (e) { r.server = undefined; vscode.window.showErrorMessage(`Plandown: cannot start the GUI server: ${(e as Error).message}`); }
   });
-  // Opening the same task twice within 500 ms (a double click on a tree row) pins its tab, as the Explorer does for files
-  let last = { r: undefined as Root | undefined, id: '', at: 0 };
-  reg('plandown.open', (r: Root, id: string) => {
-    const pin = last.r === r && last.id === id && Date.now() - last.at < 500;
-    last = { r, id, at: Date.now() };
-    panels.openTask(r, id, pin);
-  });
+  // Opening the same page twice within 500 ms (a double click on a tree row) pins its tab, as the Explorer does for files.
+  // A click from the tree (`item`) also expands its row
+  let last = { r: undefined as Root | undefined, key: '', at: 0 };
+  const clicked = (r: Root, key: string, item?: Item) => {
+    const pin = last.r === r && last.key === key && Date.now() - last.at < 500;
+    last = { r, key, at: Date.now() };
+    if (isItem(item)) view.reveal(item, { expand: true }).then(undefined, () => {});
+    return pin;
+  };
+  reg('plandown.open', (r: Root, id: string, item?: Item) => panels.openTask(r, id, clicked(r, id, item)));
+  reg('plandown.openNode', (r: Root, path: string, item?: Item) => panels.openNode(r, path, clicked(r, '/' + path, item)));
   reg('plandown.openPinned', (item: Item) => {
+    if (item.kind === 'node' && !item.node.task) return panels.openNode(item.root, item.node.path, true);
     const id = item.kind === 'node' ? item.node.task : item.kind === 'task' ? item.id : undefined;
     if (id) panels.openTask(item.root, id, true);
   });

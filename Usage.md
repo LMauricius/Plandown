@@ -37,6 +37,7 @@ The address bar follows what you look at, so you can bookmark a view, share it w
 |---|---|
 | `/` | The Tasks tab with no task selected |
 | `/view/<task-id>` | The Tasks tab with that task open |
+| `/group/<path>` | The page of a folder or file, for example `/group/launch/press-kit` |
 | `/graph` | The Graph tab |
 | `/time` | The Time tab |
 
@@ -59,7 +60,7 @@ Each task row shows:
 - the **task type** badge and the **title**,
 - the **time summary** `spent/effort h`, which includes all subtasks.
 
-Click a task row to open the task in the editor. Clicking any row also selects it as the place where new items are created; click the empty space below the tree to clear that selection without leaving the open task. Type in the **filter** box to show a flat list of the tasks whose type, title or description contains the text.
+Click a task row to open the task in the editor, or a folder or file row to open its page (see [Group pages](#group-pages)). The arrow in front of a row collapses or expands its contents; clicking a row also expands it. The tree remembers which rows are collapsed, and where it was scrolled to, across page reloads in the same browser tab. Clicking any row also selects it as the place where new items are created; click the empty space below the tree to clear that selection without leaving the open task. Type in the **filter** box to show a flat list of the tasks whose type, title or description contains the text.
 
 At the bottom, **Create a new...** offers a *Group* button and one button per task type. Each opens a row in the tree where you type the name; Enter creates the item and Escape cancels.
 
@@ -77,6 +78,10 @@ At the bottom, **Create a new...** offers a *Group* button and one button per ta
 New file names are the task title without the characters that file systems reject (`/ \ : * ? " < > |`). If a file with that name already exists, the task is added to it.
 
 The sidebar and the editor's property panel are resized by dragging their inner edge. **Hide** collapses either one to a thin strip; click the strip's arrow, or drag its edge outwards, to expand it again. Collapsed panes stay collapsed across page reloads in the same browser tab. The collapsed sidebar keeps its create buttons; clicking one expands the sidebar and opens the name input.
+
+### Group pages
+
+The page of a folder or file lists everything inside it as an outline: tasks with their subtasks, nested folders and files with their contents, each level indented below its parent. Every task appears as the same widget as in the link lists (see [Editor](#editor)), so you can tick it done, change its hours or run its timer without opening it; values of the same property line up in columns. The arrows collapse and expand branches, and the collapsed ones are remembered across page reloads in the same browser tab. Click a nested folder or file to open its page.
 
 ### Editor
 
