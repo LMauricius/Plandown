@@ -60,7 +60,7 @@ Each task row shows:
 - the **task type** badge and the **title**,
 - the **time summary** `spent/effort h`, which includes all subtasks.
 
-Click a task row to open the task in the editor, or a folder or file row to open its page (see [Group pages](#group-pages)). The arrow in front of a row collapses or expands its contents; clicking a row also expands it. The tree remembers which rows are collapsed, and where it was scrolled to, across page reloads in the same browser tab. Clicking any row also selects it as the place where new items are created; click the empty space below the tree to clear that selection without leaving the open task. Type in the **filter** box to show a flat list of the tasks whose type, title or description contains the text.
+Click a task row to open the task in the editor, or a folder or file row to open its page (see [Group pages](#group-pages)). The arrow in front of a row collapses or expands its contents; clicking a row also expands it. A task or page you open some other way (through a link, the back button or its address) is uncovered: if all its rows are inside collapsed branches, the branches above the first one open. The tree remembers which rows are collapsed, and where it was scrolled to, across page reloads in the same browser tab. Clicking any row also selects it as the place where new items are created; click the empty space below the tree to clear that selection without leaving the open task. Type in the **filter** box to show a flat list of the tasks whose type, title or description contains the text.
 
 At the bottom, **Create a new...** offers a *Group* button and one button per task type. Each opens a row in the tree where you type the name; Enter creates the item and Escape cancels.
 

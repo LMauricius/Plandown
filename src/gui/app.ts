@@ -179,6 +179,19 @@ function visible(all: Entry[], fold: Set<string>): { e: Entry; kids: boolean }[]
   return out;
 }
 
+/**
+ * Drops the collapsed keys (`fold`) of rows inside node path `under` (`''`: everywhere) that `all` no longer holds or that
+ * lost their children: expanded is the default, so only collapsed branches are stored. The `under` node's own row is
+ * not in its page (it belongs to the parent's page), so its key stays.
+ */
+function prune(all: Entry[], fold: Set<string>, under = '') {
+  const branches = new Set(all.filter((e, i) => (all[i + 1]?.depth ?? -1) > e.depth).map(e => e.key));
+  for (const k of fold) {
+    const near = k.slice(0, k.indexOf('\0'));
+    if (!branches.has(k) && k !== under + '\0' && (!under || near === under || near.startsWith(under + '/'))) fold.delete(k);
+  }
+}
+
 // ---- State ----
 
 let db: Db;
@@ -199,12 +212,13 @@ let revealedLinkKinds = new Set<string>();        // link types the user opened 
 // Tree selection, apart from navigation (`sel`): the picked row and the tree node new groups and tasks go near ('' : root)
 let pick: { key: string; near: string } | null = null;
 let pickSel = true;                                               // the first tree build picks the row of `sel` (the page's URL)
+let shown: string | null | undefined;                             // the task or node page the tree last revealed (see `fillTree`)
 let adding: { type: string | null; text: string } | null = null;   // open "create" row; type null: a group
 let focusAdd = false;                                             // focus the create row once it is built
 /**
  * Collapsed outline rows by key: the sidebar's and the group pages' (their keys hold node paths, so pages share one set).
  * The browser keeps them and the sidebar's scroll offset per tab session (saved on `pagehide`); a VSCode tab keeps its
- * page set in its webview state (saved by `render`).
+ * page set in its webview state (saved by `render`). `prune` keeps only keys of existing, collapsed branches.
  */
 const folds = { nav: new Set<string>(), page: new Set<string>() };
 let navScroll = 0;
@@ -212,8 +226,13 @@ try {
   const ui = (embed ? vs!.getState() : JSON.parse(sessionStorage.getItem('plandown-ui') ?? 'null')) ?? {};
   folds.nav = new Set(ui.nav); folds.page = new Set(ui.page); navScroll = Number(ui.scroll) || 0;
 } catch { /* not persisted, or malformed */ }
+/** Stored UI state without defaults (empty sets, no scroll): JSON drops the undefined fields. */
+const uiState = () => ({ nav: folds.nav.size ? [...folds.nav] : undefined, page: folds.page.size ? [...folds.page] : undefined, scroll: navScroll || undefined });
 if (!embed) addEventListener('pagehide', () => {
-  try { sessionStorage.setItem('plandown-ui', JSON.stringify({ nav: [...folds.nav], page: [...folds.page], scroll: navScroll })); } catch { /* not persisted */ }
+  try {
+    const ui = JSON.stringify(uiState());
+    if (ui === '{}') sessionStorage.removeItem('plandown-ui'); else sessionStorage.setItem('plandown-ui', ui);
+  } catch { /* not persisted */ }
 });
 
 /**
@@ -411,18 +430,29 @@ function fillTree(tree = $('tree')) {
     for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0, t.home.file.slice(0, -3)));
     return tree.replaceChildren(...rows);
   }
-  const all = outline(db.tree);
+  const all = outline(db.tree), isCur = (e: Entry) => sel ? e.t?.id === sel : node !== null && e.n?.path === node;
+  prune(all, folds.nav);
   // A picked row that vanished (deleted, renamed, merged) no longer names a target
   if (pick && !all.some(e => e.key === pick!.key)) pick = null;
   // A page opened on a task picks the task's first row (once, so dropping the pick later sticks)
   if (pickSel) {
     pickSel = false;
-    const e = all.find(e => sel ? e.t?.id === sel : node !== null && e.n?.path === node);
+    const e = all.find(isCur);
     if (e) pick = { key: e.key, near: e.near };
   }
   // The create row's node and its ancestors open
   if (adding && pick) for (const e of all) if ((e.n || e.merged) && (pick.near + '/').startsWith(e.near + '/')) folds.nav.delete(e.key);
-  const vis = visible(all, folds.nav);
+  let vis = visible(all, folds.nav);
+  // A newly opened task or page (by a link, history or the address) with no visible row: the branches above its first
+  // row open. Once per opening, so collapsing them again afterwards sticks
+  if ((sel ?? node) !== shown) {
+    shown = sel ?? node;
+    const i = all.findIndex(isCur);
+    if (i >= 0 && !vis.some(v => isCur(v.e))) {
+      for (let j = i - 1, d = all[i].depth; j >= 0 && d > 0; j--) if (all[j].depth < d) { d = all[j].depth; folds.nav.delete(all[j].key); }
+      vis = visible(all, folds.nav);
+    }
+  }
   const rows = vis.map(({ e, kids }) => {
     const tw = twisty(e.key, kids, folds.nav, () => fillTree());
     return e.n ? nodeRow(e.n, e.depth, tw) : row(e.t!, e.depth, e.near, e.merged, tw);
@@ -840,6 +870,7 @@ function nodePage(n: TreeNode): HTMLElement {
   taskEntries(n, n.task ? [n.task] : n.tasks, 0, all);   // a merged node (only reachable by address) lists its task
   outline(n.kids, 0, all);
   // `--depth` indents the widget (CSS); the toggle sits left of it, like the link lists' bullets
+  prune(all, folds.page, n.path);
   const items = visible(all, folds.page).map(({ e, kids }) => {
     const li = h('li', {}, twisty(e.key, kids, folds.page, render),
       e.n ? nodeLink(e.n, { className: 'ref node' }, nodeIcon(e.n), h('span', { className: 'title' }, base(e.n.path))) : taskRefControls(e.t!));
@@ -988,7 +1019,7 @@ function render() {
   // In VSCode the host restores closed tabs from this state (the task follows renames)
   // A vanished group page falls back to no selection (a VSCode tab says it is gone)
   if (!embed && node !== null && !findNode(db.tree, node)) node = null;
-  if (embed) vs!.setState({ ...document.body.dataset, task: sel ?? undefined, page: [...folds.page] });
+  if (embed) vs!.setState({ ...document.body.dataset, task: sel ?? undefined, page: uiState().page });
   else if (url() !== location.pathname) history.replaceState(null, '', url());
   // Every collapse change ends in a render
   try { sessionStorage.setItem('plandown-collapsed', Object.entries(panes).filter(([, p]) => p.collapsed).map(([k]) => k).join(',')); } catch { /* not persisted */ }
