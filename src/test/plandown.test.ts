@@ -12,9 +12,10 @@ const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(
 const read = (d: string, f: string) => readFileSync(join(d, f), 'utf8');
 const links = (m: Plandown, id: string) => m.db.edges.filter(e => e.from === id).map(e => `${e.type} ${e.to}`).sort();
 
-test('format: flips are cross-checked, reflexive entries need none', () => {
-  const bad = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n\nX:\n- [A] X\n- [B] Y\n\n# [B] b\n\nZ:\n- [A] X\n'));
-  assert.deepEqual(bad.diagnostics.map(d => d.line), [4, 9]);
+test('format: flips may be omitted (one-directional) but not contradicted', () => {
+  const bad = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n\nX:\n- [A] X\n- [B] Y\n\n# [B] b\n\nY:\n- [A] Z\n'));
+  assert.deepEqual(bad.diagnostics.map(d => d.line), [4]);
+  assert.deepEqual(parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n\nX:\n- [B] Y\n\n# [B] b\n')).diagnostics, []);
   const good = parseFormat(parseMarkdown('plandown-format.md', read(DEMO, 'plandown-format.md')));
   assert.deepEqual(good.diagnostics, []);
   assert.equal(good.format.types.Bug.links['Discovered during'].Task, 'Revealed');

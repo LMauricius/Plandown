@@ -2,7 +2,7 @@
  * Interprets `plandown-format.md`: task types, their property schemas and link types.
  * Each `# [Type] Description` heading declares a type; its YAML block is the property schema;
  * each `<Link type>:` list declares a link type whose entries `[Target] Reverse` name the allowed
- * target types and the reverse link type declared on the target.
+ * target types and the reverse link type the target sees; the target declares it too only to create the link from its side.
  */
 import type { Diagnostic, ParsedFile } from './markdown.js';
 
@@ -83,15 +83,14 @@ export function parseFormat(pf: ParsedFile | null): { format: Format; diagnostic
     }
   }
 
-  // Cross-check: every non-reflexive entry needs the flipped declaration on the target type
+  // Cross-check: the target may omit the flipped declaration (one-directional: created only from this side), but must not contradict it
   for (const t of Object.values(types))
     for (const [link, entries] of Object.entries(t.links))
       for (const [target, reverse] of Object.entries(entries)) {
         const line = lineOf.get(`${t.name}\0${link}\0${target}`)!;
         if (!types[target]) err(line, `Link "${link}" of [${t.name}] targets unknown task type [${target}]`);
-        else if (target === t.name && reverse === link) continue;
-        else if (types[target].links[reverse]?.[t.name] !== link)
-          err(line, `Link "${link}" of [${t.name}] names reverse "${reverse}", so [${target}] must declare "${reverse}:" with the entry "[${t.name}] ${link}"`);
+        else if ((types[target].links[reverse]?.[t.name] ?? link) !== link)
+          err(line, `Link "${link}" of [${t.name}] names reverse "${reverse}", but [${target}] declares "${reverse}:" with the entry "[${t.name}] ${types[target].links[reverse][t.name]}"`);
       }
 
   return { format: { types }, diagnostics };

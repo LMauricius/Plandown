@@ -99,7 +99,7 @@ The rest of the editor acts immediately:
   - **Unlink** (the broken chain) removes a link that only the linked task declares, by editing the linked task.
 
   Subtask and parent links have no removal button; change them in the files.
-- **Link.** Choose a link type, then pick the target task. The suggestions only offer tasks whose type the chosen link type allows.
+- **Link.** Choose a link type, then pick the target task. The suggestions only offer tasks whose type the chosen link type allows. Only link types declared by this task's type can be created here; incoming one-directional links (and parents) are created on the other task's page.
 - **Add subtask.** Creates a new task as a bullet in the task's subtask list.
 - **Stored in.** Every file and line where the task occurs. The occurrence marked *properties and description* is the one the editor writes to.
 - **Delete.** Click twice. Deleting removes every occurrence of the task, including everything nested inside them.

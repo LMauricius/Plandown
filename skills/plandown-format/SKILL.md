@@ -67,11 +67,11 @@ The reserved key `$meta` holds type settings, not a property. Its only key is `c
 
 The link pair `Subtask` / `Parent` is built in, connects any two types, and must not be declared.
 
-Every other link has two names, one per direction, and both sides must be declared:
+Every other link has two names, one per direction. The entry `[B] R` under `L:` of type **A** names both. Type **B** may omit the reverse (a *one-directional* link: only A-side tasks can write it; B-side tasks just see it as incoming `R`). If B declares it, the two must agree:
 
-> If type **A** declares `L:` with entry `[B] R`, then type **B** must declare `R:` with entry `[A] L`.
+> If type **A** declares `L:` with entry `[B] R`, and type **B** declares `R:` with an entry for `[A]`, that entry must be `[A] L`.
 
-The only exception is a **reflexive** entry: same type and same name (`Related:` → `- [Task] Related` under `[Task]`). It needs no second declaration.
+A **reflexive** entry (same type and same name: `Related:` → `- [Task] Related` under `[Task]`) is always two-directional.
 
 A link written in a task file is valid only when:
 
@@ -96,12 +96,12 @@ When adding or editing declarations:
 
 - One `# [<Type>]` heading per type; never declare a type twice.
 - Every list needs a `<Link>:` label line directly above it (no blank line between). Unlabeled lists are errors here.
-- For every non-reflexive entry you add, add the matching reverse declaration on the target type in the same change. When removing one, remove its reverse too.
+- For every non-reflexive entry you add, decide whether the target type should create the link too; if so, add the matching reverse declaration in the same change. When removing an entry, remove its reverse too.
 - Do not list the same target type twice under one link.
 - Renaming a type, property or link in the format file does **not** rename uses in task files. Update the task files as well, or warn the user.
 
 ## Validation
 
-Problems never block loading; they become diagnostics. Format file errors include: duplicate types, invalid property schemas, redeclared built-ins, unlabeled lists, unknown target types, and missing or mismatched reverse declarations.
+Problems never block loading; they become diagnostics. Format file errors include: duplicate types, invalid property schemas, redeclared built-ins, unlabeled lists, unknown target types, and contradicting reverse declarations.
 
 If the `plandown` CLI is available, run `plandown check <folder>` after any change. It prints `file:line` diagnostics and exits non-zero on errors. Without it, re-check the reverse rule by hand for every entry you touched.

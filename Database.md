@@ -199,11 +199,13 @@ Severity: string
 
 ### Link types and their reverses
 
-Every link has two names, one for each direction. The format file states both, and the two declarations must agree:
+Every link has two names, one for each direction. The entry `[B] R` under link **L** of type **A** names both, so the reverse is known even when type **B** says nothing about it. Such a link is *one-directional*: tasks of type A can create it, and tasks of type B show it as an incoming `R` link but cannot create it from their side. A list labeled `R:` under a `[B]` task is then reported as an error.
 
-> When type **A** declares link **L** with the entry `[B] R`, then type **B** must declare link **R** with the entry `[A] L`.
+To let both sides create the link, type **B** declares the reverse too. The two declarations must agree:
 
-The only exception is a **reflexive** entry: an entry pointing to its own type with the same link name, such as `Related:` with `- [Task] Related` under `[Task]`. A reflexive link reads the same in both directions, so no second declaration is needed.
+> When type **A** declares link **L** with the entry `[B] R`, and type **B** declares link **R** with an entry for `[A]`, that entry must be `[A] L`.
+
+A **reflexive** entry (one pointing to its own type with the same link name, such as `Related:` with `- [Task] Related` under `[Task]`) reads the same in both directions, so it is always two-directional.
 
 The diagram below shows the links declared by the example above, together with the `[Bug]` type from the demo folder. Each arrow is one declaration; the label is the link type and its reverse.
 
@@ -224,7 +226,7 @@ flowchart LR
 
 Plandown never refuses to load a folder. Instead it reports diagnostics (with file and line) for anything that does not match the format:
 
-- In `plandown-format.md`: duplicate types, invalid property schemas, unlabeled lists, unknown target types, and missing or mismatched reverse declarations.
+- In `plandown-format.md`: duplicate types, invalid property schemas, unlabeled lists, unknown target types, and reverse declarations that contradict each other.
 - In task files: unknown task types, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, undeclared properties and values that do not match their schema.
 
 Run `plandown check <folder>` to print them; it exits with a non-zero status when there are errors, so it can guard a commit hook or a CI job.

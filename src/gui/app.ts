@@ -9,7 +9,7 @@ import type { TreeNode } from '../tree.js';
 import { mdEditor } from './mdedit.js';
 import { appear, show, still } from './motion.js';
 
-const SUBTASK = 'Subtask', PARENT = 'Parent';
+const SUBTASK = 'Subtask';
 
 // ---- Transport ----
 
@@ -683,16 +683,16 @@ function live(t: Task, slots: Slot[]) {
   const subTitle = h('input', { type: 'text', placeholder: 'New subtask', required: true, oninput: () => show(subTypes, !!subTitle.value.trim()) });
   const subAddLi = h('li', {}, h('form', { className: 'sub-add', onsubmit: (e: SubmitEvent) => { e.preventDefault(); run({ op: 'create', type: (e.submitter as HTMLButtonElement | null)?.value ?? t.type, title: subTitle.value, parent: t.id }); } },
     subTitle, subTypes));
-  // One group per link kind; only kinds this task can declare get an add row (an untyped task can declare any)
-  const linkable = (kind: string) => kind === PARENT || kind in linkTypes || !db.format.types[t.type];
+  // One group per link kind; only kinds this task's type declares get an add row. Incoming one-directional kinds
+  // (Parent included) are created from the other task's page
   const group = (kind: string, focus: boolean) => h('div', { className: 'link-group' }, h('b', {}, kind),
-    columns(h('ul', {}, ...(byKind.get(kind) ?? []).map(li), kind === SUBTASK ? subAddLi : linkable(kind) && addRow(kind, focus))));
+    columns(h('ul', {}, ...(byKind.get(kind) ?? []).map(li), kind === SUBTASK ? subAddLi : kind in linkTypes && addRow(kind, focus))));
 
   // Every kind gets exactly one place: a group (kinds with a list block in the file first, in file order; then Subtask,
-  // Parent, the format's kinds and any other linked ones) or, while empty and unopened, a reveal button after all groups
+  // the format's kinds and any other linked ones) or, while empty and unopened, a reveal button after all groups
   const slotKinds = new Set(slots.flatMap(s => s.kinds));
   const placed = new Map<string, HTMLElement>(), linkRevealBtns: HTMLElement[] = [];
-  for (const kind of new Set([...slotKinds, SUBTASK, PARENT, ...Object.keys(linkTypes), ...byKind.keys()])) {
+  for (const kind of new Set([...slotKinds, SUBTASK, ...Object.keys(linkTypes), ...byKind.keys()])) {
     const has = byKind.has(kind);
     if (has || kind === SUBTASK || slotKinds.has(kind) || revealedLinkKinds.has(kind)) placed.set(kind, group(kind, !has && revealedLinkKinds.has(kind)));
     else linkRevealBtns.push(h('button', { type: 'button', onclick: () => { revealedLinkKinds.add(kind); transition(render); } }, icon('link'), kind));
