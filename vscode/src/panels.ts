@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { relative, sep } from 'node:path';
 import type { Op } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
+import { typeIcon } from './tree.js';
 
 /**
  * Webview → host: `state` and `op` carry a request id `rid` answered with `{ rid, db }` / `{ rid, id, db, error }`
@@ -99,8 +100,14 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
     this.bind(panel, root, { kind });
   }
 
-  /** Tells every tab of `root` to refetch (tabs of vanished tasks stay, the GUI says so). */
-  changed(root: Root): void { for (const t of this.tabs.values()) if (t.root === root) t.panel.webview.postMessage({ t: 'changed' }); }
+  /** Tells every tab of `root` to refetch (tabs of vanished tasks stay, the GUI says so) and updates task tabs' icons. */
+  changed(root: Root): void { for (const t of this.tabs.values()) if (t.root === root) { this.icon(t); t.panel.webview.postMessage({ t: 'changed' }); } }
+
+  /** A task tab's icon: the tree's type icon (a vanished task keeps its last one). */
+  private icon({ panel, root, view }: Tab): void {
+    const t = view.kind === 'task' ? root.pd.db.tasks[view.id] : undefined;
+    if (t) panel.iconPath = typeIcon(t.type, root.pd.db.format.types[t.type]?.color, t.props.done === true);
+  }
 
   /** Closes every tab of a root that is no longer loaded. */
   drop(root: Root): void { for (const t of [...this.tabs.values()]) if (t.root === root) t.panel.dispose(); }
@@ -131,6 +138,7 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
     panel.onDidChangeViewState(focus);
     panel.onDidDispose(() => { if (this.tabs.get(tab.key) === tab) this.tabs.delete(tab.key); focus(); });
     focus();
+    this.icon(tab);
 
     panel.webview.onDidReceiveMessage(async (m: Msg) => {
       const db = () => root.pd.db, post = (r: object) => panel.webview.postMessage(r);
@@ -154,6 +162,7 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
           tab.view = { kind: 'task', id };
           this.tabs.set(tab.key = keyOf(root, tab.view), tab);
           renamed = true;
+          this.icon(tab);   // `changed` ran before the rekey, under the old id
         }
       }
       post({ rid: m.rid, id, db: db(), error });
