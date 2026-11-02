@@ -127,9 +127,10 @@ The first table lists every task in tree order with:
 
 | Column | Meaning |
 |---|---|
-| Effort, Spent | The task's own `effort` and `spent`. |
+| Effort, Spent | The task's own `effort` and `spent`, or a gray `-` when the task has no such property. |
 | Σ Effort, Σ Spent | The same, summed over the task and all of its subtasks (each subtask counted once). |
 | Progress | Σ Spent relative to Σ Effort. |
+| (last) | The task's timer button. It appears while you hover the row or the task is selected, and stays visible while the timer runs. |
 
 Rows shown in red have spent more time than estimated. The second table totals the tasks, finished tasks, effort and time per task type. All values are in hours.
 

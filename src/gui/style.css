@@ -354,6 +354,7 @@ td.row-time { opacity: 0; transition: opacity .15s; }
 td.row-time button { padding: 1px 8px; white-space: nowrap; }
 tr:is(:hover, :focus-within, .sel) td.row-time, td.row-time:has(button.warn) { opacity: 1; }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+td.n.unset { color: var(--muted); background: var(--panel); }
 tr.over td { color: var(--error); }
 progress { width: 120px; height: 8px; accent-color: var(--primary); }
 

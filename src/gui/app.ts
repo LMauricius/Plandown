@@ -710,13 +710,17 @@ function graph(): HTMLElement {
 
 function time(): HTMLElement {
   const n = (v: number) => h('td', { className: 'n' }, v ? hours(v) : '');
+  // A task's own value: a missing property shows a gray "-", so it stands apart from an explicit 0
+  const own = (t: Task, k: 'effort' | 'spent') => t.props[k] == null
+    ? h('td', { className: 'n unset', title: `No ${k} property` }, '-')
+    : h('td', { className: 'n' }, hours(Number(t.props[k]) || 0));
   const rows: HTMLElement[] = [], byType = new Map<string, { count: number; done: number; effort: number; spent: number }>();
   walk((t, d) => {
-    const tot = db.totals[t.id], effort = Number(t.props.effort) || 0, spent = Number(t.props.spent) || 0;
+    const tot = db.totals[t.id];
     const name = h('td', {}, taskLink(t.id, { className: 'link' }, t.title));
     name.style.paddingLeft = `${8 + d * 16}px`;
     rows.push(h('tr', { className: [tot.effort && tot.spent > tot.effort && 'over', t.id === sel && 'sel'].filter(Boolean).join(' ') }, name, h('td', {}, badge(t.type)),
-      n(effort), n(spent), n(tot.effort), n(tot.spent),
+      own(t, 'effort'), own(t, 'spent'), n(tot.effort), n(tot.spent),
       h('td', {}, tot.effort ? h('progress', { max: tot.effort, value: Math.min(tot.spent, tot.effort), title: `${Math.round(100 * tot.spent / tot.effort)}%` }) : ''),
       h('td', { className: 'row-time' }, timerButton(t))));
   });
