@@ -491,7 +491,9 @@ function taskForm(t: Task): Form {
     ...db.format.types[t.type]?.props,
   };
 
-  const type = h('select', { value: t.type, onchange: mark('type') }, ...[...new Set([t.type, ...Object.keys(db.format.types)])].map(n => h('option', {}, n)));
+  // Title's type bubble follows the unsaved Type choice
+  let typeBadge = badge(t.type);
+  const type = h('select', { value: t.type, onchange: () => { mark('type')(); const b = badge(type.value); typeBadge.replaceWith(b); typeBadge = b; appear(b); } }, ...[...new Set([t.type, ...Object.keys(db.format.types)])].map(n => h('option', {}, n)));
   const title = mdEditor({ mode: 'line', parts: [t.title], multiline: false, label: 'Title', className: 'task-title', onInput: mark('title') });
   const done = h('input', { type: 'checkbox', checked: t.props.done === true, onchange: mark('p:done') });
   const fields = Object.entries(schema).map(([k, s]) => ({ k, s, el: field(s, t.props[k], mark('p:' + k)) }));
@@ -527,7 +529,7 @@ function taskForm(t: Task): Form {
   };
 
   const f = h('div', { className: 'title-desc' },
-    h('div', { className: 'title-row' }, title.el, save, revert),
+    h('div', { className: 'title-row' }, typeBadge, title.el, save, revert),
     desc.el);
   currentSubmit = submit;
 
