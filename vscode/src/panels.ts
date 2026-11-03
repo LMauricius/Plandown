@@ -14,11 +14,12 @@ import { typeIcon } from './tree.js';
 /**
  * Webview → host: `state` and `op` carry a request id `rid` answered with `{ rid, db }` / `{ rid, id, db, error }`
  * (the HTTP API's responses); `open` asks for another task's tab (`pin`: a pinned one, not a preview), `openNode` for a group
- * or file page; `reveal` opens a file at a line in a text editor.
+ * or file page; `reveal` opens a file at a line in a text editor; `copy` copies a task's or node's `linkOf`, answered with `{ rid, link }`
+ * (none: no such task or node).
  * Host → webview: `changed` (the folder was reloaded; the GUI refetches state, as on its SSE event).
  */
 type Msg = { t: 'state'; rid: number } | { t: 'op'; rid: number; op: Op } | { t: 'open'; id: string; pin?: boolean } | { t: 'openNode'; path: string; pin?: boolean }
-  | { t: 'reveal'; file: string; line: number };
+  | { t: 'reveal'; file: string; line: number } | { t: 'copy'; rid: number; id?: unknown; path?: unknown };
 
 /** What a tab shows; `task` tabs follow their task across renames, `node` tabs (a tree node's page) stay on their path. */
 type View = { kind: 'task'; id: string } | { kind: 'node'; path: string } | { kind: 'graph' } | { kind: 'time' };
@@ -58,6 +59,18 @@ function target(root: Root, page: Page): { uri: vscode.Uri; type: string } {
   const file = page.kind === 'task' ? findIn(root.pd.db.tree, n => n.task === page.id)?.file : undefined;
   return file ? { uri: vscode.Uri.joinPath(root.uri, file), type: file.endsWith('.plandown.md') ? 'plandown.own' : 'plandown.file' }
     : { uri: pageUri(root, page), type: 'plandown.task' };
+}
+
+/**
+ * Link to a page for other tools: the file path relative to its workspace folder; a task inside a file (not merged with it)
+ * adds `#<anchor>`, a folder-only group is its folder. Kept equal to the GUI's `diskLink`.
+ * shortcut: `anchor` is unique across the database, so it is the file's own heading anchor unless two tasks of different files share a slug (or a non-task heading does)
+ */
+export function linkOf(root: Root, page: Page): string | undefined {
+  const db = root.pd.db, rel = (p: string) => vscode.workspace.asRelativePath(vscode.Uri.joinPath(root.uri, p), false);
+  if (page.kind === 'node') { const n = findIn(db.tree, x => x.path === page.path); return n && rel(n.file ?? n.path); }
+  const t = db.tasks[page.id];
+  return t && (findIn(db.tree, n => n.task === t.id) ? rel(t.home.file) : `${rel(t.home.file)}#${t.anchor}`);
 }
 
 /** Whether `path` names a node of `tree` (paths from a page are not trusted). */
@@ -104,6 +117,18 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
 
   /** The focused Plandown tab, if any. */
   active(): Tab | undefined { return [...this.tabs.values()].find(t => t.panel.active); }
+
+  /**
+   * Link of a tab (`linkOf`): of the editor `uri` (a tab's context menu), else of the focused Plandown tab. A file URI
+   * links the file itself (it is the page of the task merged with it, or the file's own page).
+   */
+  async link(uri?: vscode.Uri): Promise<string | undefined> {
+    if (!uri) { const t = this.active(); return t && (t.view.kind === 'task' || t.view.kind === 'node') ? linkOf(t.root, t.view) : undefined; }
+    const q = new URLSearchParams(uri.query), id = q.get('id'), path = q.get('node');
+    if (!id && !path) return uri.scheme === 'file' ? vscode.workspace.asRelativePath(uri, false) : undefined;
+    const root = (await this.roots()).find(r => r.uri.fsPath === q.get('root'));
+    return root && linkOf(root, id ? { kind: 'task', id } : { kind: 'node', path: path! });
+  }
 
   /**
    * Reveals the task's tab or opens it as a preview tab (replacing the group's preview tab, as for files). `pin` opens a
@@ -181,6 +206,11 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
       if (m.t === 'reveal') {
         if (db().files.includes(m.file)) vscode.window.showTextDocument(vscode.Uri.joinPath(root.uri, m.file), { selection: new vscode.Range(m.line, 0, m.line, 0) });
         return;
+      }
+      if (m.t === 'copy') {
+        const link = typeof m.id === 'string' ? linkOf(root, { kind: 'task', id: m.id }) : typeof m.path === 'string' ? linkOf(root, { kind: 'node', path: m.path }) : undefined;
+        if (link) await vscode.env.clipboard.writeText(link);
+        return post({ rid: m.rid, link });
       }
       if (m.t !== 'op') return;
       let id: string | undefined, error: string | undefined;

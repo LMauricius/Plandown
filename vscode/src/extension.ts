@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import { dirname, join, relative, sep } from 'node:path';
 import type { Op, Plandown } from 'plandown' with { 'resolution-mode': 'import' };
 import { TaskTree, typeDecorations, type Item } from './tree.js';
-import { Panels } from './panels.js';
+import { Panels, linkOf } from './panels.js';
 
 /** One loaded database: the folder holding a `plandown-format.md`. */
 export interface Root { uri: vscode.Uri; pd: Plandown; diags: vscode.DiagnosticCollection; unwatch(): void; server?: Promise<{ url: string; close(): void }> }
@@ -226,6 +226,15 @@ export async function activate(ctx: vscode.ExtensionContext) {
     const n = r && findNode(r.pd.db.tree, fileStem(relative(r.uri.fsPath, path!).split(sep).join('/')));
     if (!n) return vscode.window.showInformationMessage('Plandown: not a folder or task file of a database.');
     if (n.task) panels.openTask(r!, n.task); else panels.openNode(r!, n.path);
+  });
+  // Copies the link of a tree item (its context menu), an editor tab (the tab's context menu passes its URI) or the focused Plandown tab
+  reg('plandown.copyLink', async (arg?: unknown) => {
+    const link = !isItem(arg) ? await panels.link(arg instanceof vscode.Uri ? arg : undefined)
+      : arg.kind === 'task' ? linkOf(arg.root, { kind: 'task', id: arg.id })
+      : arg.kind === 'node' ? linkOf(arg.root, arg.node.task ? { kind: 'task', id: arg.node.task } : { kind: 'node', path: arg.node.path }) : undefined;
+    if (!link) return;
+    await vscode.env.clipboard.writeText(link);
+    vscode.window.setStatusBarMessage(`Plandown: copied ${link}`, 3000);
   });
   reg('plandown.openPinned', (item: Item) => {
     if (item.kind === 'node' && !item.node.task) return panels.openNode(item.root, item.node.path, true);

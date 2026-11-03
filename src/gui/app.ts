@@ -91,6 +91,7 @@ const ICONS = {
   trash: 'M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 6.5v4.5M9.5 6.5v4.5',
   left: 'M10 3L5 8l5 5',
   right: 'M6 3l5 5-5 5',
+  copy: 'M5.5 5.5h8v8h-8zM10.5 5.5v-3h-8v8h3',
 };
 const icon = (n: keyof typeof ICONS) => s('svg', { class: 'ico', viewBox: '0 0 16 16', 'aria-hidden': 'true' }, s('path', { d: ICONS[n] }));
 
@@ -298,6 +299,35 @@ function select(id: string): boolean {
   tab = 'Tasks';
   go();
   return true;
+}
+
+/**
+ * On-disk target of a task (`id`) or tree node (`path`), relative to the database folder: the task's file when it is
+ * merged with it (the tree's file node), else the file plus `#<anchor>` (its section); a node's file, else its folder.
+ * Kept equal to the extension's `linkOf`, which makes it relative to the workspace folder instead.
+ */
+function diskLink(to: { id: string } | { path: string }): string | undefined {
+  if ('path' in to) { const n = findNode(db.tree, to.path); return n && (n.file ?? n.path); }
+  const t = db.tasks[to.id];
+  return t && (findNode(db.tree, t.home.file.replace(/(\.plandown)?\.md$/, ''))?.task === t.id ? t.home.file : `${t.home.file}#${t.anchor}`);
+}
+
+/**
+ * Button copying `diskLink`; inside VSCode the host copies it (relative to the workspace folder, see the extension's
+ * `linkOf`). `label` adds the text (the collapsed sidebar hides it). The icon turns into a check for a moment.
+ */
+function copyButton(to: { id: string } | { path: string }, label = false): HTMLButtonElement {
+  const ico = (n: 'check' | 'copy') => { b.firstElementChild!.replaceWith(icon(n)); appear(b); };
+  const done = () => { ico('check'); setTimeout(() => ico('copy'), 1500); };
+  const b = h('button', {
+    type: 'button', className: 'neutral', title: 'Copy link', onclick: async () => {
+      if (vs) return (await ask({ t: 'copy', ...to })).link ? done() : toast('Cannot copy this link');
+      const link = diskLink(to);
+      if (!link) return toast('This task no longer exists');
+      navigator.clipboard.writeText(link).then(done, () => toast('Cannot access the clipboard'));
+    },
+  }, icon('copy'), label && h('span', {}, 'Copy link'));
+  return b;
 }
 
 /** Navigates to a group or file page, as `select` does to a task. */
@@ -643,7 +673,7 @@ function taskForm(t: Task): Form {
   trail(false);
   const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== 'done' && k !== 'started');
   const save = h('button', { className: 'good', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, icon('check'), 'Save');
-  const revert = h('button', { className: 'neutral', hidden: true, onclick: () => { dirty = false; transition(render); } }, icon('undo'), 'Revert');
+  const revert = h('button', { hidden: true, onclick: () => { dirty = false; transition(render); } }, icon('undo'), 'Revert');
 
   const submit = () => {
     const cur = db.tasks[t.id];
@@ -752,7 +782,7 @@ function logAdd(t: Task): HTMLElement {
     onsubmit: (e: Event) => { e.preventDefault(); if (input.valueAsNumber) run({ op: 'log', id: t.id, hours: input.valueAsNumber }); },
     onkeydown: (e: KeyboardEvent) => { if (e.key === 'Escape') { show(pop, false); plus.focus(); } },
   }, spinbox(input, () => {}), h('button', {}, icon('plus'), 'Add'));
-  const plus = h('button', { type: 'button', className: 'neutral', title: 'Add hours to spent', onclick: () => { const open = pop.hidden; show(pop, open); if (open) input.focus(); } }, '+h');
+  const plus = h('button', { type: 'button', title: 'Add hours to spent', onclick: () => { const open = pop.hidden; show(pop, open); if (open) input.focus(); } }, '+h');
   // A null relatedTarget (a click on bare page, or on a button some browsers do not focus) keeps it open
   const wrap = h('span', { className: 'log-add', onfocusout: (e: FocusEvent) => { const to = e.relatedTarget as Node | null; if (to && !wrap.contains(to)) show(pop, false); } }, plus, pop);
   return wrap;
@@ -833,7 +863,7 @@ function live(t: Task, slots: Slot[]) {
 
   // Description slots: one bubble per kind, scrolling to its group
   for (const s of slots) s.el.replaceChildren(...[...new Set(s.kinds)].map(k => h('button', {
-    type: 'button', className: 'ph-bubble', onclick: () => {
+    type: 'button', className: 'ph-bubble nav', onclick: () => {
       const g = placed.get(k)!;
       g.scrollIntoView({ behavior: still() ? 'auto' : 'smooth', block: 'nearest' });
       appear(g);
@@ -878,7 +908,7 @@ function nodePage(n: TreeNode): HTMLElement {
     return li;
   });
   return h('div', { className: 'editor-main' },
-    h('div', { className: 'title-row', title: n.file ?? n.path + '/' }, nodeIcon(n), h('span', { className: 'task-title' }, base(n.path))),
+    h('div', { className: 'title-row', title: n.file ?? n.path + '/' }, nodeIcon(n), h('span', { className: 'task-title' }, base(n.path)), copyButton({ path: n.path })),
     items.length ? h('div', { className: 'link-group outline' }, columns(h('ul', {}, ...items))) : h('p', { className: 'muted' }, 'Nothing here yet.'));
 }
 
@@ -987,7 +1017,7 @@ function time(): HTMLElement {
  */
 function paneHead(pane: Pane, title: string, expand: 'left' | 'right'): HTMLElement {
   const toggle = h('button', {
-    type: 'button', className: 'neutral pane-toggle', title: pane.collapsed ? `Expand ${title.toLowerCase()}` : `Hide ${title.toLowerCase()}`,
+    type: 'button', className: 'nav pane-toggle', title: pane.collapsed ? `Expand ${title.toLowerCase()}` : `Hide ${title.toLowerCase()}`,
     onclick: () => { pane.collapsed = !pane.collapsed; transition(render); },
   }, icon(pane.collapsed ? expand : expand === 'left' ? 'right' : 'left'), pane.collapsed ? null : 'Hide');
   return h('div', { className: 'pane-head' }, pane.collapsed ? null : h('h3', {}, title), toggle);
@@ -1037,15 +1067,15 @@ function render() {
 
   const keep = dirty && formBundle && formFor === sel;
   const bundle = keep ? formBundle! : (formBundle = taskForm(t));
-  const lv = live(t, bundle.slots);
+  const lv = live(t, bundle.slots), copyBtn = copyButton({ id: t.id }, true);
 
   const sidebarContent = panes.props.collapsed
-    ? [...compactProps(t), lv.timerBtn, lv.lapBtn, lv.deleteBtn]
+    ? [...compactProps(t), lv.timerBtn, lv.lapBtn, copyBtn, lv.deleteBtn]
     : [
         bundle.props,
         h('div', { className: 'sidebar-section' }, h('h3', {}, 'Time'), h('div', { className: 'actions' }, lv.timerBtn, lv.lapBtn, h('span', { className: 'muted' }, lv.timeSummary))),
         h('div', { className: 'sidebar-section' }, h('h3', {}, 'Stored in'), ...lv.occurrences),
-        h('div', { className: 'sidebar-section actions' }, lv.deleteBtn),
+        h('div', { className: 'sidebar-section actions' }, copyBtn, lv.deleteBtn),
       ];
 
   const resizeHandle = h('div', { className: 'sidebar-resize' });
