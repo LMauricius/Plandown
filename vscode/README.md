@@ -40,9 +40,20 @@ Each task opens in a tab of its own, showing the GUI's editor without its header
 
 The **Stored in** entries open the Markdown file at that line in a text editor.
 
-Any Markdown file can also be opened with Plandown: right-click it and choose **Open With... → Plandown** (or run **Reopen Editor With...**). Plandown then shows the first task of that file. The text editor stays the default for `.md` files.
-
 Tabs are restored when the window reloads.
+
+## Plandown files
+
+Files that belong to a database count as their own file type, **Plandown**: they get the Plandown icon in the Explorer and open in Plandown by default, which shows the file's first task. A file without tasks (for example a new, empty one) opens in the text editor instead. To edit any file as text, use **Reopen Editor With... → Text Editor**.
+
+Two kinds of files are recognized:
+
+- **By name, everywhere:** files ending in `.plandown.md`, and every `plandown-format.md`.
+- **By location:** every `.md` file inside a database found in the workspace. VSCode can only match files by name patterns, so the extension writes one pattern per database to the workspace settings (`files.associations` and `workbench.editorAssociations`). It keeps these entries up to date as databases appear and disappear, and leaves other entries alone.
+
+`plandown-format.md` always opens in the text editor. Because Plandown files have their own file type, the features of the `markdown` type (the built-in Markdown preview, the outline and other Markdown extensions) do not apply to them; syntax highlighting still does.
+
+Any other Markdown file can be opened with Plandown too: right-click it and choose **Open With... → Plandown (any Markdown file)**.
 
 ## Running timers
 

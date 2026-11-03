@@ -1,7 +1,7 @@
 /**
  * Webview tabs running the library's GUI (`dist/gui`): one graph and one time tab per root (webview panels), task and
  * group pages (the `plandown.task` custom editor on virtual URIs, see `pageUri`, so they get VSCode's preview tabs and history) and the
- * `plandown.file` custom editor that shows the first task of a `.md` file. The GUI talks to the host through
+ * `plandown.file` / `plandown.own` custom editors that show the first task of a `.md` / `.plandown.md` file. The GUI talks to the host through
  * postMessage (see `Msg`); the host answers from the root's `Plandown` instance.
  */
 import * as vscode from 'vscode';
@@ -205,7 +205,9 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
 
   /**
    * `plandown.task`: binds the panel as the tab of the task or tree node its URI names (only loaded roots). `plandown.file`: binds it
-   * as the task tab of the file's first task (so tree clicks reveal it). Otherwise a short message page.
+   * as the task tab of the file's first task (so tree clicks reveal it); `plandown.own` is the same, as the default editor of
+   * `*.plandown.md`. A database file without tasks (new or empty) goes to the text editor, since Plandown is its default editor.
+   * Otherwise a short message page.
    */
   async resolveCustomEditor(doc: vscode.CustomDocument, panel: vscode.WebviewPanel): Promise<void> {
     const roots = await this.roots();
@@ -218,6 +220,10 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
     }
     const at = rootOf(roots, doc.uri), id = at && firstTask(at.root, at.file);
     if (id) return this.bind(panel, at.root, { kind: 'task', id });
-    panel.webview.html = note(at ? 'This file has no Plandown tasks.' : 'This file is not inside a Plandown database (a folder with plandown-format.md).');
+    if (at) {
+      await vscode.commands.executeCommand('vscode.openWith', doc.uri, 'default', panel.viewColumn);
+      return panel.dispose();
+    }
+    panel.webview.html = note('This file is not inside a Plandown database (a folder with plandown-format.md).');
   }
 }

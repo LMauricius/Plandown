@@ -11,6 +11,8 @@ Every `.md` file inside the folder and its subfolders is read. Hidden files and 
 - **`plandown-format.md`** at the top of the folder declares the task types, their properties and the link types between them. A file with that name inside a subfolder is ignored.
 - **Every other `.md` file** holds tasks. Files are read in natural name order (`2.md` before `10.md`), and together they form one database. Subfolders only organize the files; a task's identity does not depend on where it is stored.
 
+A task file may also end in `.plandown.md`. It is read like any other `.md` file, but editors can recognize it as a Plandown file by its name alone. Both suffixes count as the file's extension, so `roadmap.plandown.md` is named `roadmap` everywhere (and merges with a `roadmap/` folder). If `roadmap.md` and `roadmap.plandown.md` both exist, `roadmap.md` stands for the name in the navigation tree.
+
 ```mermaid
 flowchart LR
   F[plandown-format.md] -->|types, properties, link types| DB[(Task database)]

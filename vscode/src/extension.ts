@@ -1,5 +1,5 @@
 /**
- * Plandown for VSCode: finds databases in the workspace, lists them in the activity bar tree, opens tasks, the graph and
+ * Plandown for VSCode: finds databases in the workspace, marks their files as Plandown files, lists them in the activity bar tree, opens tasks, the graph and
  * the time view in webview tabs running the standalone GUI, and reports diagnostics in the Problems view.
  * The extension host loads CommonJS while the library is ESM, so the library is loaded with a dynamic `import()`.
  */
@@ -31,6 +31,30 @@ async function findRoots(): Promise<vscode.Uri[]> {
   return dirs.filter(d => !dirs.some(o => d.startsWith(o + sep))).sort().map(d => vscode.Uri.file(d));
 }
 
+/**
+ * Per-root file associations in workspace settings (VSCode can't scope them to "folders holding plandown-format.md"):
+ * every `.md` of a root is the `plandown` language (its icon) and opens in the `plandown.file` editor, except the format
+ * file (text editor). Globs start with `**` + the workspace folder's name, so no machine-specific path is stored.
+ * Entries are recognized as ours by their shape and value and rewritten as a whole; settings are written only on change.
+ * (`*.plandown.md` and `plandown-format.md` anywhere are associated statically, in package.json.)
+ */
+async function associate(roots: vscode.Uri[]): Promise<void> {
+  const dirs = roots.flatMap(u => { const ws = vscode.workspace.getWorkspaceFolder(u); return ws ? ['**/' + relative(dirname(ws.uri.fsPath), u.fsPath).split(sep).join('/')] : []; });
+  const want: Record<string, [string, string][]> = {
+    'files.associations': dirs.map(d => [`${d}/**/*.md`, 'plandown']),
+    'workbench.editorAssociations': dirs.flatMap((d): [string, string][] => [[`${d}/**/*.md`, 'plandown.file'], [`${d}/plandown-format.md`, 'default']]),
+  };
+  const ours = (k: string, v: string) => k.startsWith('**/')
+    && (k.endsWith('/**/*.md') && (v === 'plandown' || v === 'plandown.file') || k.endsWith('/plandown-format.md') && v === 'default');
+  const conf = vscode.workspace.getConfiguration();
+  for (const [key, entries] of Object.entries(want)) {
+    const cur = conf.inspect<Record<string, string>>(key)?.workspaceValue ?? {};
+    const next = { ...Object.fromEntries(Object.entries(cur).filter(([k, v]) => !ours(k, v))), ...Object.fromEntries(entries) };
+    if (JSON.stringify(next) !== JSON.stringify(cur))
+      await conf.update(key, Object.keys(next).length ? next : undefined, vscode.ConfigurationTarget.Workspace);
+  }
+}
+
 /** Mirrors `db.diagnostics` of one root into the Problems view (whole lines). */
 function report(root: Root): void {
   const byFile = new Map<string, vscode.Diagnostic[]>();
@@ -50,12 +74,15 @@ const isItem = (a: unknown): a is Item => typeof a === 'object' && a !== null &&
 // ---- Activation ----
 
 export async function activate(ctx: vscode.ExtensionContext) {
-  const { Plandown, serve } = await import('plandown');
+  const { Plandown, serve, findNode, fileStem } = await import('plandown');
   let roots: Root[] = [], loading = Promise.resolve();
 
   // ---- Databases ----
 
-  const changed = (r: Root) => { report(r); tree.refresh(); panels.changed(r); showTimers(); };
+  const changed = (r: Root) => { report(r); tree.refresh(); panels.changed(r); showTimers(); setPaths(); };
+  /** Context key `plandown.paths`: every folder and task file of every root (absolute), so Explorer menus and keys show only on them. */
+  const setPaths = () => vscode.commands.executeCommand('setContext', 'plandown.paths',
+    roots.flatMap(r => [...r.pd.db.folders, ...r.pd.db.files].map(p => join(r.uri.fsPath, ...p.split('/')))));
   const apply: Apply = async (r, op) => { try { return await r.pd.apply(op); } finally { changed(r); } };
   const close = (r: Root) => { r.unwatch(); r.diags.dispose(); panels.drop(r); r.server?.then(s => s.close(), () => {}); };
 
@@ -79,6 +106,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
     roots.sort((a, b) => a.uri.fsPath < b.uri.fsPath ? -1 : 1);
     tree.refresh();
     showTimers();
+    setPaths();
+    await associate(roots.map(r => r.uri)).catch(e => vscode.window.showWarningMessage(`Plandown: cannot associate .md files: ${(e as Error).message}`));
   });
 
   // ---- Status bar: running timers ----
@@ -109,7 +138,9 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const panels = new Panels(vscode.Uri.file(join(dirname(require.resolve('plandown')), 'gui')), () => loading.then(() => roots), apply);
   ctx.subscriptions.push(view, view.onDidChangeCheckboxState(e => tree.checked(e)), vscode.window.registerFileDecorationProvider(typeDecorations),
     vscode.window.registerCustomEditorProvider('plandown.file', panels, { webviewOptions: { retainContextWhenHidden: true } }),
-    vscode.window.registerCustomEditorProvider('plandown.task', panels, { webviewOptions: { retainContextWhenHidden: true } }),    vscode.window.registerWebviewPanelSerializer('plandown.view', panels),
+    vscode.window.registerCustomEditorProvider('plandown.own', panels, { webviewOptions: { retainContextWhenHidden: true } }),
+    vscode.window.registerCustomEditorProvider('plandown.task', panels, { webviewOptions: { retainContextWhenHidden: true } }),
+    vscode.window.registerWebviewPanelSerializer('plandown.view', panels),
     vscode.workspace.onDidChangeWorkspaceFolders(load),
     vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('plandown.searchDepth')) load(); }),
     { dispose: () => { roots.forEach(close); clearInterval(ticker); timers.forEach(t => t.item.dispose()); } });
@@ -177,6 +208,25 @@ export async function activate(ctx: vscode.ExtensionContext) {
   };
   reg('plandown.open', (r: Root, id: string, item?: Item) => panels.openTask(r, id, clicked(r, id, item)));
   reg('plandown.openNode', (r: Root, path: string, item?: Item) => panels.openNode(r, path, clicked(r, '/' + path, item)));
+  /**
+   * Explorer item's page: a folder's or file's group page, or the task merged with it. The context menu passes the item;
+   * the keybinding passes nothing, and the Explorer selection is read with `copyFilePath` through the clipboard (VSCode
+   * has no selection API). The clipboard's text is restored; other content (images, rich text) is lost.
+   */
+  reg('plandown.openInPlandown', async (arg?: unknown) => {
+    let path = arg instanceof vscode.Uri ? arg.fsPath : undefined;
+    if (!path) {
+      const saved = await vscode.env.clipboard.readText();
+      await vscode.env.clipboard.writeText('');
+      await vscode.commands.executeCommand('copyFilePath');
+      path = (await vscode.env.clipboard.readText()).split(/\r?\n/)[0];   // first of a multi-selection
+      await vscode.env.clipboard.writeText(saved);
+    }
+    const r = path ? roots.find(x => path.startsWith(x.uri.fsPath + sep)) : undefined;
+    const n = r && findNode(r.pd.db.tree, fileStem(relative(r.uri.fsPath, path!).split(sep).join('/')));
+    if (!n) return vscode.window.showInformationMessage('Plandown: not a folder or task file of a database.');
+    if (n.task) panels.openTask(r!, n.task); else panels.openNode(r!, n.path);
+  });
   reg('plandown.openPinned', (item: Item) => {
     if (item.kind === 'node' && !item.node.task) return panels.openNode(item.root, item.node.path, true);
     const id = item.kind === 'node' ? item.node.task : item.kind === 'task' ? item.id : undefined;

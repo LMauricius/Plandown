@@ -1,0 +1,4 @@
+{
+  "scopeName": "text.html.markdown.plandown",
+  "patterns": [{ "include": "text.html.markdown" }]
+}

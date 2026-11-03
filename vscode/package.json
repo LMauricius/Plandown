@@ -17,8 +17,14 @@
         "plandown.searchDepth": { "type": "integer", "default": 3, "minimum": 0, "description": "How many folders deep below a workspace folder to look for plandown-format.md." }
       }
     },
+    "languages": [
+      { "id": "plandown", "aliases": ["Plandown"], "extensions": [".plandown.md"], "filenames": ["plandown-format.md"], "configuration": "./language-configuration.json",
+        "icon": { "light": "./dist/sign.svg", "dark": "./dist/sign.svg" } }
+    ],
+    "grammars": [{ "language": "plandown", "scopeName": "text.html.markdown.plandown", "path": "./syntaxes/plandown.tmLanguage.json" }],
     "customEditors": [
-      { "viewType": "plandown.file", "displayName": "Plandown", "selector": [{ "filenamePattern": "*.md" }], "priority": "option" },
+      { "viewType": "plandown.own", "displayName": "Plandown", "selector": [{ "filenamePattern": "*.plandown.md" }], "priority": "default" },
+      { "viewType": "plandown.file", "displayName": "Plandown (any Markdown file)", "selector": [{ "filenamePattern": "*.md" }], "priority": "option" },
       { "viewType": "plandown.task", "displayName": "Plandown Task", "selector": [{ "filenamePattern": "**/.plandown-tasks/*" }], "priority": "option" }
     ],
     "viewsContainers": {
@@ -36,15 +42,18 @@
       { "command": "plandown.clearFilter", "title": "Clear Filter", "category": "Plandown", "icon": "$(clear-all)" },
       { "command": "plandown.openPinned", "title": "Open in New Tab", "category": "Plandown" },
       { "command": "plandown.openNode", "title": "Open Group", "category": "Plandown" },
+      { "command": "plandown.openInPlandown", "title": "Open in Plandown", "category": "Plandown" },
       { "command": "plandown.openBrowser", "title": "Open in Browser", "category": "Plandown", "icon": "$(globe)" },
       { "command": "plandown.refresh", "title": "Rescan Workspace", "category": "Plandown", "icon": "$(refresh)" }
     ],
     "keybindings": [
+      { "key": "alt+enter", "command": "plandown.openInPlandown", "when": "explorerViewletFocus && !inputFocus && resourcePath in plandown.paths" },
       { "key": "alt+left", "mac": "cmd+[", "command": "workbench.action.navigateBack", "when": "activeCustomEditorId == 'plandown.task' || activeCustomEditorId == 'plandown.file' || activeWebviewPanelId == 'plandown.view'" },
       { "key": "alt+right", "mac": "cmd+]", "command": "workbench.action.navigateForward", "when": "activeCustomEditorId == 'plandown.task' || activeCustomEditorId == 'plandown.file' || activeWebviewPanelId == 'plandown.view'" }
     ],
     "menus": {
-      "commandPalette": [{ "command": "plandown.openPinned", "when": "false" }, { "command": "plandown.openNode", "when": "false" }],
+      "commandPalette": [{ "command": "plandown.openPinned", "when": "false" }, { "command": "plandown.openNode", "when": "false" }, { "command": "plandown.openInPlandown", "when": "false" }],
+      "explorer/context": [{ "command": "plandown.openInPlandown", "group": "navigation@9", "when": "resourcePath in plandown.paths" }],
       "editor/title": [
         { "command": "plandown.graph", "group": "navigation@1", "when": "plandown.active" },
         { "command": "plandown.time", "group": "navigation@2", "when": "plandown.active" },
@@ -66,7 +75,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').copyFileSync('../media/symbolic.svg', 'dist/symbolic.svg')\""
+    "build": "tsc && node -e \"for (const f of ['symbolic.svg', 'sign.svg']) require('fs').copyFileSync('../media/' + f, 'dist/' + f)\""
   },
   "dependencies": {
     "plandown": "file:.."

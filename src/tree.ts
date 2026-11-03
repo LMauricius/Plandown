@@ -1,6 +1,6 @@
 /**
  * Sidebar tree: folders and task files as one structure. A folder and a file with the same stem
- * (`a/b/` and `a/b.md`) are one node; a file whose only top-level task is named like the file is
+ * (`a/b/` and `a/b.md` or `a/b.plandown.md`) are one node; a file whose only top-level task is named like the file is
  * merged with that task. Pure, built with the database, so every front end shows the same tree.
  */
 import { SUBTASK } from './format.js';
@@ -10,7 +10,7 @@ import type { Edge, Task } from './db.js';
 export interface TreeNode {
   path: string;
   folder: boolean;       // folder `path/` exists
-  file: string | null;   // `path.md`, if it exists
+  file: string | null;   // `path.md` (else `path.plandown.md`), if it exists
   task: string | null;   // the file's single top-level task, merged into this node
   tasks: string[];       // other top-level tasks whose home is the file, in file order
   kids: TreeNode[];      // child folders and files, natural name order
@@ -26,6 +26,12 @@ export const slug = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{M}\p
 
 /** Last segment of a `/`-separated path. */
 export const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+
+/**
+ * Stem of a task file: its path minus `.md`, or minus `.plandown.md` (the suffix that lets editors recognize Plandown
+ * files by name alone), so `a.md` and `a.plandown.md` both name node `a`.
+ */
+export const fileStem = (file: string) => file.replace(/(\.plandown)?\.md$/, '');
 
 /** Whether a file or folder stem names the task: by its title (`Fix login`) or by its id (`[Task] Fix login`). */
 export function namesTask(stem: string, type: string, title: string): boolean {
@@ -54,7 +60,7 @@ export function buildTree(files: string[], folders: string[], tasks: Record<stri
     return n;
   };
   for (const f of folders) node(f).folder = true;
-  for (const f of files) node(f.slice(0, -3)).file = f;
+  for (const f of files) node(fileStem(f)).file ??= f;   // `a.md` sorts before `a.plandown.md` and wins
 
   // Top-level tasks: no parent, or only reachable through a Subtask cycle (otherwise they would be listed nowhere)
   const kids = new Map<string, string[]>(), hasParent = new Set<string>(), reached = new Set<string>();
@@ -68,7 +74,7 @@ export function buildTree(files: string[], folders: string[], tasks: Record<stri
   const top = Object.keys(tasks).filter(id => !hasParent.has(id));
   top.forEach(reach);
   for (const id in tasks) if (!reached.has(id)) { top.push(id); reach(id); }
-  for (const id of top.sort((a, b) => tasks[a].home.line - tasks[b].home.line)) nodes.get(tasks[id].home.file.slice(0, -3))?.tasks.push(id);
+  for (const id of top.sort((a, b) => tasks[a].home.line - tasks[b].home.line)) nodes.get(fileStem(tasks[id].home.file))?.tasks.push(id);
 
   // Merge single, same-named tasks into their file's node; order everything by name
   for (const n of nodes.values()) {

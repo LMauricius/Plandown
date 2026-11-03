@@ -7,7 +7,7 @@ import { Document, parseDocument, isMap, isScalar } from 'yaml';
 import { bodyTexts, gaps, rangeText, type Node, type ParsedFile } from './markdown.js';
 import { FORMAT_FILE, PARENT, SUBTASK } from './format.js';
 import { taskId, type Db, type Occ, type Task } from './db.js';
-import { baseName, findNode, namesTask } from './tree.js';
+import { baseName, fileStem, findNode, namesTask } from './tree.js';
 
 export type Op =
   | { op: 'update'; id: string; type?: string; title?: string; props?: Record<string, unknown>; body?: string[] }
@@ -165,10 +165,10 @@ function update(ctx: Ctx, op: Extract<Op, { op: 'update' }>): Plan {
     if (ctx.db.tasks[id]) throw new Error(`Task ${id} already exists`);
     for (const { pf, node } of ctx.occ.get(t.id)!)
       edits.push({ file: pf.file, start: node.line, end: node.line + 1, lines: [`${node.prefix}[${type}] ${title}`] });
-    // The file (and folder) merged with the task in the tree follows its new name
-    const n = findNode(ctx.db.tree, t.home.file.slice(0, -3));
+    // The file (and folder) merged with the task in the tree follows its new name, keeping its suffix (`.md` or `.plandown.md`)
+    const n = findNode(ctx.db.tree, fileStem(t.home.file));
     if (n?.task === t.id && !namesTask(n.path, type, title)) {
-      const to = dirOf(n.path) + stemOf(title), file = checkPath(to + '.md', true);
+      const to = dirOf(n.path) + stemOf(title), file = checkPath(to + n.file!.slice(n.path.length), true);
       if (ctx.db.files.includes(file) || ctx.db.folders.includes(to)) throw new Error(`Cannot rename ${n.path}: ${to} already exists`);
       moves.push({ from: n.file!, to: file }, ...n.folder ? [{ from: n.path, to }] : []);
     }

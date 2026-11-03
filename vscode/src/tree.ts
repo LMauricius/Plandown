@@ -95,7 +95,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
       const roots = this.roots(), q = this.filter.toLowerCase();
       if (q) return roots.flatMap(root => Object.values(root.pd.db.tasks)
         .filter(t => `${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q))
-        .map((t): Item => ({ kind: 'task', root, id: t.id, near: t.home.file.slice(0, -3), up: [], leaf: true })));
+        .map((t): Item => ({ kind: 'task', root, id: t.id, near: t.home.file.replace(/(\.plandown)?\.md$/, ''), up: [], leaf: true })));
       return roots.length === 1 ? nodes(roots[0], roots[0].pd.db.tree) : roots.map(root => ({ kind: 'root', root }));
     }
     const { root } = item;

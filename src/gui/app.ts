@@ -427,7 +427,7 @@ function fillTree(tree = $('tree')) {
   const q = filter.toLowerCase();
   if (q) {
     const rows: HTMLElement[] = [];
-    for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0, t.home.file.slice(0, -3)));
+    for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0, t.home.file.replace(/(\.plandown)?\.md$/, '')));   // tree.ts's `fileStem`
     return tree.replaceChildren(...rows);
   }
   const all = outline(db.tree), isCur = (e: Entry) => sel ? e.t?.id === sel : node !== null && e.n?.path === node;

@@ -137,6 +137,18 @@ test('body: text gaps around task lists, sub-chapters included, edited gap by ga
   await assert.rejects(m.apply({ op: 'update', id: '[T] A', body: ['a', 'b', 'c', 'd'] }), /lists changed/);
 });
 
+test('tree: .plandown.md files merge like .md files and keep their suffix on rename', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  mkdirSync(join(d, 'h'));
+  w('plandown-format.md', '# [T] t\n');
+  w('h.plandown.md', '# [T] H\n');
+  w('h/x.md', '# [T] X\n');
+  const m = await Plandown.open(d);
+  assert.deepEqual(m.db.tree.map(n => [n.path, n.folder, n.file, n.task]), [['h', true, 'h.plandown.md', '[T] H']]);
+  await m.apply({ op: 'update', id: '[T] H', title: 'K' });
+  assert.ok(existsSync(join(d, 'K.plandown.md')) && existsSync(join(d, 'K/x.md')));
+});
+
 test('tree: subfolders, stem merges and placement of new groups and tasks', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   for (const f of ['g/empty', '.hidden']) mkdirSync(join(d, f), { recursive: true });
