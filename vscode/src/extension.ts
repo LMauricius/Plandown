@@ -198,7 +198,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     catch (e) { r.server = undefined; vscode.window.showErrorMessage(`Plandown: cannot start the GUI server: ${(e as Error).message}`); }
   });
   // Opening the same page twice within 500 ms (a double click on a tree row) pins its tab, as the Explorer does for files.
-  // A click from the tree (`item`) also expands its row
+  // A click from the tree (`item`) also expands its row and, unless pinning, keeps the focus in the tree
   let last = { r: undefined as Root | undefined, key: '', at: 0 };
   const clicked = (r: Root, key: string, item?: Item) => {
     const pin = last.r === r && last.key === key && Date.now() - last.at < 500;
@@ -206,8 +206,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
     if (isItem(item)) view.reveal(item, { expand: true }).then(undefined, () => {});
     return pin;
   };
-  reg('plandown.open', (r: Root, id: string, item?: Item) => panels.openTask(r, id, clicked(r, id, item)));
-  reg('plandown.openNode', (r: Root, path: string, item?: Item) => panels.openNode(r, path, clicked(r, '/' + path, item)));
+  reg('plandown.open', (r: Root, id: string, item?: Item) => { const pin = clicked(r, id, item); panels.openTask(r, id, pin, isItem(item) && !pin); });
+  reg('plandown.openNode', (r: Root, path: string, item?: Item) => { const pin = clicked(r, '/' + path, item); panels.openNode(r, path, pin, isItem(item) && !pin); });
   /**
    * Explorer item's page: a folder's or file's group page, or the task merged with it. The context menu passes the item;
    * the keybinding passes nothing, and the Explorer selection is read with `copyFilePath` through the clipboard (VSCode

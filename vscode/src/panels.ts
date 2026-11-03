@@ -91,17 +91,18 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
 
   /**
    * Reveals the task's tab or opens it as a preview tab (replacing the group's preview tab, as for files). `pin` opens a
-   * pinned tab instead; reopening a task tab's own URI pins it if it is the active group's preview tab.
+   * pinned tab instead; reopening a task tab's own URI pins it if it is the active group's preview tab. `keep` keeps the
+   * focus where it is (a tree click's preview, as the Explorer does).
    */
-  openTask(root: Root, id: string, pin = false): void { this.openPage(root, { kind: 'task', id }, pin); }
+  openTask(root: Root, id: string, pin = false, keep = false): void { this.openPage(root, { kind: 'task', id }, pin, keep); }
 
   /** Reveals or opens a group or file page, as `openTask`. */
-  openNode(root: Root, path: string, pin = false): void { this.openPage(root, { kind: 'node', path }, pin); }
+  openNode(root: Root, path: string, pin = false, keep = false): void { this.openPage(root, { kind: 'node', path }, pin, keep); }
 
-  private openPage(root: Root, page: Page, pin: boolean): void {
+  private openPage(root: Root, page: Page, pin: boolean, keep: boolean): void {
     const hit = this.tabs.get(keyOf(root, page));
-    if (hit && !(pin && hit.uri)) return hit.panel.reveal();
-    vscode.commands.executeCommand('vscode.openWith', hit?.uri ?? pageUri(root, page), 'plandown.task', { preview: !pin, viewColumn: vscode.ViewColumn.Active });
+    if (hit && !(pin && hit.uri)) return hit.panel.reveal(undefined, keep);
+    vscode.commands.executeCommand('vscode.openWith', hit?.uri ?? pageUri(root, page), 'plandown.task', { preview: !pin, preserveFocus: keep, viewColumn: vscode.ViewColumn.Active });
   }
 
   /** Reveals or opens the root's graph or time tab. */
@@ -206,7 +207,8 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   /**
    * `plandown.task`: binds the panel as the tab of the task or tree node its URI names (only loaded roots). `plandown.file`: binds it
    * as the task tab of the file's first task (so tree clicks reveal it); `plandown.own` is the same, as the default editor of
-   * `*.plandown.md`. A database file without tasks (new or empty) goes to the text editor, since Plandown is its default editor.
+   * `*.plandown.md`. A database file without tasks (new or empty) goes to the text editor, since Plandown is its default editor
+   * (focused only if this panel was: an Explorer preview click keeps the focus).
    * Otherwise a short message page.
    */
   async resolveCustomEditor(doc: vscode.CustomDocument, panel: vscode.WebviewPanel): Promise<void> {
@@ -221,7 +223,7 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
     const at = rootOf(roots, doc.uri), id = at && firstTask(at.root, at.file);
     if (id) return this.bind(panel, at.root, { kind: 'task', id });
     if (at) {
-      await vscode.commands.executeCommand('vscode.openWith', doc.uri, 'default', panel.viewColumn);
+      await vscode.commands.executeCommand('vscode.openWith', doc.uri, 'default', { viewColumn: panel.viewColumn, preserveFocus: !panel.active });
       return panel.dispose();
     }
     panel.webview.html = note('This file is not inside a Plandown database (a folder with plandown-format.md).');
