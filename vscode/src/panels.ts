@@ -1,7 +1,8 @@
 /**
  * Webview tabs running the library's GUI (`dist/gui`): one graph and one time tab per root (webview panels), task and
  * group pages (the `plandown.task` custom editor on virtual URIs, see `pageUri`, so they get VSCode's preview tabs and history) and the
- * `plandown.file` / `plandown.own` custom editors that show the first task of a `.md` / `.plandown.md` file. The GUI talks to the host through
+ * `plandown.file` / `plandown.own` custom editors that show the task of a `.md` / `.plandown.md` file (also the tab of a task
+ * merged with its file, see `target`). The GUI talks to the host through
  * postMessage (see `Msg`); the host answers from the root's `Plandown` instance.
  */
 import * as vscode from 'vscode';
@@ -23,7 +24,7 @@ type Msg = { t: 'state'; rid: number } | { t: 'op'; rid: number; op: Op } | { t:
 type View = { kind: 'task'; id: string } | { kind: 'node'; path: string } | { kind: 'graph' } | { kind: 'time' };
 type Page = Extract<View, { kind: 'task' | 'node' }>;
 
-/** `uri`: the virtual URI of a `plandown.task` tab. */
+/** `uri`: the URI of a custom editor tab (virtual for `plandown.task`, else the file); `panel.viewType` is its editor. */
 interface Tab { panel: vscode.WebviewPanel; root: Root; view: View; key: string; uri?: vscode.Uri }
 
 // ---- Utilities ----
@@ -43,6 +44,21 @@ const pageUri = (root: Root, page: Page) => root.uri.with({
   path: `${root.uri.path}/.plandown-tasks/${(page.kind === 'node' ? page.path.slice(page.path.lastIndexOf('/') + 1) : root.pd.db.tasks[page.id]?.title ?? page.id).replace(/\//g, '∕')}`,
   query: new URLSearchParams(page.kind === 'node' ? { root: root.uri.fsPath, node: page.path } : { root: root.uri.fsPath, id: page.id }).toString(),
 });
+
+/** First node of `tree` (depth first) satisfying `hit`. */
+const findIn = (tree: TreeNode[], hit: (n: TreeNode) => boolean): TreeNode | undefined => {
+  for (const n of tree) { const r = hit(n) ? n : findIn(n.kids, hit); if (r) return r; }
+};
+
+/**
+ * Where a page opens: a task merged with its file (the tree's file node) on the file itself, in the editor its suffix
+ * gets by default; every other page on its virtual URI.
+ */
+function target(root: Root, page: Page): { uri: vscode.Uri; type: string } {
+  const file = page.kind === 'task' ? findIn(root.pd.db.tree, n => n.task === page.id)?.file : undefined;
+  return file ? { uri: vscode.Uri.joinPath(root.uri, file), type: file.endsWith('.plandown.md') ? 'plandown.own' : 'plandown.file' }
+    : { uri: pageUri(root, page), type: 'plandown.task' };
+}
 
 /** Whether `path` names a node of `tree` (paths from a page are not trusted). */
 const hasNode = (tree: TreeNode[], path: string): boolean => tree.some(n => n.path === path || (path.startsWith(n.path + '/') && hasNode(n.kids, path)));
@@ -102,7 +118,8 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   private openPage(root: Root, page: Page, pin: boolean, keep: boolean): void {
     const hit = this.tabs.get(keyOf(root, page));
     if (hit && !(pin && hit.uri)) return hit.panel.reveal(undefined, keep);
-    vscode.commands.executeCommand('vscode.openWith', hit?.uri ?? pageUri(root, page), 'plandown.task', { preview: !pin, preserveFocus: keep, viewColumn: vscode.ViewColumn.Active });
+    const to = hit?.uri ? { uri: hit.uri, type: hit.panel.viewType } : target(root, page);
+    vscode.commands.executeCommand('vscode.openWith', to.uri, to.type, { preview: !pin, preserveFocus: keep, viewColumn: vscode.ViewColumn.Active });
   }
 
   /** Reveals or opens the root's graph or time tab. */
@@ -126,13 +143,15 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   drop(root: Root): void { for (const t of [...this.tabs.values()]) if (t.root === root) t.panel.dispose(); }
 
   /**
-   * Reopens a `plandown.task` tab under its renamed task's URI (its label follows only the URI), in the same group and
-   * preview state. A preview tab is replaced by the new preview tab; a pinned one is closed.
+   * Reopens a tab under its renamed task's URI (its label follows only the URI; a merged file was moved with the task),
+   * in the same group and preview state. A preview tab is replaced by the new preview tab; a pinned one is closed.
    */
   private async relabel(old: vscode.Uri, root: Root, id: string): Promise<void> {
+    const to = target(root, { kind: 'task', id });
+    if (to.uri.toString() === old.toString()) return;
     for (const g of vscode.window.tabGroups.all) for (const t of g.tabs) {
       if (!(t.input instanceof vscode.TabInputCustom) || t.input.uri.toString() !== old.toString()) continue;
-      await vscode.commands.executeCommand('vscode.openWith', pageUri(root, { kind: 'task', id }), 'plandown.task', { preview: t.isPreview, viewColumn: g.viewColumn });
+      await vscode.commands.executeCommand('vscode.openWith', to.uri, to.type, { preview: t.isPreview, viewColumn: g.viewColumn });
       if (!t.isPreview) await vscode.window.tabGroups.close(t);
       return;
     }
@@ -206,7 +225,7 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
 
   /**
    * `plandown.task`: binds the panel as the tab of the task or tree node its URI names (only loaded roots). `plandown.file`: binds it
-   * as the task tab of the file's first task (so tree clicks reveal it); `plandown.own` is the same, as the default editor of
+   * as the task tab of the task merged with the file, else of its first task (so tree clicks reveal it); `plandown.own` is the same, as the default editor of
    * `*.plandown.md`. A database file without tasks (new or empty) goes to the text editor, since Plandown is its default editor
    * (focused only if this panel was: an Explorer preview click keeps the focus).
    * Otherwise a short message page.
@@ -220,8 +239,8 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
       panel.webview.html = note('This page\'s Plandown database is not loaded.');
       return;
     }
-    const at = rootOf(roots, doc.uri), id = at && firstTask(at.root, at.file);
-    if (id) return this.bind(panel, at.root, { kind: 'task', id });
+    const at = rootOf(roots, doc.uri), id = at && (findIn(at.root.pd.db.tree, n => n.file === at.file)?.task ?? firstTask(at.root, at.file));
+    if (id) return this.bind(panel, at!.root, { kind: 'task', id }, doc.uri);
     if (at) {
       await vscode.commands.executeCommand('vscode.openWith', doc.uri, 'default', { viewColumn: panel.viewColumn, preserveFocus: !panel.active });
       return panel.dispose();
