@@ -75,7 +75,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && node -e \"for (const f of ['symbolic.svg', 'sign.svg']) require('fs').copyFileSync('../media/' + f, 'dist/' + f)\""
+    "build": "tsc && node -e \"const fs = require('fs'); for (const f of ['symbolic.svg', 'sign.svg']) fs.copyFileSync('../media/' + f, 'dist/' + f); fs.rmSync('node_modules/plandown/dist', { recursive: true, force: true }); fs.cpSync('../dist', 'node_modules/plandown/dist', { recursive: true })\""
   },
   "dependencies": {
     "plandown": "file:.."

@@ -44,7 +44,7 @@ flowchart LR
 
 ## Roadmap
 
-- VSCode: watch for `plandown-format.md` created after activation (now only on rescan triggers); Marketplace packaging needs a bundler (the `file:..` dependency is a symlink).
+- VSCode: watch for `plandown-format.md` created after activation (now only on rescan triggers); the `file:..` dependency is installed as a copy (`--install-links`, so packaging can include it); `npm run build` refreshes its `dist` from the root build.
 - Graph: dummy nodes for long edges (see `shortcut:` in app.ts).
 - Time log per day (`spent` is a total today) if per-day allocation reports are needed.
 - Sub-formats: `plandown-format.md` inside a subfolder extending the root format for that subtree.
