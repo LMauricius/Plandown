@@ -70,7 +70,8 @@ export function tokenize(src: string): Line[] {
     let l: Line, m: RegExpExecArray | null;
     if ((m = HEADING.exec(text))) l = line(`h${m[1].length}` as Line['block'], start + m[0].length);
     else if ((m = LIST.exec(text))) {
-      l = line(/\d/.test(m[2]) ? 'ol' : 'li', start + m[0].length, Math.floor(m[1].length / 2));
+      // A tab is one nesting level (2 columns), as Tab inserts it
+      l = line(/\d/.test(m[2]) ? 'ol' : 'li', start + m[0].length, Math.floor(m[1].replace(/\t/g, '  ').length / 2));
       if (m[3]) l.check = m[3].toLowerCase();
     } else if ((m = QUOTE.exec(text))) l = line('quote', start + m[0].length);
     else l = line('p');
@@ -151,6 +152,32 @@ export function inline(src: string, from: number, to: number): Inl[] {
     } else i += r - 1;
   }
   return out;
+}
+
+/**
+ * Edit a list key makes at caret `at` (no selection) as `[a, b, text, caret]`: `[a, b)` becomes `text`; null when the
+ * key keeps its default (not a list line, caret inside the marker, Tab/Backspace away from the item's text start).
+ * - Enter continues the list (next number, unchecked box); on an empty item it acts as Shift+Tab.
+ * - Tab at the text start indents by one `\t`; Shift+Tab outdents one level, or turns an unindented item into text.
+ * - Backspace at the text start joins the text to the previous line, keeping one space between nonempty sides.
+ */
+export function listEdit(src: string, at: number, key: 'Enter' | 'Tab' | 'Backspace', shift = false): [number, number, string, number] | null {
+  const l = tokenize(src).find(l => l.start <= at && at <= l.end);
+  if (!l || (l.block !== 'li' && l.block !== 'ol') || at < l.mark || (key !== 'Enter' && at > l.mark)) return null;
+  const pre = src.slice(l.start, l.mark), ind = /^[ \t]*/.exec(pre)![0];
+  if (key === 'Enter' && l.mark < l.end) {
+    const next = '\n' + pre.replace(/\d+(?=[.)])/, n => String(+n + 1)).replace(/\[[xX]\]/, '[ ]');
+    return [at, at, next, at + next.length];
+  }
+  if (key === 'Tab' && !shift) return [l.start, l.start, '\t', at + 1];
+  if (key !== 'Backspace') {
+    if (!ind) return [l.start, l.mark, '', l.start];
+    const less = ind.replace(/(\t| {1,2})$/, '');
+    return [l.start, l.start + ind.length, less, at - ind.length + less.length];
+  }
+  if (!l.start) return [0, l.mark, '', 0];
+  const gap = src[l.start - 2] && !/\s/.test(src[l.start - 2]) && l.mark < l.end ? ' ' : '';
+  return [l.start - 1, l.mark, gap, l.start - 1 + gap.length];
 }
 
 // ---- DOM helpers ----
@@ -469,17 +496,26 @@ export function mdEditor(o: EditorOpts): Editor {
 function listen(st: State, p: Part) {
   const { o } = st, part = p.el, multi = o.multiline !== false;
   const insert = (text: string) => { const s = getSel(part); if (s) splice(st, p, s[0], s[1], text); };
+  /** Applies `listEdit` on a collapsed caret; false when the key should keep its default. */
+  const listKey = (key: 'Enter' | 'Tab' | 'Backspace', shift: boolean) => {
+    const s = getSel(part), ed = multi && s && s[0] === s[1] && listEdit(p.src, s[0], key, shift);
+    if (!ed) return false;
+    splice(st, p, ...ed);
+    return true;
+  };
 
-  // Enter: Ctrl confirms, Shift inserts a newline; plain Enter confirms a single line in line mode
+  // Enter: Ctrl confirms, Shift inserts a newline; plain Enter confirms a single line in line mode, else continues lists
+  // Tab, Shift+Tab and Backspace edit list items (see `listEdit`); elsewhere they keep their default
   part.addEventListener('keydown', e => {
     if (e.isComposing) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
     if (e.key === 'Enter') {
       e.preventDefault();
       if (mod) confirm(st);
-      else if (e.shiftKey || o.mode === 'block' || p.src.includes('\n')) { if (multi) insert('\n'); }
+      else if (e.shiftKey || o.mode === 'block' || p.src.includes('\n')) { if (multi && (e.shiftKey || !listKey('Enter', false))) insert('\n'); }
       else confirm(st);
-    } else if (mod && (k === 'b' || k === 'i')) { e.preventDefault(); wrap(st, k === 'b' ? '**' : '*'); }
+    } else if ((e.key === 'Tab' || e.key === 'Backspace') && !mod && !e.altKey) { if (listKey(e.key, e.shiftKey)) e.preventDefault(); }
+    else if (mod && (k === 'b' || k === 'i')) { e.preventDefault(); wrap(st, k === 'b' ? '**' : '*'); }
     else if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? history(st, p, p.redo, p.undo) : history(st, p, p.undo, p.redo); }
     else if (mod && k === 'y') { e.preventDefault(); history(st, p, p.redo, p.undo); }
   });

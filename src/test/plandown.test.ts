@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
-import { tokenize } from '../gui/mdedit.js';
+import { listEdit, tokenize } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -201,6 +201,30 @@ test('editor tokenizer: blocks, nested inline marks, fences and unclosed delimit
   assert.deepEqual([strong.kind, at(strong.start, strong.end), strong.kids[0].kind, code.kind, code.kids.length], ['strong', '**a *b***', 'em', 'code', 0]);
   assert.deepEqual([t[1].check, t[1].inl.map(i => [i.kind, i.url])], ['x', [['link', 'http://u']]]);
   assert.deepEqual([t[3].inl, t[5].inl], [[], []]);
+});
+
+test('editor list keys: continue, end, indent, outdent and join items', () => {
+  const ed = (src: string, key: 'Enter' | 'Tab' | 'Backspace', shift = false) => {
+    // `|` marks the caret, before and after
+    const at = src.indexOf('|'), s = src.replace('|', ''), e = listEdit(s, at, key, shift);
+    if (!e) return null;
+    const out = s.slice(0, e[0]) + e[2] + s.slice(e[1]);
+    return out.slice(0, e[3]) + '|' + out.slice(e[3]);
+  };
+  assert.equal(ed('- a|b', 'Enter'), '- a\n- |b');
+  assert.equal(ed('\t9) [x] a|', 'Enter'), '\t9) [x] a\n\t10) [ ] |');
+  assert.equal(ed('- a\n- |', 'Enter'), '- a\n|');
+  assert.equal(ed('- a\n\t\t- |\nb', 'Enter'), '- a\n\t- |\nb');
+  assert.equal(ed('- a\n- |b', 'Tab'), '- a\n\t- |b');
+  assert.equal(tokenize('\t- b')[0].depth, 1);
+  assert.equal(ed('  \t- |b', 'Tab', true), '  - |b');
+  assert.equal(ed('- a\n- |b', 'Tab', true), '- a\n|b');
+  assert.equal(ed('a\n  - [ ] |b', 'Backspace'), 'a |b');
+  assert.equal(ed('a \n- |b', 'Backspace'), 'a |b');
+  assert.equal(ed('- |b', 'Backspace'), '|b');
+  assert.equal(ed('- a|b', 'Tab'), null);
+  assert.equal(ed('-| a', 'Enter'), null);
+  assert.equal(ed('a|', 'Enter'), null);
 });
 
 test('links declared from both sides: kept once, each side unlinks only its own declaration', async () => {
