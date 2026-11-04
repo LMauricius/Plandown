@@ -116,10 +116,17 @@ const hue = (t: string) => {
   return i < 0 ? 'gray' : `hsl(${(30 + i * 137.5) % 360} 65% 50%)`;
 };
 
-/** Gives `el` its task type's color as `--c` (read by buttons and bubbles); colors the browser rejects are ignored. */
+/** Engines without relative colors (pre Chromium 119, Firefox 128, Safari 18) would void the whole mix, so `typed` falls back to the raw color. */
+const relColors = CSS.supports('color', 'color-mix(in oklch, red, oklch(from red l none none))');
+
+/**
+ * Gives `el` its task type's color as `--c` (read by buttons and bubbles); colors the browser rejects are ignored.
+ * Lightness is pulled 66% of the way to the uncolored look (`--base`, CSS): mixing with a gray of `--base`'s lightness whose
+ * hue and chroma are `none` (missing) averages only the lightness and keeps the type's hue and chroma.
+ */
 function typed<T extends HTMLElement>(el: T, type: string): T {
   const c = db.format.types[type]?.color;
-  if (c && CSS.supports('color', c)) el.style.setProperty('--c', c);
+  if (c && CSS.supports('color', c)) el.style.setProperty('--c', relColors ? `color-mix(in oklch, ${c}, oklch(from var(--base) l none none) 66%)` : c);
   return el;
 }
 const badge = (type: string) => typed(h('span', { className: 'badge' }, type), type);
