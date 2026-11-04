@@ -149,18 +149,34 @@ test('tree: .plandown.md files merge like .md files and keep their suffix on ren
   assert.ok(existsSync(join(d, 'K.plandown.md')) && existsSync(join(d, 'K/x.md')));
 });
 
+test('tree: a subtask in its own file merges with the file, not listed twice', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  mkdirSync(join(d, 'g'));
+  w('plandown-format.md', '# [T] t\n');
+  w('g.md', '# [T] G\n- [T] Z\n- [T] C\n- [T] Shared\n');
+  w('g/z.md', '# [T] Z\nAbout Z.\n');
+  w('g/a.md', '# [T] A\n');
+  w('g/c.md', '# [T] C\nAbout C.\n## [T] D\n');
+  w('other.md', '# [T] Shared\nAbout Shared.\n# [T] X\n');
+  const m = await Plandown.open(d), node = (p: string) => findNode(m.db.tree, p)!;
+  assert.deepEqual([node('g').task, node('g').tasks], ['[T] G', ['[T] Shared']], 'C is shown by its child node only');
+  assert.deepEqual(node('g').kids.map(k => k.path), ['g/z', 'g/c', 'g/a'], 'subtask nodes in the parent\'s order, then by name');
+  assert.deepEqual([node('g/c').task, node('g/c').tasks], ['[T] C', ['[T] D']]);
+  assert.deepEqual([node('other').task, node('other').tasks], [null, ['[T] Shared', '[T] X']], 'a parent elsewhere keeps a task top-level in its file');
+});
+
 test('tree: subfolders, stem merges and placement of new groups and tasks', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   for (const f of ['g/empty', '.hidden']) mkdirSync(join(d, f), { recursive: true });
   w('plandown-format.md', '# [T] t\n');
   w('g.md', '# [T] G\n');                              // one node with folder g/ and its task
-  w('g/fix-login.md', '# [T] Fix login\n## [T] Sub\n'); // merged by slug; Sub is a subtask, not top-level
+  w('g/fix-login.md', '# [T] Fix login\n## [T] Sub\n'); // merged by slug; Sub is its subtask row
   w('g/notes.md', '# [T] A\n# [T] B\n');
   w('g/plandown-format.md', '# [T] Nested\n');             // reserved for sub-formats: ignored
   w('.hidden/x.md', '# [T] Hidden\n');
   const m = await Plandown.open(d), node = (p: string) => findNode(m.db.tree, p)!;
   assert.deepEqual(m.db.tree.map(n => [n.path, n.folder, n.file, n.task]), [['g', true, 'g.md', '[T] G']]);
-  assert.deepEqual(node('g').kids.map(k => [k.path, k.task, k.tasks]), [['g/empty', null, []], ['g/fix-login', '[T] Fix login', []], ['g/notes', null, ['[T] A', '[T] B']]]);
+  assert.deepEqual(node('g').kids.map(k => [k.path, k.task, k.tasks]), [['g/empty', null, []], ['g/fix-login', '[T] Fix login', ['[T] Sub']], ['g/notes', null, ['[T] A', '[T] B']]]);
   assert.deepEqual(Object.keys(m.db.tasks).sort(), ['[T] A', '[T] B', '[T] Fix login', '[T] G', '[T] Sub']);
 
   const create = (title: string, near: string) => m.apply({ op: 'create', type: 'T', title, near });

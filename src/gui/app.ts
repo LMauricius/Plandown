@@ -143,9 +143,10 @@ function toast(msg: string) {
 /**
  * Depth-first over Subtask links from `roots`, or else from tasks without a parent. A task seen before is listed again
  * but not expanded, which keeps shared subtasks and cycles linear; without `roots`, tasks only reachable through a cycle come last.
+ * `seen`: tasks already expanded above the roots.
  */
-function walk(visit: (t: Task, depth: number) => void, roots?: string[], depth = 0) {
-  const kids = new Map<string, string[]>(), hasParent = new Set<string>(), seen = new Set<string>();
+function walk(visit: (t: Task, depth: number) => void, roots?: string[], depth = 0, seen = new Set<string>()) {
+  const kids = new Map<string, string[]>(), hasParent = new Set<string>();
   for (const e of db.edges) if (e.type === SUBTASK) { kids.set(e.from, [...kids.get(e.from) ?? [], e.to]); hasParent.add(e.to); }
   const go = (id: string, d: number) => {
     visit(db.tasks[id], d);
@@ -162,14 +163,14 @@ function walk(visit: (t: Task, depth: number) => void, roots?: string[], depth =
 interface Entry { key: string; depth: number; near: string; t?: Task; n?: TreeNode; merged?: TreeNode }
 
 /** `roots` of node `n` with their subtasks (see `walk`), keyed `near\0id` like the sidebar rows. */
-const taskEntries = (n: TreeNode, roots: string[], depth: number, out: Entry[]) =>
-  walk((t, d) => out.push({ key: `${n.path}\0${t.id}`, depth: d, near: n.path, t, merged: n.task === t.id && d === depth ? n : undefined }), roots, depth);
+const taskEntries = (n: TreeNode, roots: string[], depth: number, out: Entry[], seen?: Set<string>) =>
+  walk((t, d) => out.push({ key: `${n.path}\0${t.id}`, depth: d, near: n.path, t, merged: n.task === t.id && d === depth ? n : undefined }), roots, depth, seen);
 
-/** Outline of `nodes` in tree order: each node's row (or its merged task), its top-level tasks with subtasks, then its child nodes. */
+/** Outline of `nodes` in tree order: each node's row (or its merged task), its task rows with subtasks, then its child nodes. */
 function outline(nodes: TreeNode[], depth = 0, out: Entry[] = []): Entry[] {
   for (const n of nodes) {
-    if (n.task) taskEntries(n, [n.task], depth, out);
-    else { out.push({ key: n.path + '\0', depth, near: n.path, n }); taskEntries(n, n.tasks, depth + 1, out); }
+    out.push(n.task ? { key: `${n.path}\0${n.task}`, depth, near: n.path, t: db.tasks[n.task], merged: n } : { key: n.path + '\0', depth, near: n.path, n });
+    taskEntries(n, n.tasks, depth + 1, out, new Set(n.task ? [n.task] : []));
     outline(n.kids, depth + 1, out);
   }
   return out;

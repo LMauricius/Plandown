@@ -12,7 +12,7 @@ export interface TreeNode {
   folder: boolean;       // folder `path/` exists
   file: string | null;   // `path.md` (else `path.plandown.md`), if it exists
   task: string | null;   // the file's single top-level task, merged into this node
-  tasks: string[];       // other top-level tasks whose home is the file, in file order
+  tasks: string[];       // task rows under the node: the file's top-level tasks in file order; if merged, `task`'s subtasks not shown by `kids`
   kids: TreeNode[];      // child folders and files, natural name order
 }
 
@@ -62,9 +62,13 @@ export function buildTree(files: string[], folders: string[], tasks: Record<stri
   for (const f of folders) node(f).folder = true;
   for (const f of files) node(fileStem(f)).file ??= f;   // `a.md` sorts before `a.plandown.md` and wins
 
-  // Top-level tasks: no parent, or only reachable through a Subtask cycle (otherwise they would be listed nowhere)
-  const kids = new Map<string, string[]>(), hasParent = new Set<string>(), reached = new Set<string>();
-  for (const e of edges) if (e.type === SUBTASK) { kids.set(e.from, [...kids.get(e.from) ?? [], e.to]); hasParent.add(e.to); }
+  // Top-level tasks of each file: no parent in the same file, or only reachable through a same-file Subtask cycle
+  // (otherwise they would be listed nowhere). A parent in another file does not count: the task still shows in its own file
+  const subs = new Map<string, string[]>(), kids = new Map<string, string[]>(), hasParent = new Set<string>(), reached = new Set<string>();
+  for (const e of edges) if (e.type === SUBTASK) {
+    subs.set(e.from, [...subs.get(e.from) ?? [], e.to]);
+    if (tasks[e.from].home.file === tasks[e.to].home.file) { kids.set(e.from, [...kids.get(e.from) ?? [], e.to]); hasParent.add(e.to); }
+  }
   const reach = (id: string) => {
     for (const stack = [id]; stack.length;) {
       const v = stack.pop()!;
@@ -81,6 +85,14 @@ export function buildTree(files: string[], folders: string[], tasks: Record<stri
     const t = n.tasks.length === 1 ? tasks[n.tasks[0]] : undefined;
     if (n.file && t && namesTask(n.path, t.type, t.title)) { n.task = t.id; n.tasks = []; }
     n.kids.sort((a, b) => byName(a.path, b.path));
+  }
+  // A merged node lists its task's subtasks, except those its child nodes already show (as their task or top-level tasks)
+  // Its child nodes merged with those subtasks come first, in the parent's order (Infinity - Infinity is NaN: falls to the name)
+  for (const n of nodes.values()) if (n.task) {
+    const order = subs.get(n.task) ?? [], at = (k: TreeNode) => { const i = k.task ? order.indexOf(k.task) : -1; return i < 0 ? Infinity : i; };
+    n.kids.sort((a, b) => at(a) - at(b) || byName(a.path, b.path));
+    const shown = new Set(n.kids.flatMap(k => k.task ? [k.task] : k.tasks));
+    n.tasks = (subs.get(n.task) ?? []).filter(id => !shown.has(id));
   }
   return [...nodes.values()].filter(n => !n.path.includes('/')).sort((a, b) => byName(a.path, b.path));
 }

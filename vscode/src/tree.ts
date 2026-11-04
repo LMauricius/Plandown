@@ -102,7 +102,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
     if (item.kind === 'root') return nodes(root, root.pd.db.tree);
     if (item.kind === 'task') return item.leaf ? [] : subtasks(root, item.id, item.near, [...item.up, item.id]);
     const n = item.node;
-    return [...n.task ? subtasks(root, n.task, n.path, [n.task]) : n.tasks.map(id => task(root, id, n.path, [])), ...nodes(root, n.kids)];
+    return [...n.tasks.map(id => task(root, id, n.path, n.task ? [n.task] : [])), ...nodes(root, n.kids)];
   }
 
   /**
@@ -122,7 +122,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
     let ti: vscode.TreeItem;
     if (item.kind === 'node') {
       const n = item.node;
-      ti = new vscode.TreeItem(basename(n.path), n.kids.length || (n.task ? hasSubtasks : n.tasks.length) ? closed : none);
+      ti = new vscode.TreeItem(basename(n.path), n.kids.length || n.tasks.length ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${n.path}`, contextValue: n.task ? 'nodeTask' : 'node', iconPath: new vscode.ThemeIcon(n.folder ? 'folder' : 'file'), tooltip: n.file ?? n.path + '/' });
       if (!n.task) ti.command = { command: 'plandown.openNode', title: 'Open', arguments: [root, n.path, item] };
     } else {

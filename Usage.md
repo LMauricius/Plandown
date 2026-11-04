@@ -47,7 +47,7 @@ A task's ID is the anchor a Markdown viewer gives its heading: `[Task] Offline m
 
 ### Sidebar
 
-The **tree** mirrors the folder. Folders (📁) and files (📄) are listed by name; inside each file, its top-level tasks are shown with their subtasks nested below them. A subtask that has several parents appears under each of them, but its own subtasks are expanded only once.
+The **tree** mirrors the folder. Folders (📁) and files (📄) are listed by name; inside each file, its top-level tasks are shown with their subtasks nested below them. A subtask that has several parents appears under each of them, but its own subtasks are expanded only once. A task whose parent lives in another file also counts as a top-level task of its own file. If that file sits directly inside its parent's node, the task is listed only there, not repeated under the parent; such nodes come first, in the order the parent lists its subtasks, followed by the rest by name.
 
 Two kinds of nodes are merged, so the tree does not repeat the same name twice:
 
