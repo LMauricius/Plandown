@@ -538,9 +538,9 @@ function row(t: Task, depth: number, near: string, merged?: TreeNode, tw: HTMLEl
   const r = taskLink(t.id, {
     className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
     onclick: inApp(() => { pick = { key, near }; folds.nav.delete(key); if (!select(t.id)) fillTree(); }),
-  }, tw, cb, merged ? nodeIcon(merged) : null, badge(t.type), h('span', { className: 'title' }, t.title),
+  }, tw, badge(t.type), h('span', { className: 'title' }, t.title), cb, merged ? nodeIcon(merged) : null,
     tot.effort || tot.spent ? h('span', { className: 'muted' }, `${hours(tot.spent)}/${hours(tot.effort)} h`) : null);
-  r.style.paddingLeft = `${4 + depth * 16}px`;
+  r.style.paddingLeft = `${4 + depth * 10}px`;
   return r;
 }
 
@@ -550,8 +550,8 @@ function nodeRow(n: TreeNode, depth: number, tw: HTMLElement): HTMLElement {
   const r = nodeLink(n, {
     className: `row node${pick?.key === key ? ' sel' : ''}${n.path === node ? ' cur' : ''}`, 'data-key': key,
     onclick: inApp(() => { pick = { key, near: n.path }; folds.nav.delete(key); if (!selectNode(n.path)) fillTree(); }),
-  }, tw, nodeIcon(n), h('span', { className: 'title' }, base(n.path)));
-  r.style.paddingLeft = `${4 + depth * 16}px`;
+  }, tw, h('span', { className: 'title' }, base(n.path)), nodeIcon(n));
+  r.style.paddingLeft = `${4 + depth * 10}px`;
   return r;
 }
 
@@ -573,7 +573,7 @@ function addRow(depth: number): HTMLElement {
   const opened = focusAdd;
   if (focusAdd || document.activeElement?.classList.contains('add-input')) { focusAdd = false; setTimeout(() => input.focus()); }
   const r = h('div', { className: 'row add-row' }, a.type ? badge(a.type) :h('span', { className: 'icon' }, '📁'), input);
-  r.style.paddingLeft = `${4 + depth * 16}px`;
+  r.style.paddingLeft = `${4 + depth * 10}px`;
   if (opened) appear(r);
   return r;
 }
