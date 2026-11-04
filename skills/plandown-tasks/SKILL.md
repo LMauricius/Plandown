@@ -92,6 +92,8 @@ Two ways, both equivalent:
 
 A list labeled `Parent:` declares parents explicitly. Never write `Subtask:` as a label; use an unlabeled list.
 
+**Add subtasks by editing the parent**, not by writing a `Parent:` list in the child. When a child lives in its own file, append an unlabeled list of bare `[Type] Title` references to the parent (e.g. under a `## Tasks` sub-heading), in work order. This keeps the hierarchy readable from the parent. Use `Parent:` only when the user asks for it.
+
 ## Links
 
 Put a `<Link type>:` line **directly above** the list (no blank line):
