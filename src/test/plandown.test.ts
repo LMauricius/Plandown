@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
-import { listEdit, tokenize } from '../gui/mdedit.js';
+import { listEdit, tableEdit, tokenize } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -257,4 +257,39 @@ test('links declared from both sides: kept once, each side unlinks only its own 
   // Without a declaration of its own, Two unlinks One's
   await m.apply({ op: 'unlink', from: '[B] Two', type: 'Blocked by', to: '[A] One' });
   assert.deepEqual(m.db.edges, []);
+});
+
+test('editor tables: GFM rows, cells, alignment, escapes and table ends', () => {
+  const src = '| a | **b** |  |\n|:-|--:|:-:|\nx \\| y | z\n> q\na | b\n--|-\n| c |\n\nd';
+  const t = tokenize(src), text = (l: number) => t[l].cells!.map(c => src.slice(c.open, c.close));
+  assert.deepEqual(t.map(l => l.block), ['th', 'tsep', 'td', 'quote', 'th', 'tsep', 'td', 'p', 'p']);
+  assert.deepEqual(text(0), ['a', '**b**', '  ']);
+  assert.deepEqual(t[0].cells!.map(c => c.align), ['l', 'r', 'c']);
+  assert.equal(t[0].cells![1].inl[0].kind, 'strong');
+  assert.deepEqual(text(2), ['x \\| y', 'z']);
+  assert.deepEqual(t[0].cells!.map(c => src.slice(c.start, c.end)).join(''), src.slice(t[0].start, t[0].end));
+  assert.equal(src.slice(t[0].cells![2].close, t[0].cells![2].end), '|');
+  assert.deepEqual(t[0].cells!.map(c => src.slice(c.start, c.open)), ['| ', ' | ', ' |']);
+  assert.deepEqual(tokenize('a | b\n|-|').map(l => l.block), ['p', 'p']);
+  assert.deepEqual(tokenize('a\n---').map(l => l.block), ['p', 'p']);
+});
+
+test('editor table keys: cell moves, appended rows and ending the table', () => {
+  // `|` in `[` `]` marks the selection, before and after; table pipes stay literal
+  const ed = (src: string, key: 'Enter' | 'Tab', shift = false) => {
+    const at = src.indexOf('^'), s = src.replace('^', ''), e = tableEdit(s, at, key, shift);
+    if (!e) return null;
+    const out = s.slice(0, e[0]) + e[2] + s.slice(e[1]);
+    return out.slice(0, e[3]) + '[' + out.slice(e[3], e[4]) + ']' + out.slice(e[4]);
+  };
+  const tb = '| a^ | b |\n|-|-|\n| c |   |';
+  assert.equal(ed(tb, 'Tab'), '| a | [b] |\n|-|-|\n| c |   |');
+  assert.equal(ed('| a | b ^|\n|-|-|\n| c |   |', 'Tab'), '| a | b |\n|-|-|\n| [c] |   |');
+  assert.equal(ed('| a | b |\n|-|-|\n| c^ |   |', 'Tab'), '| a | b |\n|-|-|\n| c | []  |');
+  assert.equal(ed('| a | b |\n|-|-|\n| c |  ^ |', 'Tab'), '| a | b |\n|-|-|\n| c |   |\n| []  |   |');
+  assert.equal(ed('| a | b |\n|-|-^|\n| c |   |', 'Tab', true), '| a | [b] |\n|-|-|\n| c |   |');
+  assert.equal(ed(tb, 'Tab', true), null);
+  assert.equal(ed(tb, 'Enter'), '| a | b |\n|-|-|\n| []  |   |\n| c |   |');
+  assert.equal(ed('| a | b |\n|-|-|\n|  ^ |   |', 'Enter'), '| a | b |\n|-|-|\n[]');
+  assert.equal(ed('a^', 'Tab'), null);
 });

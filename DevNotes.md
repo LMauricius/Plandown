@@ -31,7 +31,7 @@ flowchart LR
 - Sidebar and group pages share one traversal (`outline` → `visible` in app.ts). Collapse sets keyed by row key (`near\0id`, `path\0`); browser: sessionStorage on `pagehide` (user choice), with the tree's scroll offset; VSCode tab: webview state. Group pages in VSCode reuse the `plandown.task` custom editor (`?node=` URIs; user choice). Tree clicks expand via `reveal` (needs `getParent`, so items carry `parent`).
 - Description = body (`own`) minus task-list spans → `Task.body` alternates texts and `{ links }`. Heading body runs over non-task sub-headings. `update.body` is per gap; fewer texts than gaps keep trailing gaps (lists appended meanwhile), more texts are rejected.
 - Task mentions outside the tree are `taskRef` chips (type bubble first); link lists add `taskControls` (done, effort, spent, "+h" spinbox, timer; each commits immediately, own values only). Both are meant for reuse by future views.
-- GUI editor (`gui/mdedit.ts`): live-preview over raw source (lossless), markers absolutely positioned outside what they mark, shown when caret near. Own undo stack (DOM is repainted per input). Shared fixed toolbox. Save/Revert page-wide in the title row; links save immediately into description slots refilled by `live()`.
+- GUI editor (`gui/mdedit.ts`): live-preview over raw source (lossless), markers absolutely positioned outside what they mark, shown when caret near. Own undo stack (DOM is repainted per input). Tables (GFM): rows stay `div.ln` with `display: table-row`, so the anonymous table box aligns columns without breaking the 1:1 line mapping; no source re-padding (lossless). Shared fixed toolbox. Save/Revert page-wide in the title row; links save immediately into description slots refilled by `live()`.
 
 ## VSCode extension
 

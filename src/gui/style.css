@@ -400,6 +400,24 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 .ln.code, .ln.fence, .k-code { font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", monospace; font-size: .92em; background: var(--panel); }
 .ln.fence { color: var(--muted); }
 .k-code { border-radius: 3px; }
+/*
+ * Tables: rows stay lines (1:1 with the source), shown as table rows; the browser wraps consecutive rows in one
+ * anonymous table box, which aligns the columns. `border-collapse` is inherited, so it reaches that box from the part.
+ * The delimiter row is a rule under the header until the caret enters it.
+ */
+.mdedit .part { border-collapse: collapse; }
+.ln:is(.th, .tsep, .td) { display: table-row; }
+.ln > .cell { display: table-cell; position: relative; padding: 1px .6em; border: 1px solid var(--border); transition: font-size .15s, line-height .15s, padding .15s; }
+.ln.th > .cell { font-weight: 600; background: var(--panel); }
+.ln.tsep > .cell { font-family: ui-monospace, monospace; font-size: .92em; color: var(--muted); }
+.ln.tsep:not(.near) > .cell { font-size: 0; line-height: 0; padding-block: 1px; background: var(--border); }
+/* Pipe markers (with the spaces around them) are centered on the cell edges they stand for, middle ones round on both
+ * sides; the row's outer ones keep the opening/closing marker shapes (straight inner side) */
+.cell + .cell > .mk.o { border-radius: 999px; padding: 0 4px; }
+.cell > .mk.o { left: 0; transform: translateX(-50%); }
+.cell > .mk.c { right: 0; transform: translateX(50%); }
+.cell[data-a=c] { text-align: center; }
+.cell[data-a=r] { text-align: right; }
 .k-strong { font-weight: 600; }
 .k-em { font-style: italic; }
 .k-strike { text-decoration: line-through; }
@@ -410,7 +428,7 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 .mk.c { border-radius: var(--corner) 999px 999px var(--corner); padding: 0 4px 0 2px; }
 /* Heading markers would not fit left of the text in the frame's narrow (clipped) padding: they go to the line's right end */
 :is(.h1, .h2, .h3, .h4, .h5, .h6) > .mk.o { right: 0; transform: none; border-radius: var(--corner) 999px 999px var(--corner); padding: 0 4px 0 2px; }
-.near > .mk, .ln.ol > .mk { opacity: 1; }
+.near > .mk, .ln.ol > .mk, .ln.near > .cell > .mk { opacity: 1; }
 
 /* Toolbox: shared, fixed on top of everything at the focused editor. Transparent row of two toolbars (controls, confirm); clicks pass through the gap. */
 .mdtools { position: fixed; z-index: 100; display: flex; justify-content: space-between; gap: 6px; pointer-events: none; }

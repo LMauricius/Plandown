@@ -17,12 +17,21 @@ import { show } from './motion.js';
 /** Inline element: `[start, open)` is the opening marker, `[close, end)` the closing one, `kids` lie in between. */
 export interface Inl { kind: 'strong' | 'em' | 'strike' | 'code' | 'link'; start: number; open: number; close: number; end: number; url?: string; kids: Inl[] }
 
+/**
+ * Table cell: `[start, open)` is its opening marker, `[close, end)` its closing one. A middle `|` and the spaces around
+ * it are one marker, opening the cell right of it (the left cell's `close === end`); the first cell opens with
+ * indentation and the leading `|`, the last closes with the trailing `|`. A row's cells cover it exactly.
+ * Blank content stays text (caret target).
+ */
+export interface Cell { start: number; open: number; close: number; end: number; align?: 'l' | 'c' | 'r'; inl: Inl[] }
+
 /** One source line (`end` excludes the newline). `[start, mark)` is its block marker (`## `, `- [ ] `, `> `). */
 export interface Line {
   start: number; end: number; mark: number;
-  block: 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'li' | 'ol' | 'quote' | 'fence' | 'code';
+  block: 'p' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'li' | 'ol' | 'quote' | 'fence' | 'code' | 'th' | 'tsep' | 'td';
   depth: number;                     // list nesting (2 columns per level)
   check?: string;                    // task-list checkbox state: ' ' or 'x'
+  cells?: Cell[];                    // table rows (th, tsep, td) only; their `inl` stays empty
   inl: Inl[];
 }
 
@@ -50,22 +59,67 @@ export interface Editor {
 
 const HEADING = /^(#{1,6})[ \t]+/, QUOTE = /^[ \t]*>[ \t]?/, FENCE = /^[ \t]*(`{3,}|~{3,})/;
 const LIST = /^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+(?:\[([ xX])\][ \t]+)?/;
+const PIPE = /(?:^|[^\\])\|/, DELIM = /^:?-+:?$/;
 
-/** Splits source into lines and classifies blocks; inside fences nothing is parsed. Unknown syntax stays plain text. */
+/**
+ * Cells of the row `[start, end)`: split at unescaped `|` (code spans split too, as in GFM), contents trimmed into the
+ * markers unless blank. `aligns` comes from the table's delimiter row.
+ */
+function cells(src: string, start: number, end: number, aligns: Cell['align'][] = []): Cell[] {
+  const pipes: number[] = [];
+  for (let k = start; k < end; k++) { if (src[k] === '\\') k++; else if (src[k] === '|') pipes.push(k); }
+  const text = src.slice(start, end), lead = pipes[0] === start + text.search(/\S/);
+  const trail = pipes.length > +lead && pipes.at(-1) === start + text.trimEnd().length - 1;
+  const starts = (lead ? pipes : [start, ...pipes]).slice(0, trail ? -1 : undefined);
+  const out = starts.map((s, i) => {
+    const last = i === starts.length - 1, e = last ? end : starts[i + 1];
+    const cs = src[s] === '|' ? s + 1 : s, ce = last && trail ? pipes.at(-1)! : e, raw = src.slice(cs, ce);
+    let open = cs + raw.search(/\S|$/), close = cs + raw.trimEnd().length;
+    if (open >= close) [open, close] = [cs, ce];
+    return { start: s, open, close, end: e, align: aligns[i], inl: inline(src, open, close) };
+  });
+  // Middle pipes: the left cell's trailing spaces join the right cell's opening marker
+  for (let i = 1; i < out.length; i++) out[i].start = out[i - 1].end = out[i - 1].close;
+  return out;
+}
+
+/**
+ * Splits source into lines and classifies blocks; inside fences nothing is parsed. Unknown syntax stays plain text.
+ * Tables follow GFM: a header row (with an unescaped `|`) directly followed by a delimiter row with as many cells,
+ * then body rows until a blank line or another block starts.
+ */
 export function tokenize(src: string): Line[] {
-  const out: Line[] = [];
-  let fence: string | null = null, at = 0;
-  for (const text of src.split('\n')) {
+  const out: Line[] = [], texts = src.split('\n');
+  let fence: string | null = null, at = 0, aligns: Cell['align'][] | null = null, sep = false;
+  for (const [i, text] of texts.entries()) {
     const start = at, end = at + text.length, f = FENCE.exec(text);
     at = end + 1;
     const line = (block: Line['block'], mark = start, depth = 0): Line => ({ start, end, mark, block, depth, inl: [] });
+    const row = (block: Line['block']) => ({ ...line(block), cells: cells(src, start, end, aligns!) });
     if (fence) {
       const closes = !!f && f[1][0] === fence[0] && f[1].length >= fence.length;
       out.push(line(closes ? 'fence' : 'code'));
       if (closes) fence = null;
       continue;
     }
+    if (sep) { sep = false; out.push(row('tsep')); continue; }
+    if (aligns) {
+      if (text.trim() && !f && !HEADING.test(text) && !QUOTE.test(text) && !LIST.test(text)) { out.push(row('td')); continue; }
+      aligns = null;
+    }
     if (f) { fence = f[1]; out.push(line('fence')); continue; }
+
+    // Table header: decided by the next line, which is then emitted as the delimiter row
+    const next = texts[i + 1];
+    if (next !== undefined && PIPE.test(text) && PIPE.test(next)) {
+      const d = cells(src, end + 1, end + 1 + next.length), h = cells(src, start, end);
+      if (h.length === d.length && d.every(c => DELIM.test(src.slice(c.open, c.close)))) {
+        aligns = d.map(c => { const v = src.slice(c.open, c.close), l = v[0] === ':', r = v.endsWith(':'); return l && r ? 'c' : r ? 'r' : l ? 'l' : undefined; });
+        sep = true;
+        out.push(row('th'));
+        continue;
+      }
+    }
 
     let l: Line, m: RegExpExecArray | null;
     if ((m = HEADING.exec(text))) l = line(`h${m[1].length}` as Line['block'], start + m[0].length);
@@ -180,6 +234,39 @@ export function listEdit(src: string, at: number, key: 'Enter' | 'Tab' | 'Backsp
   return [l.start - 1, l.mark, gap, l.start - 1 + gap.length];
 }
 
+/**
+ * Edit a table key makes at caret `at` as `[a, b, text, selA, selB]` (`[a, b)` becomes `text`); a move edits nothing.
+ * Null when not in a table row, or Shift+Tab in its first cell (focus moves on).
+ * - Tab/Shift+Tab select the next/previous cell's content (a blank cell gets the caret after its first space), skipping
+ *   the delimiter row; Tab past the last cell appends an empty row.
+ * - Enter adds an empty row below the caret's row (below the delimiter row in the header); on a blank body row it
+ *   blanks the line, which ends the table.
+ * New rows have the header's cell count.
+ */
+export function tableEdit(src: string, at: number, key: 'Enter' | 'Tab', shift = false): [number, number, string, number, number] | null {
+  const ls = tokenize(src), i = ls.findIndex(l => l.start <= at && at <= l.end), l = ls[i];
+  if (!l?.cells) return null;
+  let h = i, z = i;
+  while (ls[h].block !== 'th') h--;
+  while (ls[z + 1]?.cells && ls[z + 1].block !== 'th') z++;
+  const blank = (c: Cell) => !src.slice(c.open, c.close).trim();
+  const add = (after: number): [number, number, string, number, number] => {
+    const e = ls[after].end;
+    return [e, e, '\n|' + '   |'.repeat(ls[h].cells!.length), e + 3, e + 3];
+  };
+  if (key === 'Enter') return l.block === 'td' && l.cells.every(blank) ? [l.start, l.end, '', l.start, l.start] : add(l.block === 'td' ? i : h + 1);
+
+  // Cells of the whole table in reading order; the caret's cell is the first ending at or after it
+  const all = ls.slice(h, z + 1).flatMap(r => r.block === 'tsep' ? [] : r.cells!);
+  // On the delimiter row the caret sits between the header and the body
+  let k = l.block === 'tsep' ? all.indexOf(ls[h].cells!.at(-1)!) + +shift : all.indexOf(l.cells.find(c => at <= c.end) ?? l.cells.at(-1)!);
+  k += shift ? -1 : 1;
+  if (k < 0) return null;
+  if (k >= all.length) return add(z);
+  const c = all[k], [a, b] = blank(c) ? [Math.min(c.open + 1, c.close), Math.min(c.open + 1, c.close)] : [c.open, c.close];
+  return [at, at, '', a, b];
+}
+
 // ---- DOM helpers ----
 
 /** Element with classes; the editor builds its DOM by hand to stay independent of the app's helpers. */
@@ -225,7 +312,15 @@ function paint(p: Part) {
     if (l.depth) div.style.setProperty('--d', String(l.depth));
     if (l.check) div.dataset.cb = l.check;
     if (l.mark > l.start) div.append(marker(src.slice(l.start, l.mark), 'o'));
-    if (l.block === 'code' || l.block === 'fence') div.append(src.slice(l.start, l.end));
+    if (l.cells) div.append(...l.cells.map(c => {
+      const cell = ranged(el('span', 'cell'), c.start, c.end);
+      if (c.align) cell.dataset.a = c.align;
+      if (c.open > c.start) cell.append(marker(src.slice(c.start, c.open), 'o'));
+      paintInline(cell, src, c.open, c.close, c.inl);
+      if (c.end > c.close) cell.append(marker(src.slice(c.close, c.end), 'c'));
+      return cell;
+    }));
+    else if (l.block === 'code' || l.block === 'fence') div.append(src.slice(l.start, l.end));
     else paintInline(div, src, l.mark, l.end, l.inl);
     if (l.start === l.end) div.append(document.createElement('br'));
     return div;
@@ -381,6 +476,16 @@ function lines(st: State, kind: string) {
   splice(st, p, a, b, text, a, a + text.length);
 }
 
+/** Inserts a 2x2 table template after the caret's line (replacing it when blank), blank lines separating it from text. */
+function table(st: State) {
+  const p = st.cur, sel = p && getSel(p.el);
+  if (!p || !sel) return;
+  const src = p.src, e = src.indexOf('\n', sel[1]), b = e < 0 ? src.length : e, a = src.lastIndexOf('\n', b - 1) + 1;
+  const blank = !src.slice(a, b).trim(), pre = blank ? '' : '\n\n', post = e >= 0 && src.slice(b + 1).split('\n', 1)[0].trim() ? '\n' : '';
+  const at = (blank ? a : b) + pre.length + 2;
+  splice(st, p, blank ? a : b, b, pre + '| A | B |\n| --- | --- |\n|   |   |' + post, at, at + 1);
+}
+
 // ---- Toolbox ----
 
 /** Controls: [label, title, action, block-mode only]. */
@@ -396,6 +501,7 @@ const TOOLS: [string, string, (st: State) => void, boolean][] = [
   ['☐', 'Checklist', st => lines(st, 'task'), true],
   ['❝', 'Quote', st => lines(st, 'quote'), true],
   ['{ }', 'Code block', st => lines(st, 'fence'), true],
+  ['▦', 'Table', table, true],
 ];
 
 let tools: HTMLElement | null = null, active: State | null = null;
@@ -496,16 +602,20 @@ export function mdEditor(o: EditorOpts): Editor {
 function listen(st: State, p: Part) {
   const { o } = st, part = p.el, multi = o.multiline !== false;
   const insert = (text: string) => { const s = getSel(part); if (s) splice(st, p, s[0], s[1], text); };
-  /** Applies `listEdit` on a collapsed caret; false when the key should keep its default. */
+  /** Applies `tableEdit`, or `listEdit` on a collapsed caret; false when the key should keep its default. */
   const listKey = (key: 'Enter' | 'Tab' | 'Backspace', shift: boolean) => {
-    const s = getSel(part), ed = multi && s && s[0] === s[1] && listEdit(p.src, s[0], key, shift);
+    const s = multi && getSel(part);
+    const ed = s && ((key !== 'Backspace' && tableEdit(p.src, s[0], key, shift)) || (s[0] === s[1] && listEdit(p.src, s[0], key, shift)));
     if (!ed) return false;
-    splice(st, p, ...ed);
+    // A pure move (table Tab) only selects: no undo step, no input event
+    if (ed[0] === ed[1] && !ed[2]) { setSel(part, ed[3], ed[4] ?? ed[3]); reveal(part); }
+    else splice(st, p, ed[0], ed[1], ed[2], ed[3], ed[4]);
     return true;
   };
 
   // Enter: Ctrl confirms, Shift inserts a newline; plain Enter confirms a single line in line mode, else continues lists
-  // Tab, Shift+Tab and Backspace edit list items (see `listEdit`); elsewhere they keep their default
+  // Enter, Tab and Shift+Tab edit table rows (see `tableEdit`); Tab, Shift+Tab and Backspace edit list items (see
+  // `listEdit`); elsewhere they keep their default
   part.addEventListener('keydown', e => {
     if (e.isComposing) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
