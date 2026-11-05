@@ -271,6 +271,10 @@ main { flex: 1; display: flex; min-height: 0; }
 .row > .twisty .ico { width: 10px; height: 10px; }
 .done .title { text-decoration: line-through; color: var(--muted); }
 .badge { font-size: 11px; font-weight: 500; white-space: nowrap; flex-shrink: 0; }
+/* Nav pane: type bubbles show their initial and unfold to the full label while their row is hovered or focused (an fr track animates to its content width) */
+#tree .badge { display: inline-grid; grid-template-columns: auto 0fr; transition: grid-template-columns .2s; }
+#tree .row:is(:hover, :focus-within) .badge { grid-template-columns: auto 1fr; }
+#tree .badge .rest { min-width: 0; overflow: hidden; }
 .muted { color: var(--muted); font-size: 12px; }
 form.inline { display: flex; gap: 6px; flex-wrap: wrap; }
 form.inline input[type=text] { flex: 1; min-width: 8em; }

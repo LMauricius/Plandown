@@ -129,7 +129,8 @@ function typed<T extends HTMLElement>(el: T, type: string): T {
   if (c && CSS.supports('color', c)) el.style.setProperty('--c', relColors ? `color-mix(in oklch, ${c}, oklch(from var(--base) l none none) 66%)` : c);
   return el;
 }
-const badge = (type: string) => typed(h('span', { className: 'badge' }, type), type);
+/** Type bubble; the label after its first character sits in `.rest`, so the nav pane can collapse it to an initial (CSS). */
+const badge = (type: string) => { const [c = '', ...rest] = type; return typed(h('span', { className: 'badge' }, c, h('span', { className: 'rest' }, rest.join(''))), type); };
 
 let toastTimer:ReturnType<typeof setTimeout> | undefined;
 function toast(msg: string) {
