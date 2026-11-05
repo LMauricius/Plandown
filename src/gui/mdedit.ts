@@ -284,7 +284,14 @@ function ranged<T extends HTMLElement>(e: T, s: number, end: number): T {
   return e;
 }
 
-const marker = (text: string, side: 'o' | 'c') => el('span', `mk ${side}`, text);
+/**
+ * Marker bubble. Its outer whitespace stays source text (offsets and `read` see it) but sits in zero-width `.sp` spans,
+ * so the bubble hugs the syntax; an all-blank marker (indentation, a row's trailing spaces) is never shown.
+ */
+function marker(text: string, side: 'o' | 'c'): HTMLElement {
+  const [, lead, core, tail] = /^(\s*)(.*?)(\s*)$/s.exec(text)!, sp = (t: string) => el('span', 'sp', t);
+  return el('span', `mk ${side}${core ? '' : ' blank'}`, ...[lead && sp(lead), core, tail && sp(tail)].filter(x => x));
+}
 
 /** Appends text and inline elements of `[from, to)` to `parent`. */
 function paintInline(parent: HTMLElement, src: string, from: number, to: number, inl: Inl[]) {
