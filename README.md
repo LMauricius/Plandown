@@ -33,4 +33,4 @@ await plandown.apply({ op: 'start', id: '[Task] Offline mode' });
 const stop = plandown.watch(() => console.log('folder changed'));
 ```
 
-`plandown.db` is plain JSON: the format, all tasks, all links, time totals and diagnostics. Operations are `update`, `create`, `delete`, `link`, `unlink`, `start`, `stop`, `lap` (adds the elapsed time to `spent` and restarts the timer) and `log` (adds `hours` to `spent`); each one validates its input, rewrites only the affected lines, and refuses to write if a file changed on disk since it was read.
+`plandown.db` is plain JSON: the format, all tasks, all links, time totals and diagnostics. Operations are `update`, `create`, `group`, `move` (moves a task's text under another task or into a file, or a file or folder into another folder), `delete`, `link`, `unlink`, `start`, `stop`, `lap` (adds the elapsed time to `spent` and restarts the timer) and `log` (adds `hours` to `spent`); each one validates its input, rewrites only the affected lines, and refuses to write if a file changed on disk since it was read.

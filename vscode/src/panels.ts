@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import { relative, sep } from 'node:path';
 import type { Op, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
-import { typeIcon } from './tree.js';
+import { findIn, typeIcon } from './tree.js';
 
 /**
  * Webview → host: `state` and `op` carry a request id `rid` answered with `{ rid, db }` / `{ rid, id, db, error }`
@@ -45,11 +45,6 @@ const pageUri = (root: Root, page: Page) => root.uri.with({
   path: `${root.uri.path}/.plandown-tasks/${(page.kind === 'node' ? page.path.slice(page.path.lastIndexOf('/') + 1) : root.pd.db.tasks[page.id]?.title ?? page.id).replace(/\//g, '∕')}`,
   query: new URLSearchParams(page.kind === 'node' ? { root: root.uri.fsPath, node: page.path } : { root: root.uri.fsPath, id: page.id }).toString(),
 });
-
-/** First node of `tree` (depth first) satisfying `hit`. */
-const findIn = (tree: TreeNode[], hit: (n: TreeNode) => boolean): TreeNode | undefined => {
-  for (const n of tree) { const r = hit(n) ? n : findIn(n.kids, hit); if (r) return r; }
-};
 
 /**
  * Where a page opens: a task merged with its file (the tree's file node) on the file itself, in the editor its suffix

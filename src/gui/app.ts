@@ -105,6 +105,8 @@ const base = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 const findNode = (list: TreeNode[], path: string): TreeNode | undefined => {
   for (const n of list) if (n.path === path) return n; else if (path.startsWith(n.path + '/')) return findNode(n.kids, path);
 };
+/** Tree node path of a task file (tree.ts's `fileStem`). */
+const stem = (file: string) => file.replace(/(\.plandown)?\.md$/, '');
 const hours = (v: number) => String(Math.round(v * 100) / 100);
 const clock = (ms: number) => { const t = Math.floor(ms / 1000); return [t / 3600, (t / 60) % 60, t % 60].map(x => String(Math.floor(x)).padStart(2, '0')).join(':'); };
 /** Start of `t`'s running timer in ms, NaN when none runs (or `started` is malformed, which the timer ops treat alike). */
@@ -259,8 +261,16 @@ async function run(op: Op, fromEditor = false): Promise<boolean> {
       ok = true;
       if (fromEditor) dirty = false;
       if (op.op === 'delete' && op.id === sel) { sel = null; dirty = false; }
-      else if (op.op === 'group' && r.id) pick = { key: r.id + '\0', near: r.id };
-      else if (r.id && db.tasks[r.id] && !dirty && (fromEditor || (op.op === 'create' && !op.parent))) sel = r.id;
+      else if ((op.op === 'group' || (op.op === 'move' && op.path !== undefined)) && r.id && !db.tasks[r.id]) {
+        // A moved node takes its open page (or one below it) along
+        if (op.op === 'move' && node !== null && (node === op.path || node.startsWith(op.path + '/'))) node = r.id + node.slice(op.path!.length);
+        pick = { key: r.id + '\0', near: r.id };
+      } else if (r.id && db.tasks[r.id] && !dirty && (fromEditor || op.op === 'move' || (op.op === 'create' && !op.parent))) {
+        sel = r.id;
+        node = null;
+        // A moved task is picked and revealed at its new row
+        if (op.op === 'move') { pickSel = true; shown = undefined; }
+      }
     }
   } catch (e) {
     toast((e as Error).message);
@@ -368,8 +378,8 @@ function url(): string {
 }
 
 /** The view `location` names. `sel` and `node` are absent for tab paths, which keep the current selection. */
-function route(): { tab: typeof tab; sel?: string | null; node?: string | null } {
-  const p = location.pathname, m = /^\/view\/([^/]+)$/.exec(p), g = /^\/group\/(.+)$/.exec(p);
+function route(p = location.pathname): { tab: typeof tab; sel?: string | null; node?: string | null } {
+  const m = /^\/view\/([^/]+)$/.exec(p), g = /^\/group\/(.+)$/.exec(p);
   if (p === '/graph') return { tab: 'Graph' };
   if (p === '/time') return { tab: 'Time' };
   let a = '', path: string | null = null;
@@ -450,7 +460,28 @@ function sidebar(): HTMLElement {
   makeResizable(panes.nav, handle, '.sidebar', 1);
   if (panes.nav.collapsed) return h('aside', { className: 'sidebar collapsed' }, handle, head, createSection());
   // Clicking empty tree space drops the tree selection (new items then go to the root); navigation stays
-  const tree = h('div', { id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } }, onscroll: () => { navScroll = tree.scrollTop; } });
+  const tree = h('div', {
+    id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } }, onscroll: () => { navScroll = tree.scrollTop; },
+    // Any dragged link may be dropped: its URL names the task or node (see `dragged`)
+    ondragover: (e: DragEvent) => {
+      if (!e.dataTransfer?.types.some(t => t === 'text/uri-list' || t === 'text/plain')) return;
+      e.preventDefault();
+      const d = dropAt(e, tree);
+      markDrop(d.mark, d.cls);
+    },
+    ondragleave: (e: DragEvent) => { if (!tree.contains(e.relatedTarget as Node | null)) markDrop(null); },
+    ondrop: (e: DragEvent) => {
+      e.preventDefault();
+      markDrop(null);
+      const src = dragged(e.dataTransfer!), op = src && moveOp(src, dropAt(e, tree).to);
+      if (op) run(op);
+    },
+    ondragstart: (e: DragEvent) => {
+      const r = (e.target as Element).closest<HTMLAnchorElement>('a.row');
+      dragFrom = r && { url: r.href, parent: drops.get(r)?.up?.t?.id };
+    },
+    ondragend: () => { dragFrom = null; },
+  });
   const search = h('input', { type: 'search', placeholder: 'Filter tasks', value: filter, oninput: () => { filter = search.value; fillTree(tree); } });
   fillTree(tree);
   const aside = h('aside', { className: 'sidebar' }, handle, head, search, tree, createSection());
@@ -466,7 +497,11 @@ function fillTree(tree = $('tree')) {
   const q = filter.toLowerCase();
   if (q) {
     const rows: HTMLElement[] = [];
-    for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) rows.push(row(t, 0, t.home.file.replace(/(\.plandown)?\.md$/, '')));   // tree.ts's `fileStem`
+    for (const t of Object.values(db.tasks)) if (`${t.id}\n${t.body.filter(x => typeof x === 'string').join('\n')}`.toLowerCase().includes(q)) {
+      const e: Entry = { key: '', depth: 0, near: stem(t.home.file), t }, r = row(t, 0, e.near);
+      drops.set(r, { e, flat: true });
+      rows.push(r);
+    }
     return tree.replaceChildren(...rows);
   }
   const all = outline(db.tree), isCur = (e: Entry) => sel ? e.t?.id === sel : node !== null && e.n?.path === node;
@@ -492,9 +527,14 @@ function fillTree(tree = $('tree')) {
       vis = visible(all, folds.nav);
     }
   }
+  // Each entry's parent entry (the nearest shallower one above it): the context of drops next to its row
+  const up = new Map<Entry, Entry | undefined>(), path: Entry[] = [];
+  for (const e of all) { path.length = e.depth; up.set(e, path[e.depth - 1]); path[e.depth] = e; }
   const rows = vis.map(({ e, kids }) => {
     const tw = twisty(e.key, kids, folds.nav, () => fillTree());
-    return e.n ? nodeRow(e.n, e.depth, tw) : row(e.t!, e.depth, e.near, e.merged, tw);
+    const r = e.n ? nodeRow(e.n, e.depth, tw) : row(e.t!, e.depth, e.near, e.merged, tw);
+    drops.set(r, { e, up: up.get(e) });
+    return r;
   });
   if (adding) {
     let at = rows.length, depth = 0;
@@ -507,6 +547,66 @@ function fillTree(tree = $('tree')) {
     rows.splice(at, 0, addRow(depth));
   }
   tree.replaceChildren(...rows);
+}
+
+// ---- Tasks tab: moving by drag and drop ----
+
+/** Outline entry of each sidebar row and its parent entry (the context of drops before and after it); `flat`: a filter match, which only takes drops into it. */
+const drops = new WeakMap<Element, { e: Entry; up?: Entry; flat?: boolean }>();
+
+/** Where a drop goes: into an entry (null: the root), or next to a task row under its parent entry `up`. */
+type Drop = { into: Entry | null } | { sibling: Entry; up?: Entry; after: boolean };
+
+/**
+ * Drop under the pointer and the element showing it. A task row's top and bottom quarters mean before and after it; the
+ * rest of it, a whole folder or file row (merged ones too) and a whole filter match mean into the row. Empty space (or the
+ * create row) means the root. Folder and file rows have no edge zones: next to them, an item could only go into their parent
+ * (they are ordered by name), which made half of every folder row drop elsewhere.
+ */
+function dropAt(e: DragEvent, tree: HTMLElement): { mark: HTMLElement; cls: string; to: Drop } {
+  // Some engines target drag events at text nodes, which have no `closest`
+  const at = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
+  const r = at?.closest<HTMLElement>('.row'), c = r && drops.get(r);
+  if (!r || !c) return { mark: tree, cls: 'drop-into', to: { into: null } };
+  const b = r.getBoundingClientRect(), y = (e.clientY - b.top) / b.height, edge = y < .25 ? 'before' : y > .75 ? 'after' : null;
+  if (edge && !c.flat && c.e.t && !c.e.merged) return { mark: r, cls: `drop-${edge}`, to: { sibling: c.e, up: c.up, after: edge === 'after' } };
+  return { mark: r, cls: 'drop-into', to: { into: c.e } };
+}
+
+/** Shows the drop indicator on `el` (none: hidden). */
+let dropMark: HTMLElement | null = null;
+function markDrop(el: HTMLElement | null, cls = '') {
+  if (dropMark && (dropMark !== el || !dropMark.classList.contains(cls))) dropMark.classList.remove('drop-into', 'drop-before', 'drop-after');
+  dropMark = el;
+  el?.classList.add(cls);
+}
+
+/**
+ * Task or tree node a dropped link names by its path (`/view/<anchor>`, `/group/<path>`; any origin, so links from other tabs
+ * work too), and the link itself. A node merged with its task names the task (the library moves it as its node).
+ */
+function dragged(dt: DataTransfer): { id?: string; path?: string; url: string } | null {
+  const url = (dt.getData('text/uri-list') || dt.getData('text/plain')).split(/\r?\n/).find(l => l.trim() && !l.startsWith('#'))?.trim();
+  if (!url) return null;
+  let r;
+  try { r = route(new URL(url, location.href).pathname); } catch { return null; }
+  if (r.sel) return { id: r.sel, url };
+  const n = r.node ? findNode(db.tree, r.node) : undefined;
+  return n ? { ...n.task ? { id: n.task } : { path: n.path }, url } : null;
+}
+
+/** Link of the tree row being dragged and the task its row sits under: the old parent a moved file's link leaves (`from`). */
+let dragFrom: { url: string; parent?: string } | null = null;
+
+/** The `move` for a drop, or null for a drop onto itself: the target is a task row's task, else a node (the root: ''). */
+function moveOp(src: { id?: string; path?: string; url: string }, to: Drop): Op | null {
+  const at = 'sibling' in to ? to.up : to.into, from = dragFrom?.url === src.url ? dragFrom.parent : undefined;
+  const op: Extract<Op, { op: 'move' }> = {
+    op: 'move', ...src.id !== undefined ? { id: src.id, from } : { path: src.path },
+    ...at?.t ? { parent: at.t.id } : { near: at?.near ?? '' },
+    ...'sibling' in to ? { sibling: to.sibling.t!.id, after: to.after } : {},
+  };
+  return op.id === op.parent || op.id === op.sibling || (op.path !== undefined && op.path === op.near) ? null : op;
 }
 
 const nodeIcon = (n: TreeNode) => h('span', { className: 'icon' }, n.folder ? '📁' : '📄');

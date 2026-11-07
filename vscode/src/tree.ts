@@ -5,10 +5,14 @@
  */
 import * as vscode from 'vscode';
 import { basename } from 'node:path';
-import type { TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
+import type { Op, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
 
 const SUBTASK = 'Subtask';
+/** What a drop moves: a task (and the parent its link leaves) or a tree node without a task. */
+type Src = { id?: string; from?: string; path?: string };
+/** Drag data of this tree's own items (VSCode's naming scheme for tree views: the view id, lower case). */
+const ITEMS = 'application/vnd.code.tree.plandown.tree';
 const hours = (v: number) => String(Math.round(v * 100) / 100);
 const TYPE_SCHEME = 'plandown-type';
 /** style.css theme fallbacks: an image icon can't read theme variables, so light and dark themes get one SVG each. */
@@ -17,6 +21,11 @@ const THEMES = {
   dark: { surface: '#1c2128', fg: '#e4e8ee', accent: '#4cc2b8', gloss: '#ffffff1a' },
 };
 const FONT = `'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif`;
+
+/** First node of `tree` (depth first) satisfying `hit`. */
+export const findIn = (tree: TreeNode[], hit: (n: TreeNode) => boolean): TreeNode | undefined => {
+  for (const n of tree) { const r = hit(n) ? n : findIn(n.kids, hit); if (r) return r; }
+};
 
 /**
  * Icon of a task row: the GUI's `.badge` bubble (same colors, border, gloss, shade, font family) as a 16x16 square,
@@ -71,7 +80,7 @@ export type Item =
   | { kind: 'node'; root: Root; node: TreeNode; parent?: Item }
   | { kind: 'task'; root: Root; id: string; near: string; up: string[]; leaf: boolean; parent?: Item };
 
-export class TaskTree implements vscode.TreeDataProvider<Item> {
+export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragAndDropController<Item> {
   /** Filter text; non-empty shows a flat list of tasks whose id or description contains it (case-insensitive), as the GUI does. */
   filter = '';
   private change = new vscode.EventEmitter<void>();
@@ -142,6 +151,43 @@ export class TaskTree implements vscode.TreeDataProvider<Item> {
     ti.iconPath = typeIcon(t.type, db.format.types[t.type]?.color, done);
     ti.resourceUri = vscode.Uri.from({ scheme: TYPE_SCHEME, path: '/' + t.type });
     return ti;
+  }
+
+  readonly dragMimeTypes = [];
+  readonly dropMimeTypes = [ITEMS, 'text/uri-list'];
+
+  handleDrag(items: readonly Item[], dt: vscode.DataTransfer): void { dt.set(ITEMS, new vscode.DataTransferItem(items)); }
+
+  /**
+   * Moves what is dropped into the target, as the GUI's drops into a row (VSCode trees have no drops between rows): under a
+   * task row's task (a merged node's too), else into the node (a root: the top). The library moves a task merged with a node
+   * as that node, and a node without a task into a target task's node. A dragged task row's parent row is the old parent its
+   * link leaves (`from`). Links from webview tabs (`…/view/<anchor>`, `…/group/<path>`) name a task or node of the
+   * target's root; items of another root are ignored (a move never crosses databases).
+   */
+  async handleDrop(target: Item | undefined, dt: vscode.DataTransfer): Promise<void> {
+    const roots = this.roots(), root = target?.root ?? (roots.length === 1 ? roots[0] : undefined);
+    if (!root) return;
+    const db = root.pd.db, node = (n: TreeNode): Src => n.task ? { id: n.task } : { path: n.path };
+    const items = (dt.get(ITEMS)?.value ?? []) as Item[];
+    const srcs = items.length
+      ? items.flatMap((i): Src[] => i.root !== root || i.kind === 'root' ? [] : i.kind === 'node' ? [node(i.node)]
+        : [{ id: i.id, from: i.parent?.kind === 'task' ? i.parent.id : i.parent?.kind === 'node' ? i.parent.node.task ?? undefined : undefined }])
+      : (await dt.get('text/uri-list')?.asString() ?? '').split(/\r?\n/).flatMap((l): Src[] => {
+        let p = '';
+        try { p = decodeURIComponent(new URL(l.trim()).pathname); } catch { return []; }
+        const v = /^\/view\/([^/]+)$/.exec(p)?.[1], g = /^\/group\/(.+)$/.exec(p)?.[1];
+        const t = v ? Object.values(db.tasks).find(t => t.anchor === v) : undefined, n = g ? findIn(db.tree, n => n.path === g) : undefined;
+        return t ? [{ id: t.id }] : n ? [node(n)] : [];
+      });
+
+    const tid = target?.kind === 'task' ? target.id : target?.kind === 'node' ? target.node.task ?? undefined : undefined;
+    const where = tid ? { parent: tid } : { near: target?.kind === 'node' ? target.node.path : '' };
+    for (const s of srcs) {
+      const op: Op = { op: 'move', ...s, ...where };
+      if (s.id === tid || (s.path !== undefined && s.path === where.near)) continue;
+      await this.apply(root, op).catch(err => vscode.window.showErrorMessage((err as Error).message));
+    }
   }
 
   /** Done checkboxes: one update per changed task, as the GUI's row checkbox. */

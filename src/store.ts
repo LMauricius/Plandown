@@ -2,7 +2,7 @@
  * `Plandown`: the folder-backed task database. Loads every `.md` file of a folder and its subfolders, applies operations
  * as surgical file edits and watches the folder. All loads and writes run one at a time.
  */
-import { access, mkdir, readdir, readFile, rename, rmdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, rename, rmdir, unlink, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseMarkdown, type ParsedFile } from './markdown.js';
@@ -81,7 +81,7 @@ export class Plandown {
   /** Applies an operation; returns the id of the task to focus. Throws (without writing) on invalid input or files changed on disk. */
   apply(op: Op): Promise<string | undefined> {
     return this.run(async () => {
-      const { edits, id, mkdir: dir, rmdir: gone, moves = [] } = plan({ db: this.db, occ: this.occ, files: this.files }, op);
+      const { edits, id, mkdir: dir, rmdir: gone, moves = [], prune } = plan({ db: this.db, occ: this.occ, files: this.files }, op);
       const byFile = new Map<string, Edit[]>();
       for (const e of edits) byFile.set(e.file, [...byFile.get(e.file) ?? [], e]);
 
@@ -98,9 +98,10 @@ export class Plandown {
         }
       if (dir) await mkdir(join(this.dir, dir));
 
-      // Atomic per file: write a temp file, then rename over the original
+      // Atomic per file: write a temp file, then rename over the original; with `prune`, a file left blank is deleted instead
       for (const [file, list] of byFile) {
         const pf = this.files.get(file), lines = applyEdits(pf?.lines ?? [], list), path = join(this.dir, file);
+        if (prune && pf && lines.every(l => !l.trim())) { await unlink(path); continue; }
         await writeFile(path + '.plandown-tmp', lines.length ? lines.join(pf?.eol ?? '\n') + (pf?.eol ?? '\n') : '');
         await rename(path + '.plandown-tmp', path);
       }

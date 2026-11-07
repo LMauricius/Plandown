@@ -208,6 +208,110 @@ test('tree: subfolders, stem merges and placement of new groups and tasks', asyn
   await assert.rejects(m.apply({ op: 'update', id: '[T] Next', title: 'Taken' }), /Cannot rename H\/Next: H\/Taken already exists/);
 });
 
+test('move: task blocks keep their content, reshape between bullets and headings, and never land inside themselves', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  w('plandown-format.md', '# [T] t\n');
+  w('a.md', '# [T] A\n\n- [T] B\n  ---\n  effort: 2\n  ---\n  # not a heading\n  - [T] B1\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n# [T] E\n- [T] Ref\n');
+  const m = await Plandown.open(d), move = (o: object) => m.apply({ op: 'move', ...o } as never);
+
+  // Bullet under a heading parent: re-indented into its Subtask list, subtasks and props along
+  await move({ id: '[T] B', parent: '[T] D' });
+  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n- [T] B\n  ---\n  effort: 2\n  ---\n  # not a heading\n  - [T] B1\n\n# [T] E\n- [T] Ref\n');
+  assert.deepEqual(links(m, '[T] D'), ['Subtask [T] B']);
+  assert.deepEqual(links(m, '[T] B'), ['Subtask [T] B1']);
+  assert.equal(m.db.tasks['[T] B'].props.effort, 2);
+
+  // Bullet to a file: becomes a level-1 heading, a `#` description line escaped; the emptied list leaves one blank line
+  await move({ id: '[T] B', near: '' });
+  assert.ok(read(d, 'a.md').includes('N\n\n# [T] E'));
+  assert.ok(read(d, 'B.md') === '# [T] B\n---\neffort: 2\n---\n\\# not a heading\n- [T] B1\n');
+  assert.equal(findNode(m.db.tree, 'B')?.task, '[T] B');
+
+  // Heading under a heading: nested one level deeper, sub-chapters shifted along
+  await move({ id: '[T] D', parent: '[T] E' });
+  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n\n# [T] E\n- [T] Ref\n\n## [T] D\nAbout D.\n\n### Notes\nN\n');
+  assert.deepEqual(links(m, '[T] E'), ['Subtask [T] D', 'Subtask [T] Ref']);
+
+  // Heading under a bullet parent: level-1 heading at the end of the file, referenced from the parent's list
+  await move({ id: '[T] D', parent: '[T] C' });
+  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n  - [T] D\n\n# [T] E\n- [T] Ref\n\n# [T] D\nAbout D.\n\n## Notes\nN\n');
+  assert.deepEqual(m.db.diagnostics, []);
+  assert.deepEqual(links(m, '[T] C'), ['Subtask [T] D']);
+
+  // Sibling slots: before a heading (bullet converted), after a bullet in the same list
+  await move({ id: '[T] Ref', near: 'a', sibling: '[T] A' });
+  assert.ok(read(d, 'a.md').startsWith('# [T] Ref\n\n# [T] A\n'));
+  await move({ id: '[T] B1', parent: '[T] A', sibling: '[T] C', after: false });
+  assert.ok(read(d, 'a.md').includes('# [T] A\n\n- [T] B1\n- [T] C\n  - [T] D\n'));
+
+  await assert.rejects(move({ id: '[T] A', parent: '[T] C' }), /under itself/);
+  await assert.rejects(move({ id: '[T] A', parent: '[T] A' }), /under itself/);
+});
+
+test('move: tree nodes move with their file and folder', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  mkdirSync(join(d, 'g/sub'), { recursive: true });
+  w('plandown-format.md', '# [T] t\n');
+  w('g.md', '# [T] G\n');
+  w('g/sub/x.md', '# [T] X\n');
+  w('f.md', '# [T] F\n');
+  const m = await Plandown.open(d), move = (o: object) => m.apply({ op: 'move', ...o } as never);
+  assert.equal(await move({ path: 'g', near: 'f' }), '[T] G', 'a merged node answers with its task');
+  assert.ok(existsSync(join(d, 'f/g.md')) && existsSync(join(d, 'f/g/sub/x.md')), 'a file-only target gains its folder');
+  await move({ path: 'f/g/sub', near: '' });
+  assert.ok(existsSync(join(d, 'sub/x.md')));
+  await assert.rejects(move({ path: 'f', near: 'f/g' }), /into itself/);
+  await assert.rejects(move({ path: 'sub', near: '' }), /already there/);
+  w('f/sub.md', '\n');
+  await m.reload();
+  await assert.rejects(move({ path: 'sub', near: 'f' }), /already exists/);
+});
+
+test('move: a parent takes its whole subtree; merged tasks move as their nodes, links included', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  mkdirSync(join(d, 'L'));
+  mkdirSync(join(d, 'g'));
+  w('plandown-format.md', '# [T] t\n');
+  w('p.md', '# [T] P\n- [T] A\n- [T] B\n\n# [T] A\nAbout A.\n\n# [T] B\n\n# [T] Other\n');
+  w('L.md', '# [T] L\n- [T] S\n- [T] U\n');
+  w('L/S.md', '# [T] S\nAbout S.\n');
+  w('L/U.md', '# [T] U\n');
+  w('M.md', '# [T] M\n');
+  w('g/x.md', '# [T] X\n');
+  const m = await Plandown.open(d), move = (o: object) => m.apply({ op: 'move', ...o } as never);
+
+  // Same-file subtree: subtasks homed at the top level of the old file follow their parent
+  await move({ id: '[T] P', parent: '[T] M' });
+  assert.equal(read(d, 'p.md'), '# [T] Other\n');
+  await move({ id: '[T] Other', near: 'M' });
+  assert.ok(!existsSync(join(d, 'p.md')) && !m.db.files.includes('p.md'), 'a file left empty by a move is deleted');
+  assert.equal(read(d, 'M.md'), '# [T] M\n\n## [T] P\n- [T] A\n- [T] B\n\n# [T] A\nAbout A.\n\n# [T] B\n');
+  assert.deepEqual(findNode(m.db.tree, 'M')?.tasks, ['[T] P']);
+
+  // A merged subtask moves as its file, and its link moves from the old parent to the new one
+  assert.equal(await move({ id: '[T] S', parent: '[T] M' }), '[T] S');
+  assert.ok(existsSync(join(d, 'M/S.md')) && !existsSync(join(d, 'L/S.md')));
+  assert.equal(read(d, 'L.md'), '# [T] L\n- [T] U\n');
+  assert.ok(read(d, 'M.md').startsWith('# [T] M\n\n- [T] S\n\n## [T] P\n'));
+  assert.deepEqual(findNode(m.db.tree, 'M')?.kids.map(k => k.task), ['[T] S']);
+
+  // Reordering under the same parent moves only the link; to the root, the link is dropped
+  await move({ id: '[T] S', parent: '[T] L', from: '[T] M' });
+  await move({ id: '[T] S', parent: '[T] L', sibling: '[T] U', after: false });
+  assert.equal(read(d, 'L.md'), '# [T] L\n- [T] S\n- [T] U\n');
+  await move({ id: '[T] S', near: '' });
+  assert.ok(existsSync(join(d, 'S.md')));
+  assert.equal(read(d, 'L.md'), '# [T] L\n- [T] U\n');
+
+  // Any node into any node: a folder into a task's node, a file node into a plain task's file node
+  await move({ path: 'g', parent: '[T] U' });
+  assert.ok(existsSync(join(d, 'L/U/g/x.md')));
+  await move({ path: 'L/U/g', parent: '[T] Other' });
+  assert.ok(existsSync(join(d, 'Other/g/x.md')), 'Other now has a file of its own');
+  await assert.rejects(move({ id: '[T] L', parent: '[T] U' }), /into itself/);
+  assert.deepEqual(m.db.diagnostics, []);
+});
+
 test('editor tokenizer: blocks, nested inline marks, fences and unclosed delimiters', () => {
   const src = '## **a *b*** `x*y*`\n- [x] [l](http://u) snake_case\n```\n**no**\n```\n*open';
   const t = tokenize(src), at = (s: number, e: number) => src.slice(s, e);

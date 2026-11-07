@@ -77,6 +77,25 @@ At the bottom, **Create a new...** offers a *Group* button and one button per ta
 
 New file names are the task title without the characters that file systems reject (`/ \ : * ? " < > |`). If a file with that name already exists, the task is added to it.
 
+#### Moving tasks, files and folders
+
+Drag a row and drop it on another one to move it. Any link to a task or to a group page works the same way, so you can also drag a task chip from a link list, a graph node or a header timer, or even a link from another browser tab of the GUI. The tree highlights where the item will land:
+
+- **Onto the middle of a task row:** the item becomes the last subtask of that task.
+- **Onto the top or bottom edge of a task row:** the item lands just before or after that task, under the same parent.
+- **Onto a folder or file row:** a task becomes a top-level task there, placed as described in the table above. A file or folder moves inside it; if the target is only a file, its folder is created. Folders and files are always sorted by name, so the whole row means *into*.
+- **A folder or file onto a task row:** it moves into that task's file or folder (the one merged with the task, or else the node of the file the task lives in).
+- **Onto the empty space below the tree:** the item moves to the top of the database.
+
+A task merged with its file always moves as that file, together with its same-named folder and everything in it. Its Subtask link moves too: the reference in its old parent (the task it was dragged from, or else the task merged with the folder it was in) is removed, and one is added to the new parent (the task it was dropped on, or the task merged with the target folder). Dropped before or after another subtask of the same parent, only the reference moves, which reorders it. In the filtered list, every drop goes into the row.
+
+Moving any other task moves the text where its properties and description live, together with everything nested in it. Subtasks written as separate top-level sections of the same file (listed by the task, so shown only under it) follow it into the new file as level-1 headings, so the whole subtree moves. Any other list that mentions the task keeps mentioning it. The text adapts to its new place:
+
+- A bulleted task stays a bullet when it joins a list, and is re-indented to match it. Next to a heading, or into a file, it becomes a heading; lines of its description that start with `#` are escaped with `\`, so they stay text.
+- A heading task stays a heading. Moved under another heading task, it becomes that task's last sub-heading, and all headings inside it shift by the same number of levels. Where a heading cannot go (under a bulleted task, or deeper than level 6), it becomes a level-1 heading at the end of that file, and a `- [Type] Title` reference takes its place in the parent's list.
+
+A task cannot move under itself or any of its subtasks. A file left empty by a move (nothing but blank lines) is deleted. After a move, the moved task opens and its new row is selected.
+
 The sidebar and the editor's property panel are resized by dragging their inner edge. **Hide** collapses either one to a thin strip; click the strip's arrow, or drag its edge outwards, to expand it again. Collapsed panes stay collapsed across page reloads in the same browser tab. The collapsed sidebar keeps its create buttons; clicking one expands the sidebar and opens the name input.
 
 ### Group pages

@@ -4,7 +4,7 @@
  * Edits only touch the lines an operation concerns; everything else in the files stays byte-identical.
  */
 import { Document, parseDocument, isMap, isScalar } from 'yaml';
-import { bodyTexts, gaps, rangeText, type Node, type ParsedFile } from './markdown.js';
+import { bodyTexts, FENCE, gaps, rangeText, type Node, type ParsedFile } from './markdown.js';
 import { FORMAT_FILE, PARENT, SUBTASK } from './format.js';
 import { taskId, type Db, type Occ, type Task } from './db.js';
 import { baseName, fileStem, findNode, namesTask } from './tree.js';
@@ -14,6 +14,7 @@ export type Op =
   | { op: 'create'; type: string; title: string; parent?: string; file?: string; near?: string }
   | { op: 'group'; name: string; near?: string }
   | { op: 'delete'; id: string }
+  | { op: 'move'; id?: string; path?: string; parent?: string; near?: string; sibling?: string; after?: boolean; from?: string }
   | { op: 'link'; from: string; type: string; to: string }
   | { op: 'unlink'; from: string; type: string; to: string }
   | { op: 'start' | 'stop' | 'lap'; id: string }
@@ -25,10 +26,11 @@ export interface Edit { file: string; start: number; end: number; lines: string[
 export interface Ctx { db: Db; occ: Map<string, Occ[]>; files: Map<string, ParsedFile> }
 
 /**
- * Edits plus what the caller should focus afterwards (a task id; for `group`, the folder's path).
+ * Edits plus what the caller should focus afterwards (a task id; for `group` and a `move` of a node without a task, the node's path).
  * Folder changes wrap the edits: `mkdir` before them, then `moves` (renames), then `rmdir` (only if empty).
+ * `prune`: edited files left blank are deleted instead of written (a move leaves no empty files behind).
  */
-export interface Plan { edits: Edit[]; id?: string; mkdir?: string; rmdir?: string; moves?: { from: string; to: string }[] }
+export interface Plan { edits: Edit[]; id?: string; mkdir?: string; rmdir?: string; moves?: { from: string; to: string }[]; prune?: boolean }
 
 // ---- Helpers ----
 
@@ -90,19 +92,24 @@ function placeTask(ctx: Ctx, near: unknown, title: string): { file: string; rmdi
 
 const hasBody = (pf: ParsedFile, n: Node) => !!n.props || n.lists.length > 0 || bodyTexts(pf, n).some(Boolean);
 
-/** Appends `[type] title` to the occurrence's list with `label` (null: Subtask), creating the list if needed. */
-function addItem({ pf, node }: Occ, label: string | null, type: string, title: string): Edit {
-  const text = `[${type}] ${title}`;
+/**
+ * Appends an item to the occurrence's list with `label` (null: Subtask), creating the list if needed. `item` renders the
+ * item's lines for the list's marker (`  - `), so a moved block can be re-indented to it.
+ */
+function addItem({ pf, node }: Occ, label: string | null, item: (bullet: string) => string[]): Edit {
   const list = node.lists.find(l => l.label === label);
-  if (list) return { file: pf.file, start: list.end, end: list.end, lines: [list.bullet + text] };
+  if (list) return { file: pf.file, start: list.end, end: list.end, lines: item(list.bullet) };
 
   // New list at the end of the occurrence's own content, separated by a blank line
   let at = node.own.end;
   while (at > node.own.start && !pf.lines[at - 1].trim()) at--;
-  const lines = [...(node.kind === 'heading' || at > node.own.start ? [''] : []), ...(label ? [node.indent + label + ':'] : []), node.indent + '- ' + text];
+  const lines = [...(node.kind === 'heading' || at > node.own.start ? [''] : []), ...(label ? [node.indent + label + ':'] : []), ...item(node.indent + '- ')];
   if (node.kind === 'heading' && at < pf.lines.length && pf.lines[at].trim()) lines.push('');
   return { file: pf.file, start: at, end: at, lines };
 }
+
+/** Item renderer for `addItem`: a plain `[type] title` reference. */
+const ref = (type: string, title: string) => (bullet: string) => [`${bullet}[${type}] ${title}`];
 
 /** Removes a bullet occurrence, and its `<Link type>:` label when it was the list's only item. */
 function removeItem(pf: ParsedFile, node: Node): Edit {
@@ -184,7 +191,7 @@ function create(ctx: Ctx, op: Extract<Op, { op: 'create' }>): Plan {
   checkName(ctx, op.type, title);
   const id = taskId(op.type, title);
   if (ctx.db.tasks[id]) throw new Error(`Task ${id} already exists`);
-  if (op.parent !== undefined) return { edits: [addItem(home(ctx, need(ctx, op.parent)), null, op.type, title)], id };
+  if (op.parent !== undefined) return { edits: [addItem(home(ctx, need(ctx, op.parent)), null, ref(op.type, title))], id };
 
   // Top-level task: a new level-1 heading at the end of the file
   const at = op.near !== undefined ? placeTask(ctx, op.near, title) : { file: op.file ?? ctx.db.files[0] ?? 'tasks.md' };
@@ -211,6 +218,238 @@ function remove(ctx: Ctx, op: Extract<Op, { op: 'delete' }>): Plan {
   return { edits: edits.filter(e => !edits.some(o => o !== e && o.file === e.file && o.start <= e.start && e.end <= o.end && (o.start < e.start || e.end < o.end))) };
 }
 
+// ---- Move ----
+
+/** Form a moved block takes: a bullet with list marker `bullet` (`  - `), or a heading of `level`. */
+type Form = { bullet: string } | { level: number };
+
+/** Where a moved block lands: before line `line` of `file`, in a form. */
+type Slot = { file: string; line: number } & Form;
+
+/** Heading level of a heading occurrence (its `#` count). */
+const levelOf = (n: Node) => /^#*/.exec(n.prefix)![0].length;
+
+/** Deepest heading level in a heading occurrence's block: nesting the block deeper must keep it within level 6. */
+const deepest = ({ pf, node }: Occ) => Math.max(...pf.heads.filter(h => h.line >= node.block.start && h.line < node.block.end).map(h => h.level));
+
+/** A task and all its Subtask descendants: a task moved under one of them would hang below itself. */
+function subtree(ctx: Ctx, id: string): Set<string> {
+  const kids = new Map<string, string[]>(), seen = new Set([id]);
+  for (const e of ctx.db.edges) if (e.type === SUBTASK) kids.set(e.from, [...kids.get(e.from) ?? [], e.to]);
+  for (const stack = [id]; stack.length;) for (const k of kids.get(stack.pop()!) ?? []) if (!seen.has(k)) { seen.add(k); stack.push(k); }
+  return seen;
+}
+
+/** Slot next to occurrence `o` (`after`: below its block), in its form. */
+const beside = ({ pf, node }: Occ, after: boolean): Slot => ({
+  file: pf.file, line: after ? node.block.end : node.block.start,
+  ...node.kind === 'heading' ? { level: levelOf(node) } : { bullet: node.list!.bullet },
+});
+
+/**
+ * Inserts `lines` at `slot`; a heading gets blank lines against non-blank neighbours, a bullet none (a blank line ends a
+ * list). Neighbours are looked up past `gone`, the ranges removed by the same plan.
+ */
+function insert(ctx: Ctx, slot: Slot, lines: string[], gone: Edit[]): Edit {
+  const all = ctx.files.get(slot.file)?.lines ?? [], within = (i: number) => gone.find(g => g.file === slot.file && g.start <= i && i < g.end);
+  if ('level' in slot) {
+    let prev = slot.line - 1, next = slot.line;
+    for (let g; (g = within(prev));) prev = g.start - 1;
+    for (let g; (g = within(next));) next = g.end;
+    if (all[prev]?.trim()) lines = ['', ...lines];
+    if (all[next]?.trim()) lines = [...lines, ''];
+  }
+  return { file: slot.file, start: slot.line, end: slot.line, lines };
+}
+
+/** Removal of an occurrence's whole block: a heading's section, or a bullet item (with its label when it was the list's only item). */
+const cutOut = ({ pf, node }: Occ): Edit => node.kind === 'heading' ? { file: pf.file, start: node.block.start, end: node.block.end, lines: [] } : removeItem(pf, node);
+
+/**
+ * Removals of one file merged where they touch (so `applyEdits` never sees them overlap). Blank lines a removal leaves on
+ * both sides (or one at the file's end) shrink to one, unless an insertion lands there (`at`: insertion lines of the file).
+ */
+function removals(pf: ParsedFile, rms: Edit[], at: number[]): Edit[] {
+  const out: Edit[] = [], L = pf.lines;
+  for (const r of [...rms].sort((a, b) => a.start - b.start)) {
+    const last = out.at(-1);
+    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end); else out.push({ ...r });
+  }
+  out.forEach((r, i) => {
+    if (!L[r.start - 1]?.trim() && r.end < (out[i + 1]?.start ?? L.length) && !L[r.end].trim() && !at.includes(r.end)) r.end++;
+    else if (r.start > (out[i - 1]?.end ?? 0) && !L[r.start - 1].trim() && r.end === L.length && !at.includes(r.start)) r.start--;
+  });
+  return out;
+}
+
+/** Task merged with a tree node (the single, same-named task of its file): it moves as that node, file and folder. */
+const nodeOf = (ctx: Ctx, id: string) => { const n = findNode(ctx.db.tree, fileStem(ctx.db.tasks[id].home.file)); return n?.task === id ? n : undefined; };
+
+/** Occurrence of `sib` that makes it `parent`'s subtask (the Subtask edge's declaring list item or sub-heading), if any. */
+function subOcc(ctx: Ctx, parent: string, sib: Task): Occ | undefined {
+  const e = ctx.db.edges.find(e => e.type === SUBTASK && e.from === parent && e.to === sib.id);
+  return e && ctx.occ.get(sib.id)!.find(s => [e.at, e.back].some(l => l?.file === s.pf.file && l.line === s.node.line));
+}
+
+/** Removes the plain list items declaring `parent`'s Subtask link to `id` (either side); items with content stay. */
+function unref(ctx: Ctx, parent: string, id: string): Edit[] {
+  const e = ctx.db.edges.find(e => e.type === SUBTASK && e.from === parent && e.to === id);
+  if (!e || e.heading) return [];
+  return [...ctx.occ.get(parent)!, ...ctx.occ.get(id)!]
+    .filter(o => o.node.kind === 'bullet' && !hasBody(o.pf, o.node) && [e.at, e.back].some(l => l?.file === o.pf.file && l.line === o.node.line))
+    .map(o => removeItem(o.pf, o.node));
+}
+
+/**
+ * Lines of occurrence `o`'s block reshaped to `form`, title line first, trailing blank lines dropped.
+ * - heading → heading: every heading of the block (`pf.heads`, so fences and YAML comments are skipped) shifts by the same delta
+ * - bullet → bullet: the title gets the new marker, the body is re-indented from the old content column to the new one
+ * - bullet → heading: the body is de-indented; description lines starting with `#` are escaped, else they would become headings
+ * A heading never becomes a bullet (its sub-headings could not follow); callers put it at a heading slot instead.
+ */
+function reshape({ pf, node }: Occ, form: Form): string[] {
+  let end = node.block.end;
+  while (end > node.line + 1 && !pf.lines[end - 1].trim()) end--;
+  const lines = pf.lines.slice(node.line, end).map(l => l.trim() ? l : '');
+  if (node.kind === 'heading') {
+    if (!('level' in form)) throw new Error('Internal error: a heading cannot become a bullet');
+    const d = form.level - levelOf(node);
+    for (const h of pf.heads) if (h.line >= node.line && h.line < end) lines[h.line - node.line] = '#'.repeat(h.level + d) + lines[h.line - node.line].slice(h.level);
+    return lines;
+  }
+  // Every non-blank line of a bullet's block is indented at least to its content column (`indent`), see the parser's `itemEnd`
+  const cut = node.indent.length, body = node.own.start - node.line, pad = 'bullet' in form ? ' '.repeat(form.bullet.length) : '';
+  let fence: string | null = null;
+  return lines.map((l, i) => {
+    if (i === 0) return ('bullet' in form ? form.bullet : '#'.repeat(form.level) + ' ') + l.slice(cut);
+    if (!l) return l;
+    l = l.slice(cut);
+    if ('level' in form && i >= body) {
+      const f = FENCE.exec(l);
+      if (fence) { if (f?.[1] === fence) fence = null; }
+      else if (f) fence = f[1];
+      else if (/^#{1,6}([ \t]|$)/.test(l)) l = '\\' + l;
+    }
+    return pad + l;
+  });
+}
+
+/**
+ * Moves a task's home block (properties, description, lists and nested subtasks go with it); references in other lists stay.
+ * A task merged with a tree node moves as that node instead (`moveNode`).
+ * Targets:
+ * - `parent` (refused if it is the task or one of its descendants), with `sibling`: next to the sibling's occurrence that
+ *   makes it `parent`'s subtask, in its form; without (or no such occurrence): appended. A bullet joins `parent`'s
+ *   Subtask list; a heading nests as the last sub-heading of a heading `parent` if levels stay within 6
+ * - `near` (a tree node, '' the root), with `sibling` (a top-level task there): next to the sibling's home; without: a
+ *   level-1 heading at the end of the file `placeTask` picks
+ * A heading meeting a bullet slot becomes a level-1 heading at the end of that file, and (under a parent) a reference
+ * takes the slot. The rest of the subtree homed at the top level of the old file follows into the new file (see below).
+ * Edits: insertions in text order, then the removals, so `applyEdits` keeps an insertion at a removal's start in front
+ * of it; an insertion strictly inside a removed block (moving into itself) is refused.
+ */
+function moveTask(ctx: Ctx, op: Extract<Op, { op: 'move' }>): Plan {
+  const x = need(ctx, op.id);
+  if (nodeOf(ctx, x.id)) return moveNode(ctx, op);
+  const o = home(ctx, x), heading = o.node.kind === 'heading', sub = subtree(ctx, x.id);
+  const sib = op.sibling !== undefined ? need(ctx, op.sibling) : undefined, edits: Edit[] = [];
+  let slot: Slot | undefined, parent: Occ | undefined, rmdir: string | undefined;
+  const eof = (file: string): Slot => ({ file, line: ctx.files.get(file)?.lines.length ?? 0, level: 1 });
+
+  // Target slot (or, for an appended bullet, the list edit itself)
+  if (op.parent !== undefined) {
+    const p = need(ctx, op.parent);
+    if (sub.has(p.id)) throw new Error(`Cannot move ${x.id} under itself`);
+    parent = home(ctx, p);
+    const so = sib && subOcc(ctx, p.id, sib);
+    if (so) slot = beside(so, !!op.after);
+    else if (!heading) edits.push(addItem(parent, null, b => reshape(o, { bullet: b })));
+    else if (parent.node.kind === 'heading' && deepest(o) - levelOf(o.node) + levelOf(parent.node) + 1 <= 6)
+      slot = { file: parent.pf.file, line: parent.node.block.end, level: levelOf(parent.node) + 1 };
+    else { edits.push(addItem(parent, null, ref(x.type, x.title))); slot = eof(parent.pf.file); }
+  } else if (sib) slot = beside(home(ctx, sib), !!op.after);
+  else {
+    const at = placeTask(ctx, op.near, x.title);
+    slot = eof(checkPath(at.file, true));
+    rmdir = at.rmdir;
+  }
+
+  // The block itself, reshaped for the slot (a heading meeting a bullet slot leaves a reference there)
+  const adds: { slot: Slot; lines: string[] }[] = [];
+  if (slot) {
+    if (heading && 'bullet' in slot) {
+      if (parent) adds.push({ slot, lines: ref(x.type, x.title)(slot.bullet) });
+      slot = eof(slot.file);
+    }
+    if (heading && 'level' in slot && deepest(o) - levelOf(o.node) + slot.level > 6) throw new Error(`${x.id} would need headings deeper than level 6`);
+    adds.push({ slot, lines: reshape(o, slot) });
+  }
+
+  // The rest of the subtree in the old file: descendants homed at its top level are shown only under the task (their parent
+  // is in the same file); left behind in another file, they would turn into top-level tasks. They follow as level-1 headings
+  const pf = o.pf, dest = slot?.file ?? parent!.pf.file, rms = [cutOut(o)];
+  if (dest !== pf.file) for (const node of pf.roots) {
+    const t = ctx.db.tasks[taskId(node.type, node.title)];
+    if (node === o.node || !sub.has(t.id) || t.home.file !== pf.file || t.home.line !== node.line) continue;
+    adds.push({ slot: eof(dest), lines: reshape({ pf, node }, { level: 1 }) });
+    rms.push(cutOut({ pf, node }));
+  }
+
+  // Removals: never around an insertion
+  const at = [...edits.map(e => ({ file: e.file, line: e.start })), ...adds.map(a => a.slot)].filter(p => p.file === pf.file).map(p => p.line);
+  if (rms.some(r => at.some(l => r.start < l && l < r.end))) throw new Error(`Cannot move ${x.id} into itself`);
+  const gone = removals(pf, rms, at);
+  return { edits: [...edits, ...adds.map(a => insert(ctx, a.slot, a.lines, gone)), ...gone], id: x.id, rmdir, prune: true };
+}
+
+/**
+ * Moves a tree node (its file and same-stem folder, so everything below it) by renames into a target node: `near` ('' the
+ * root), or `parent`'s node (the node merged with that task, else its file's node). A target that is only a file gains its
+ * folder. Refused: into itself or below, or a name taken by a file or folder there.
+ * A node merged with a task also moves the task's Subtask link: off its old parent (`from`, the row it was dragged from,
+ * else the task merged with its parent node) onto the new one (`parent`, else the task merged with the target node), next
+ * to `sibling`'s item when given. Reordering under the same parent moves only the link. Link edits come before the renames
+ * (`Plandown.apply` writes edits first), so they address the files where they are now.
+ */
+function moveNode(ctx: Ctx, op: Extract<Op, { op: 'move' }>): Plan {
+  const n = op.id !== undefined ? nodeOf(ctx, need(ctx, op.id).id) : typeof op.path === 'string' ? findNode(ctx.db.tree, op.path) : undefined;
+  if (!n) throw new Error(`No group or file "${String(op.path)}"`);
+  const y = op.parent !== undefined ? need(ctx, op.parent) : undefined;
+  const near = y ? (nodeOf(ctx, y.id) ?? findNode(ctx.db.tree, fileStem(y.home.file))!).path : op.near ?? '';
+  if (typeof near !== 'string' || (near && !findNode(ctx.db.tree, near))) throw new Error(`No group or file "${String(near)}"`);
+  if (near === n.path || near.startsWith(n.path + '/')) throw new Error(`Cannot move ${n.path} into itself`);
+  const to = (near && near + '/') + baseName(n.path), edits: Edit[] = [];
+
+  // The merged task's Subtask link: new item first (it may sit right where the old one is removed)
+  if (n.task) {
+    const x = ctx.db.tasks[n.task], up = dirOf(n.path).slice(0, -1);
+    const old = op.from !== undefined ? need(ctx, op.from).id : up ? findNode(ctx.db.tree, up)?.task ?? undefined : undefined;
+    const neu = y?.id ?? (near ? findNode(ctx.db.tree, near)!.task ?? undefined : undefined);
+    if (neu && subtree(ctx, x.id).has(neu)) throw new Error(`Cannot move ${x.id} under itself`);
+    if (old !== neu || (neu && op.sibling !== undefined)) {
+      const linked = neu !== undefined && neu !== old && ctx.db.edges.some(e => e.type === SUBTASK && e.from === neu && e.to === x.id);
+      if (neu && !linked) {
+        const so = op.sibling !== undefined ? subOcc(ctx, neu, need(ctx, op.sibling)) : undefined;
+        if (so?.node.kind === 'bullet') {
+          const at = op.after ? so.node.block.end : so.node.block.start;
+          edits.push({ file: so.pf.file, start: at, end: at, lines: ref(x.type, x.title)(so.node.list!.bullet) });
+        }
+        else edits.push(addItem(home(ctx, ctx.db.tasks[neu]), null, ref(x.type, x.title)));
+      }
+      if (old) edits.push(...unref(ctx, old, x.id));
+    }
+  }
+
+  // The renames, unless the node already sits in the target
+  if (to === n.path) {
+    if (!edits.length) throw new Error(`${n.path} is already there`);
+    return { edits, id: n.task ?? to };
+  }
+  if (ctx.db.folders.includes(to) || ctx.db.files.some(f => fileStem(f) === to)) throw new Error(`Cannot move ${n.path}: ${to} already exists`);
+  const moves = [...n.file ? [{ from: n.file, to: checkPath(to + n.file.slice(n.path.length), true) }] : [], ...n.folder ? [{ from: n.path, to: checkPath(to, false) }] : []];
+  return { edits, id: n.task ?? to, moves, mkdir: near && !ctx.db.folders.includes(near) ? near : undefined };
+}
+
 function link(ctx: Ctx, op: Extract<Op, { op: 'link' }>): Plan {
   const a = need(ctx, op.from), b = need(ctx, op.to), type = op.type;
   if (a.id === b.id) throw new Error('A task cannot link to itself');
@@ -219,7 +458,7 @@ function link(ctx: Ctx, op: Extract<Op, { op: 'link' }>): Plan {
     throw new Error(`Link "${type}" of [${a.type}] cannot target [${b.type}]`);
   if (ctx.db.edges.some(e => (e.from === a.id && e.to === b.id && e.type === type) || (e.from === b.id && e.to === a.id && e.reverse === type)))
     throw new Error('These tasks are already linked that way');
-  return { edits: [addItem(home(ctx, a), type === SUBTASK ? null : type, b.type, b.title)], id: a.id };
+  return { edits: [addItem(home(ctx, a), type === SUBTASK ? null : type, ref(b.type, b.title))], id: a.id };
 }
 
 function unlink(ctx: Ctx, op: Extract<Op, { op: 'unlink' }>): Plan {
@@ -263,6 +502,7 @@ export function plan(ctx: Ctx, op: Op, now = new Date()): Plan {
     case 'create': return create(ctx, op);
     case 'group': return group(ctx, op);
     case 'delete': return remove(ctx, op);
+    case 'move': return op.path !== undefined ? moveNode(ctx, op) : moveTask(ctx, op);
     case 'link': return link(ctx, op);
     case 'unlink': return unlink(ctx, op);
     case 'start': case 'stop': case 'lap': case 'log': return timer(ctx, op, now);

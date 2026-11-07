@@ -48,12 +48,13 @@ export interface ParsedFile {
   lines: string[];           // without the final empty line of a newline-terminated file
   roots: Node[];             // occurrences without an owning task
   nodes: Node[];             // all occurrences in document order
+  heads: { line: number; level: number }[];   // every ATX heading outside fences and heading property blocks (level shifts need them)
   diagnostics: Diagnostic[];
 }
 
 const HEADING = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 const BULLET = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
-const FENCE = /^[ \t]*(```|~~~)/;
+export const FENCE = /^[ \t]*(```|~~~)/;
 // optional checkbox, then `[Type] Title`; `](` (a link) does not match because whitespace must follow `]`
 const TASK = /^(\[[ xX]\][ \t]+)?\[([^\[\]\r\n]+)\][ \t]+(\S.*?)[ \t]*$/;
 
@@ -86,7 +87,7 @@ export function rangeText(pf: ParsedFile, node: Node, r: Range): string {
 export function parseMarkdown(file: string, text: string): ParsedFile {
   const lines = text.split(/\r?\n/);
   if (lines.at(-1) === '') lines.pop();
-  const pf: ParsedFile = { file, text, eol: text.includes('\r\n') ? '\r\n' : '\n', lines, roots: [], nodes: [], diagnostics: [] };
+  const pf: ParsedFile = { file, text, eol: text.includes('\r\n') ? '\r\n' : '\n', lines, roots: [], nodes: [], heads: [], diagnostics: [] };
   const n = lines.length;
   const diag = (line: number, severity: Diagnostic['severity'], message: string) => pf.diagnostics.push({ file, line, severity, message });
   const isTaskHeading = (i: number) => { const h = HEADING.exec(lines[i]); return !!h && !!matchTask(h[2]); };
@@ -94,6 +95,7 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
   // Pass 1: headings. Fenced code and heading property blocks are marked `skip` (a YAML `# comment` is not a heading).
   const skip = new Array<boolean>(n).fill(false);
   const heads: { line: number; level: number; text: string }[] = [];
+  pf.heads = heads;
   let fence: string | null = null;
   for (let i = 0; i < n; i++) {
     const f = FENCE.exec(lines[i]);

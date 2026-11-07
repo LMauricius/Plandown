@@ -28,6 +28,7 @@ The checklist icon in the activity bar opens the task tree. It holds what the GU
 - Click a folder or a file to open its page in the same way: the outline of everything inside it, as described in [Usage.md](../Usage.md#group-pages). Inside a page, clicking a nested folder or file opens its own page.
 - Clicking a row also expands it.
 - Tick the checkbox to mark a task done; subtasks keep their own state.
+- Drag a task, file or folder onto another row to move it there, as described in [Usage.md](../Usage.md#moving-tasks-files-and-folders). The tree only drops *into* rows; to place a task before or after another one, use the GUI.
 - Each row shows the task type and, when set, `spent/effort` hours including subtasks.
 - **New Task** and **New Group** (in the panel title, or on a row) create next to the selected row, or at the top of the database when nothing is selected.
 - **Filter Tasks** lists every task whose title or description contains the text. **Clear Filter** restores the tree.
