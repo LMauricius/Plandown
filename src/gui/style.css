@@ -36,8 +36,11 @@
 /* ---- Base ---- */
 * { box-sizing: border-box; }
 html { height: 100%; }
-/* 100%, not 100vh: vh grows with the VSCode tab zoom (`zoom` on <html>), pushing the bottom (and its scrollbars) off-screen */
-body { margin: 0; height: 100%; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; scrollbar-color: var(--border) transparent; }
+/*
+ * 100%, not 100vh: vh grows with the VSCode tab zoom (`zoom` on <html>), pushing the bottom (and its scrollbars) off-screen.
+ * No padding: VSCode webviews default to 20px on the sides (zoomed along).
+ */
+body { margin: 0; padding: 0; height: 100%; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; scrollbar-color: var(--border) transparent; }
 ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 :focus-visible { outline: 3px solid var(--ring); outline-offset: 1px; }
 input, select, button { font: inherit; color: inherit; padding: 4px 8px; transition: background-color .15s, box-shadow .15s, filter .15s, transform .1s; }
