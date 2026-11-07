@@ -296,8 +296,15 @@ const taskLink = (id: string, props: Record<string, unknown>, ...kids: (Node | s
 const taskRef = (id: string, ...extra: (Node | string | null)[]) => {
   const t = db.tasks[id];
   return typed(taskLink(id, { className: `ref${t?.props.done === true ? ' done' : ''}`, title: id },
-    badge(t?.type ?? ''), h('span', { className: 'title' }, t?.title ?? id), ...extra), t?.type ?? '');
+    badge(t?.type ?? ''), titleSpan(t?.title ?? id), ...extra), t?.type ?? '');
 };
+
+/** Title of a reference; `--len` (its length) lets list tables keep it to a few lines (CSS). */
+function titleSpan(s: string): HTMLElement {
+  const e = h('span', { className: 'title' }, s);
+  e.style.setProperty('--len', String(s.length));
+  return e;
+}
 
 /** Sets one property merged onto the latest state, so concurrent file edits survive; undefined removes it. */
 const setProp = (id: string, k: string, v: unknown) => run({ op: 'update', id, props: { ...db.tasks[id].props, [k]: v } });
@@ -1031,7 +1038,7 @@ function nodePage(n: TreeNode): HTMLElement {
   prune(all, folds.page, n.path);
   const items = visible(all, folds.page).map(({ e, kids }) => {
     const li = h('li', {}, twisty(e.key, kids, folds.page, render),
-      e.n ? nodeLink(e.n, { className: 'ref node' }, nodeIcon(e.n), h('span', { className: 'title' }, base(e.n.path))) : taskRefControls(e.t!));
+      e.n ? nodeLink(e.n, { className: 'ref node' }, nodeIcon(e.n), titleSpan(base(e.n.path))) : taskRefControls(e.t!));
     li.style.setProperty('--depth', String(e.depth));
     return li;
   });
