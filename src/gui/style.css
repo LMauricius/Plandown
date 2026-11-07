@@ -35,7 +35,9 @@
 
 /* ---- Base ---- */
 * { box-sizing: border-box; }
-body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; scrollbar-color: var(--border) transparent; }
+html { height: 100%; }
+/* 100%, not 100vh: vh grows with the VSCode tab zoom (`zoom` on <html>), pushing the bottom (and its scrollbars) off-screen */
+body { margin: 0; height: 100%; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 14px/1.5 "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; scrollbar-color: var(--border) transparent; }
 ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 :focus-visible { outline: 3px solid var(--ring); outline-offset: 1px; }
 input, select, button { font: inherit; color: inherit; padding: 4px 8px; transition: background-color .15s, box-shadow .15s, filter .15s, transform .1s; }
@@ -368,8 +370,15 @@ button.pane-toggle { height: 20px; padding: 0 8px; font-size: 11px; line-height:
 .link-group .ref-box { display: grid; grid-template-columns: subgrid; }
 .link-group .ref-box > .controls { display: contents; }
 .link-group .ref-box > .ref { grid-column: 1; }
-/* Boxes fill their column, so a long value widens the whole column */
-.link-group .controls .hours > input { flex: 1; }
+/*
+ * Tight panes squeeze the rest of the widget before overflowing. Boxes fill their column, so a long value widens the
+ * whole column, yet may shrink to 2.4em (the value scrolls inside): a percentage max-width zeroes an input's
+ * min-content contribution, leaving min-width as its floor.
+ */
+.link-group .controls .hours > input { flex: 1; min-width: 2.4em; max-width: 100%; }
+/* Type bubbles fold to their initial: a fixed 0 minimum on the rest's track keeps it out of the min-content width */
+.link-group .ref .badge { flex-shrink: 1; display: inline-grid; grid-template-columns: auto minmax(0, max-content); }
+.link-group .ref .badge .rest { min-width: 0; overflow: hidden; }
 .links li::marker { color: var(--muted); }
 li > button.bad { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; font-size: 11px; line-height: 1; vertical-align: middle; }
 .links > button { margin: 0 6px 6px 0; }
