@@ -410,6 +410,25 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (dirty) currentSubmit?.(); }
 });
 
+// ---- Zoom ----
+
+/**
+ * Ctrl+wheel zoom in VSCode tabs (a webview has no page zoom of its own; a browser does). CSS `zoom` on <html>, kept per
+ * tab in its webview state (saved by `render`). Exponential in `deltaY`, so a mouse notch and a touchpad pinch both feel right.
+ */
+let zoom = 1;
+if (embed) {
+  try { zoom = Number(vs!.getState()?.zoom) || 1; } catch { /* default */ }
+  document.documentElement.style.zoom = String(zoom);
+  addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    zoom = Math.min(3, Math.max(.5, zoom * Math.exp(-e.deltaY * .0015)));
+    document.documentElement.style.zoom = String(zoom);
+    vs!.setState({ ...vs!.getState(), zoom });
+  }, { passive: false });
+}
+
 // ---- Theme ----
 
 /** Cycles auto → light → dark. Stored per browser; storage may throw (private mode), so it only ever degrades to auto. */
@@ -1140,9 +1159,10 @@ function paneHead(pane: Pane, title: string, expand: 'left' | 'right'): HTMLElem
 function makeResizable(pane: Pane, handle: HTMLElement, sel: string, dir: 1 | -1) {
   handle.onpointerdown = e => {
     e.preventDefault();
-    const startX = e.clientX, startWidth = handle.parentElement!.getBoundingClientRect().width;
+    // Pointer moves are in screen px; widths are in zoomed CSS px (VSCode tab zoom)
+    const startX = e.clientX, startWidth = handle.parentElement!.offsetWidth, z = handle.currentCSSZoom;
     const onMove = (ev: PointerEvent) => {
-      const w = startWidth + dir * (ev.clientX - startX);
+      const w = startWidth + dir * (ev.clientX - startX) / z;
       if (pane.collapsed && w < 160) return;
       pane.width = Math.min(600, Math.max(160, w));
       if (pane.collapsed) { pane.collapsed = false; render(); }
@@ -1158,7 +1178,7 @@ function render() {
   // In VSCode the host restores closed tabs from this state (the task follows renames)
   // A vanished group page falls back to no selection (a VSCode tab says it is gone)
   if (!embed && node !== null && !findNode(db.tree, node)) node = null;
-  if (embed) vs!.setState({ ...document.body.dataset, task: sel ?? undefined, page: uiState().page });
+  if (embed) vs!.setState({ ...document.body.dataset, task: sel ?? undefined, page: uiState().page, zoom: zoom === 1 ? undefined : zoom });
   else if (url() !== location.pathname) history.replaceState(null, '', url());
   // Every collapse change ends in a render
   try { sessionStorage.setItem('plandown-collapsed', Object.entries(panes).filter(([, p]) => p.collapsed).map(([k]) => k).join(',')); } catch { /* not persisted */ }

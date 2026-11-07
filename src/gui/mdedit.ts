@@ -542,11 +542,14 @@ function toolbox(): HTMLElement {
  */
 function place() {
   if (!active || !tools || tools.hidden) return;
-  const r = active.frame.getBoundingClientRect(), h = tools.offsetHeight, [bar, ok] = Array.from(tools.children) as HTMLElement[];
-  const need = bar.scrollWidth + bar.offsetWidth - bar.clientWidth + 6 + ok.offsetWidth, w = Math.min(Math.max(need, r.width), innerWidth - 8);
-  const left = need <= r.width ? r.left : Math.min(Math.max(4, r.left + (r.width - w) / 2), innerWidth - w - 4);
+  // Rects and the viewport are in screen px, the toolbox's sizes and styles in zoomed CSS px (VSCode tab zoom)
+  const z = tools.currentCSSZoom, R = active.frame.getBoundingClientRect(), vw = innerWidth / z, vh = innerHeight / z;
+  const r = { left: R.left / z, top: R.top / z, bottom: R.bottom / z, width: R.width / z };
+  const h = tools.offsetHeight, [bar, ok] = Array.from(tools.children) as HTMLElement[];
+  const need = bar.scrollWidth + bar.offsetWidth - bar.clientWidth + 6 + ok.offsetWidth, w = Math.min(Math.max(need, r.width), vw - 8);
+  const left = need <= r.width ? r.left : Math.min(Math.max(4, r.left + (r.width - w) / 2), vw - w - 4);
   let top = r.top - h - 4;
-  if (top < 0) top = r.bottom + 4 + h <= innerHeight ? r.bottom + 4 : 0;
+  if (top < 0) top = r.bottom + 4 + h <= vh ? r.bottom + 4 : 0;
   Object.assign(tools.style, { left: `${left}px`, top: `${top}px`, width: `${w}px` });
 }
 
