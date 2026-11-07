@@ -1,8 +1,8 @@
 /**
  * Webview tabs running the library's GUI (`dist/gui`): one graph and one time tab per root (webview panels), task and
  * group pages (the `plandown.task` custom editor on virtual URIs, see `pageUri`, so they get VSCode's preview tabs and history) and the
- * `plandown.file` / `plandown.own` custom editors that show the task of a `.md` / `.plandown.md` file (also the tab of a task
- * merged with its file, see `target`). The GUI talks to the host through
+ * `plandown.file` / `plandown.own` custom editors that show a `.md` / `.plandown.md` file's tree node, as a sidebar click
+ * does (also the tab of a node or task merged with a file, see `target`). The GUI talks to the host through
  * postMessage (see `Msg`); the host answers from the root's `Plandown` instance.
  */
 import * as vscode from 'vscode';
@@ -47,11 +47,11 @@ const pageUri = (root: Root, page: Page) => root.uri.with({
 });
 
 /**
- * Where a page opens: a task merged with its file (the tree's file node) on the file itself, in the editor its suffix
- * gets by default; every other page on its virtual URI.
+ * Where a page opens: a file node, or a task merged with one, on the file itself, in the editor its suffix gets by
+ * default; every other page (folder-only nodes too: no custom editor opens a folder) on its virtual URI.
  */
 function target(root: Root, page: Page): { uri: vscode.Uri; type: string } {
-  const file = page.kind === 'task' ? findIn(root.pd.db.tree, n => n.task === page.id)?.file : undefined;
+  const file = findIn(root.pd.db.tree, n => page.kind === 'task' ? n.task === page.id : n.path === page.path)?.file;
   return file ? { uri: vscode.Uri.joinPath(root.uri, file), type: file.endsWith('.plandown.md') ? 'plandown.own' : 'plandown.file' }
     : { uri: pageUri(root, page), type: 'plandown.task' };
 }
@@ -93,14 +93,6 @@ function html(webview: vscode.Webview, gui: vscode.Uri, root: Root, view: View):
 function rootOf(roots: Root[], uri: vscode.Uri): { root: Root; file: string } | undefined {
   const root = roots.find(r => uri.fsPath.startsWith(r.uri.fsPath + sep));
   return root && { root, file: relative(root.uri.fsPath, uri.fsPath).split(sep).join('/') };
-}
-
-/** First task occurring in `file`: smallest line over all task occurrences in that file. */
-function firstTask(root: Root, file: string): string | undefined {
-  let best: { id: string; line: number } | undefined;
-  for (const t of Object.values(root.pd.db.tasks))
-    for (const o of t.occurrences) if (o.file === file && (!best || o.line < best.line)) best = { id: t.id, line: o.line };
-  return best?.id;
 }
 
 export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.WebviewPanelSerializer {
@@ -250,9 +242,10 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
 
   /**
    * `plandown.task`: binds the panel as the tab of the task or tree node its URI names (only loaded roots). `plandown.file`: binds it
-   * as the task tab of the task merged with the file, else of its first task (so tree clicks reveal it); `plandown.own` is the same, as the default editor of
-   * `*.plandown.md`. A database file without tasks (new or empty) goes to the text editor, since Plandown is its default editor
-   * (focused only if this panel was: an Explorer preview click keeps the focus).
+   * as the tab of the file's tree node (by stem, so `a.md` and `a.plandown.md` share node `a`), as a tree click opens it: the
+   * merged task's tab, else the node's page (so tree clicks reveal it); `plandown.own` is the same, as the default editor of
+   * `*.plandown.md`. A database file without tasks and folder (new or empty) goes to the text editor, since Plandown is its
+   * default editor (focused only if this panel was: an Explorer preview click keeps the focus).
    * Otherwise a short message page.
    */
   async resolveCustomEditor(doc: vscode.CustomDocument, panel: vscode.WebviewPanel): Promise<void> {
@@ -264,8 +257,9 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
       panel.webview.html = note('This page\'s Plandown database is not loaded.');
       return;
     }
-    const at = rootOf(roots, doc.uri), id = at && (findIn(at.root.pd.db.tree, n => n.file === at.file)?.task ?? firstTask(at.root, at.file));
-    if (id) return this.bind(panel, at!.root, { kind: 'task', id }, doc.uri);
+    const at = rootOf(roots, doc.uri), stem = at?.file.replace(/(\.plandown)?\.md$/, ''), n = at && findIn(at.root.pd.db.tree, x => x.path === stem);
+    if (n?.task) return this.bind(panel, at!.root, { kind: 'task', id: n.task }, doc.uri);
+    if (n && (n.tasks.length || n.folder)) return this.bind(panel, at!.root, { kind: 'node', path: n.path }, doc.uri);
     if (at) {
       await vscode.commands.executeCommand('vscode.openWith', doc.uri, 'default', { viewColumn: panel.viewColumn, preserveFocus: !panel.active });
       return panel.dispose();

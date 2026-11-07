@@ -38,7 +38,7 @@ flowchart LR
 
 - Native TreeView (user choice) over `db.tree`; task tabs reuse the GUI page in tab mode (`data-view`), so editor logic is not duplicated.
 - Roots: `plandown-format.md` up to `plandown.searchDepth` below a workspace folder; nested roots dropped.
-- Tab key = root + task id; the `Open With` editor of a file is the tab of its first task. Rename rekeys (host sees the op's returned id); delete closes.
+- Tab key = root + task id; node pages key by `/path`. A file's editor is the tab of its tree node (by stem): merged task, else node page; node/task pages with a file open on the file URI (folder-only nodes stay virtual: no custom editor takes a folder). Rename rekeys (host sees the op's returned id); delete closes.
 - `retainContextWhenHidden` on (user accepted the memory) so unsaved forms survive tab switches. Tabs restored via serializer from the GUI's `setState(body.dataset)`.
 - Tree checkboxes: `manageCheckboxStateManually`, else VSCode ticks children.
 - Running timers lost their header spot in tabs (status bar not wanted).

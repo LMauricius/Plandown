@@ -45,7 +45,7 @@ Tabs are restored when the window reloads.
 
 ## Plandown files
 
-Files that belong to a database count as their own file type, **Plandown**: they get the Plandown icon in the Explorer and open in Plandown by default, which shows the file's first task. A file without tasks (for example a new, empty one) opens in the text editor instead. To edit any file as text, use **Reopen Editor With... → Text Editor**.
+Files that belong to a database count as their own file type, **Plandown**: they get the Plandown icon in the Explorer and open in Plandown by default, which shows the same page as clicking the file in the **Tasks** view: its task when the file is merged with one, otherwise the list of its tasks. A file without tasks (for example a new, empty one) opens in the text editor instead. To edit any file as text, use **Reopen Editor With... → Text Editor**.
 
 Two kinds of files are recognized:
 
