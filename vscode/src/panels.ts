@@ -105,6 +105,12 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   /** The focused Plandown tab, if any. */
   active(): Tab | undefined { return [...this.tabs.values()].find(t => t.panel.active); }
 
+  /** Whether the page's tab is the one shown in the active editor group (it stays so while the focus is elsewhere, as in the tree). */
+  shows(root: Root, page: Page): boolean {
+    const t = this.tabs.get(keyOf(root, page));
+    return !!t && t.panel.visible && t.panel.viewColumn === vscode.window.tabGroups.activeTabGroup.viewColumn;
+  }
+
   /**
    * Link of a tab (`linkOf`): of the editor `uri` (a tab's context menu), else of the focused Plandown tab. A file URI
    * links the file itself (it is the page of the task merged with it, or the file's own page).
