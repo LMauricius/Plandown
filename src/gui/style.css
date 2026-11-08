@@ -478,12 +478,13 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
   --c: var(--primary);
   --shine: linear-gradient(#ffffff70, #ffffff24 45%, #ffffff00 52%);
   --body: linear-gradient(color-mix(in srgb, var(--c) 82%, #000), var(--c) 55%, color-mix(in srgb, var(--c) 62%, #fff));
-  display: flex; gap: 2px; padding: 3px; min-width: 0; overflow-x: auto; pointer-events: auto; border-radius: var(--radius);
+  display: flex; gap: 2px; padding: 3px; min-width: 0; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #ffffff8c transparent; pointer-events: auto; border-radius: var(--radius);
   border: 1px solid color-mix(in srgb, var(--c) 65%, #000);
   background: var(--shine), var(--body);
   box-shadow: inset 0 1px 0 #ffffff8c, inset 0 -1px 0 #00000040, inset 0 -5px 7px -3px #ffffff40, 0 4px 14px #0003;
 }
-.mdtools .bar:last-child { --c: var(--good); flex: none; }
+/* Confirm discards nothing: non-destructive gray. `flex: none` keeps it whole; only the controls squeeze */
+.mdtools .bar:last-child { --c: var(--neutral); flex: none; }
 .mdtools button { flex: none; min-width: 28px; padding: 1px 7px; font-size: 13px; border-color: transparent; background: none; box-shadow: none; }
 .mdtools button:hover { filter: none; background: #ffffff2e; }
 .mdtools button:active { background: #0000002e; box-shadow: inset 0 1px 2px #0003; }

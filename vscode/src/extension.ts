@@ -133,10 +133,10 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // ---- Views ----
 
   const tree = new TaskTree(() => roots, apply);
-  const view = vscode.window.createTreeView('plandown.tree', { treeDataProvider: tree, dragAndDropController: tree, manageCheckboxStateManually: true });   // a parent's Done never ticks its subtasks
+  const view = vscode.window.createTreeView('plandown.tree', { treeDataProvider: tree, dragAndDropController: tree });
   // `require.resolve` finds the installed copy of the library (refreshed by `npm run build`), whose `dist/gui` the webviews load
   const panels = new Panels(vscode.Uri.file(join(dirname(require.resolve('plandown')), 'gui')), () => loading.then(() => roots), apply);
-  ctx.subscriptions.push(view, view.onDidChangeCheckboxState(e => tree.checked(e)), vscode.window.registerFileDecorationProvider(typeDecorations),
+  ctx.subscriptions.push(view, vscode.window.registerFileDecorationProvider(typeDecorations),
     vscode.window.registerCustomEditorProvider('plandown.file', panels, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerCustomEditorProvider('plandown.own', panels, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerCustomEditorProvider('plandown.task', panels, { webviewOptions: { retainContextWhenHidden: true } }),
@@ -189,6 +189,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
     reg(`plandown.${kind}`, async (arg?: unknown) => { const r = isItem(arg) ? arg.root : await pickRoot(); if (r) panels.openView(r, kind); });
   reg('plandown.filter', async () => { const text = await vscode.window.showInputBox({ prompt: 'Filter tasks by title or description', value: tree.filter }); if (text !== undefined) filter(text.trim()); });
   reg('plandown.clearFilter', () => filter(''));
+  reg('plandown.done', (item: Item) => tree.setDone(item, true));
+  reg('plandown.undone', (item: Item) => tree.setDone(item, false));
   reg('plandown.refresh', load);
   // One GUI server per root, started on first use on a free port (4848 may be taken by the CLI server) and closed with the root
   reg('plandown.openBrowser', async (arg?: unknown) => {

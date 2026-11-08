@@ -14,6 +14,8 @@ type Src = { id?: string; from?: string; path?: string };
 /** Drag data of this tree's own items (VSCode's naming scheme for tree views: the view id, lower case). */
 const ITEMS = 'application/vnd.code.tree.plandown.tree';
 const hours = (v: number) => String(Math.round(v * 100) / 100);
+/** Crossed-out label: combining strokes, since tree labels have no text styling. */
+const strike = (s: string) => s.replace(/./gu, '$&\u0336');
 const TYPE_SCHEME = 'plandown-type';
 /** style.css theme fallbacks: an image icon can't read theme variables, so light and dark themes get one SVG each. */
 const THEMES = {
@@ -134,6 +136,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
       ti = new vscode.TreeItem(basename(n.path), n.kids.length || n.tasks.length ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${n.path}`, contextValue: n.task ? 'nodeTask' : 'node', iconPath: new vscode.ThemeIcon(n.folder ? 'folder' : 'file'), tooltip: n.file ?? n.path + '/' });
       if (!n.task) ti.command = { command: 'plandown.openNode', title: 'Open', arguments: [root, n.path, item] };
+      if (!n.task && n.done) { ti.label = strike(basename(n.path)); ti.accessibilityInformation = { label: `${basename(n.path)}, done` }; }
     } else {
       ti = new vscode.TreeItem('', !item.leaf && hasSubtasks ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${item.near}\0${[...item.up, id].join('\0')}`, contextValue: 'task' });
@@ -142,11 +145,11 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
     if (!t) return ti;
     const tot = db.totals[t.id];
     const done = t.props.done === true;
-    ti.label = done ? t.title.replace(/./gu, '$&\u0336') : t.title;
+    ti.label = done ? strike(t.title) : t.title;
     if (done) ti.accessibilityInformation = { label: `${t.title}, done` };   // screen readers would spell the strokes
     ti.description = tot.effort || tot.spent ? `${t.type} · ${hours(tot.spent)}/${hours(tot.effort)} h` : t.type;
     ti.tooltip = `${t.id}\n${t.home.file}`;
-    ti.checkboxState = done ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked;
+    if (done) ti.contextValue += ' done';   // picks the hover-only Done toggle (`plandown.done` / `plandown.undone`)
     ti.command = { command: 'plandown.open', title: 'Open', arguments: [root, t.id, item] };
     ti.iconPath = typeIcon(t.type, db.format.types[t.type]?.color, done);
     ti.resourceUri = vscode.Uri.from({ scheme: TYPE_SCHEME, path: '/' + t.type });
@@ -190,12 +193,10 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
     }
   }
 
-  /** Done checkboxes: one update per changed task, as the GUI's row checkbox. */
-  async checked(e: vscode.TreeCheckboxChangeEvent<Item>): Promise<void> {
-    for (const [item, state] of e.items) {
-      const id = item.kind === 'node' ? item.node.task : item.kind === 'task' ? item.id : null, t = id ? item.root.pd.db.tasks[id] : undefined;
-      if (t) await this.apply(item.root, { op: 'update', id: t.id, props: { ...t.props, done: state === vscode.TreeItemCheckboxState.Checked || undefined } })
-        .catch(err => vscode.window.showErrorMessage((err as Error).message));
-    }
+  /** Done toggle (hover-only inline action): one update of the row's task, as the GUI's row checkbox. */
+  async setDone(item: Item, done: boolean): Promise<void> {
+    const id = item.kind === 'node' ? item.node.task : item.kind === 'task' ? item.id : null, t = id ? item.root.pd.db.tasks[id] : undefined;
+    if (t) await this.apply(item.root, { op: 'update', id: t.id, props: { ...t.props, done: done || undefined } })
+      .catch(err => vscode.window.showErrorMessage((err as Error).message));
   }
 }

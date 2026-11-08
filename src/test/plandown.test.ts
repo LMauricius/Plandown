@@ -165,6 +165,16 @@ test('tree: a subtask in its own file merges with the file, not listed twice', a
   assert.deepEqual([node('other').task, node('other').tasks], [null, ['[T] Shared', '[T] X']], 'a parent elsewhere keeps a task top-level in its file');
 });
 
+test('tree: a node is done when every task below it is, and it has at least one', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
+  for (const f of ['a/b', 'a/empty']) mkdirSync(join(d, f), { recursive: true });
+  w('plandown-format.md', '# [T] t\n');
+  w('a/b/x.md', '# [T] X\n---\ndone: true\n---\n# [T] Y\n---\ndone: true\n---\n');
+  w('a/c.md', '# [T] C\n## [T] D\n---\ndone: true\n---\n');
+  const m = await Plandown.open(d), node = (p: string) => findNode(m.db.tree, p)!;
+  assert.deepEqual(['a', 'a/b', 'a/b/x', 'a/c', 'a/empty'].map(p => node(p).done), [false, true, true, false, false]);
+});
+
 test('tree: subfolders, stem merges and placement of new groups and tasks', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   for (const f of ['g/empty', '.hidden']) mkdirSync(join(d, f), { recursive: true });

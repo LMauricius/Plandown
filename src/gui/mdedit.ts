@@ -527,6 +527,12 @@ function toolbox(): HTMLElement {
   };
   // Two bubbles: formatting controls (scroll only if the screen is too narrow) and the confirm button
   tools = el('div', 'mdtools', el('div', 'bar', ...TOOLS.map(([l, t, act, blk]) => btn(l, t, act, blk ? 'blk' : ''))), el('div', 'bar', btn('✓', 'Confirm (Ctrl+Enter)', confirm, 'ok')));
+  // A plain mouse wheel only scrolls vertically: turn it into horizontal scrolling of the squeezed controls
+  const bar = tools.firstElementChild as HTMLElement;
+  bar.addEventListener('wheel', e => {
+    if (e.deltaX || bar.scrollWidth <= bar.clientWidth) return;
+    bar.scrollLeft += e.deltaY; e.preventDefault();
+  }, { passive: false });
   tools.hidden = true;
   document.body.append(tools);
   addEventListener('scroll', place, { capture: true, passive: true });

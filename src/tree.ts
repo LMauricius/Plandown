@@ -14,6 +14,7 @@ export interface TreeNode {
   task: string | null;   // the file's single top-level task, merged into this node
   tasks: string[];       // task rows under the node: the file's top-level tasks in file order; if merged, `task`'s subtasks not shown by `kids`
   kids: TreeNode[];      // child folders and files, natural name order
+  done: boolean;         // every task homed in the node's file or below it is done, and there is at least one
 }
 
 const byName = new Intl.Collator(undefined, { numeric: true }).compare;
@@ -54,7 +55,7 @@ export function buildTree(files: string[], folders: string[], tasks: Record<stri
   const node = (path: string): TreeNode => {
     let n = nodes.get(path);
     if (n) return n;
-    nodes.set(path, n = { path, folder: false, file: null, task: null, tasks: [], kids: [] });
+    nodes.set(path, n = { path, folder: false, file: null, task: null, tasks: [], kids: [], done: false });
     const cut = path.lastIndexOf('/');
     if (cut >= 0) { const p = node(path.slice(0, cut)); p.folder = true; p.kids.push(n); }
     return n;
@@ -94,5 +95,20 @@ export function buildTree(files: string[], folders: string[], tasks: Record<stri
     const shown = new Set(n.kids.flatMap(k => k.task ? [k.task] : k.tasks));
     n.tasks = (subs.get(n.task) ?? []).filter(id => !shown.has(id));
   }
-  return [...nodes.values()].filter(n => !n.path.includes('/')).sort((a, b) => byName(a.path, b.path));
+  // Done: task counts per home stem, summed bottom-up (every task has the built-in Done, so "no tasks" is the only exemption)
+  const count = new Map<string, { all: number; done: number }>();
+  for (const id in tasks) {
+    const c = count.get(fileStem(tasks[id].home.file)) ?? { all: 0, done: 0 };
+    c.all++; c.done += tasks[id].props.done === true ? 1 : 0;
+    count.set(fileStem(tasks[id].home.file), c);
+  }
+  const sum = (n: TreeNode): { all: number; done: number } => {
+    const c = { ...count.get(n.path) ?? { all: 0, done: 0 } };
+    for (const k of n.kids) { const s = sum(k); c.all += s.all; c.done += s.done; }
+    n.done = c.all > 0 && c.done === c.all;
+    return c;
+  };
+  const roots = [...nodes.values()].filter(n => !n.path.includes('/')).sort((a, b) => byName(a.path, b.path));
+  roots.forEach(sum);
+  return roots;
 }

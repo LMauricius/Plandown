@@ -675,7 +675,7 @@ function row(t: Task, depth: number, near: string, merged?: TreeNode, tw: HTMLEl
 function nodeRow(n: TreeNode, depth: number, tw: HTMLElement): HTMLElement {
   const key = n.path + '\0';
   const r = nodeLink(n, {
-    className: `row node${pick?.key === key ? ' sel' : ''}${n.path === node ? ' cur' : ''}`, 'data-key': key,
+    className: `row node${n.done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${n.path === node ? ' cur' : ''}`, 'data-key': key,
     onclick: inApp(() => { pick = { key, near: n.path }; folds.nav.delete(key); if (!selectNode(n.path)) fillTree(); }),
   }, tw, h('span', { className: 'title' }, base(n.path)), nodeIcon(n));
   r.style.paddingLeft = `${4 + depth * 10}px`;
@@ -1038,7 +1038,7 @@ function nodePage(n: TreeNode): HTMLElement {
   prune(all, folds.page, n.path);
   const items = visible(all, folds.page).map(({ e, kids }) => {
     const li = h('li', {}, twisty(e.key, kids, folds.page, render),
-      e.n ? nodeLink(e.n, { className: 'ref node' }, nodeIcon(e.n), titleSpan(base(e.n.path))) : taskRefControls(e.t!));
+      e.n ? nodeLink(e.n, { className: `ref node${e.n.done ? ' done' : ''}` }, nodeIcon(e.n), titleSpan(base(e.n.path))) : taskRefControls(e.t!));
     li.style.setProperty('--depth', String(e.depth));
     return li;
   });

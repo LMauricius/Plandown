@@ -45,7 +45,9 @@
       { "command": "plandown.openNode", "title": "Open Group", "category": "Plandown" },
       { "command": "plandown.openInPlandown", "title": "Open in Plandown", "category": "Plandown" },
       { "command": "plandown.openBrowser", "title": "Open in Browser", "category": "Plandown", "icon": "$(globe)" },
-      { "command": "plandown.refresh", "title": "Rescan Workspace", "category": "Plandown", "icon": "$(refresh)" }
+      { "command": "plandown.refresh", "title": "Rescan Workspace", "category": "Plandown", "icon": "$(refresh)" },
+      { "command": "plandown.done", "title": "Mark Done", "category": "Plandown", "icon": "$(circle-large-outline)" },
+      { "command": "plandown.undone", "title": "Mark Not Done", "category": "Plandown", "icon": "$(pass-filled)" }
     ],
     "keybindings": [
       { "key": "alt+enter", "command": "plandown.openInPlandown", "when": "explorerViewletFocus && !inputFocus && resourcePath in plandown.paths" },
@@ -53,7 +55,7 @@
       { "key": "alt+right", "mac": "cmd+]", "command": "workbench.action.navigateForward", "when": "activeCustomEditorId == 'plandown.task' || activeCustomEditorId == 'plandown.file' || activeWebviewPanelId == 'plandown.view'" }
     ],
     "menus": {
-      "commandPalette": [{ "command": "plandown.openPinned", "when": "false" }, { "command": "plandown.openNode", "when": "false" }, { "command": "plandown.openInPlandown", "when": "false" }, { "command": "plandown.copyLink", "when": "plandown.active" }],
+      "commandPalette": [{ "command": "plandown.openPinned", "when": "false" }, { "command": "plandown.openNode", "when": "false" }, { "command": "plandown.openInPlandown", "when": "false" }, { "command": "plandown.done", "when": "false" }, { "command": "plandown.undone", "when": "false" }, { "command": "plandown.copyLink", "when": "plandown.active" }],
       "editor/title/context": [{ "command": "plandown.copyLink", "group": "1_cutcopypaste@9", "when": "resourcePath in plandown.paths || resourcePath =~ /\\/\\.plandown-tasks\\//" }],
       "explorer/context": [{ "command": "plandown.openInPlandown", "group": "navigation@9", "when": "resourcePath in plandown.paths" }],
       "editor/title": [
@@ -70,10 +72,12 @@
         { "command": "plandown.openBrowser", "group": "navigation@5", "when": "view == plandown.tree" }
       ],
       "view/item/context": [
+        { "command": "plandown.done", "group": "inline@0", "when": "view == plandown.tree && viewItem =~ /^(task|nodeTask)$/" },
+        { "command": "plandown.undone", "group": "inline@0", "when": "view == plandown.tree && viewItem =~ /^(task|nodeTask) done$/" },
         { "command": "plandown.create", "group": "inline@1", "when": "view == plandown.tree" },
         { "command": "plandown.createGroup", "group": "inline@2", "when": "view == plandown.tree && viewItem =~ /^node/" },
-        { "command": "plandown.openPinned", "group": "navigation@1", "when": "view == plandown.tree && viewItem =~ /^(task|node|nodeTask)$/" },
-        { "command": "plandown.copyLink", "group": "9_cutcopypaste@1", "when": "view == plandown.tree && viewItem =~ /^(task|node|nodeTask)$/" }
+        { "command": "plandown.openPinned", "group": "navigation@1", "when": "view == plandown.tree && viewItem =~ /^(task|node|nodeTask)( done)?$/" },
+        { "command": "plandown.copyLink", "group": "9_cutcopypaste@1", "when": "view == plandown.tree && viewItem =~ /^(task|node|nodeTask)( done)?$/" }
       ]
     }
   },
