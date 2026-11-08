@@ -46,8 +46,8 @@
       { "command": "plandown.openInPlandown", "title": "Open in Plandown", "category": "Plandown" },
       { "command": "plandown.openBrowser", "title": "Open in Browser", "category": "Plandown", "icon": "$(globe)" },
       { "command": "plandown.refresh", "title": "Rescan Workspace", "category": "Plandown", "icon": "$(refresh)" },
-      { "command": "plandown.done", "title": "Mark Done", "category": "Plandown", "icon": "$(circle-large-outline)" },
-      { "command": "plandown.undone", "title": "Mark Not Done", "category": "Plandown", "icon": "$(pass-filled)" }
+      { "command": "plandown.done", "title": "Mark Done", "category": "Plandown", "icon": "$(pass-filled)" },
+      { "command": "plandown.undone", "title": "Mark Not Done", "category": "Plandown", "icon": "$(circle-large-outline)" }
     ],
     "keybindings": [
       { "key": "alt+enter", "command": "plandown.openInPlandown", "when": "explorerViewletFocus && !inputFocus && resourcePath in plandown.paths" },

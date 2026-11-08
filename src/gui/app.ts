@@ -179,26 +179,26 @@ function outline(nodes: TreeNode[], depth = 0, out: Entry[] = []): Entry[] {
   return out;
 }
 
-/** Entries not inside a collapsed one (keys in `fold`), each telling whether it has children (the next entry is deeper). */
-function visible(all: Entry[], fold: Set<string>): { e: Entry; kids: boolean }[] {
+/** Entries not inside a collapsed one (`closed`), each telling whether it has children (the next entry is deeper). */
+function visible(all: Entry[], closed: (key: string) => boolean): { e: Entry; kids: boolean }[] {
   const out: { e: Entry; kids: boolean }[] = [];
   let hide = Infinity;   // depth of the collapsed entry being skipped
   all.forEach((e, i) => {
     if (e.depth > hide) return;
-    hide = fold.has(e.key) ? e.depth : Infinity;
+    hide = closed(e.key) ? e.depth : Infinity;
     out.push({ e, kids: (all[i + 1]?.depth ?? -1) > e.depth });
   });
   return out;
 }
 
 /**
- * Drops the collapsed keys (`fold`) of rows inside node path `under` (`''`: everywhere) that `all` no longer holds or that
- * lost their children: expanded is the default, so only collapsed branches are stored. The `under` node's own row is
- * not in its page (it belongs to the parent's page), so its key stays.
+ * Drops the stored keys (`fold`) of rows inside node path `under` (`''`: everywhere) that `all` no longer holds or that
+ * lost their children: only branches have a state to store. The `under` node's own row is not in its page (it belongs
+ * to the parent's page), so its key stays.
  */
-function prune(all: Entry[], fold: Set<string>, under = '') {
+function prune(all: Entry[], fold: Set<string> | Map<string, boolean>, under = '') {
   const branches = new Set(all.filter((e, i) => (all[i + 1]?.depth ?? -1) > e.depth).map(e => e.key));
-  for (const k of fold) {
+  for (const k of fold.keys()) {
     const near = k.slice(0, k.indexOf('\0'));
     if (!branches.has(k) && k !== under + '\0' && (!under || near === under || near.startsWith(under + '/'))) fold.delete(k);
   }
@@ -224,22 +224,23 @@ let revealedLinkKinds = new Set<string>();        // link types the user opened 
 // Tree selection, apart from navigation (`sel`): the picked row and the tree node new groups and tasks go near ('' : root)
 let pick: { key: string; near: string } | null = null;
 let pickSel = true;                                               // the first tree build picks the row of `sel` (the page's URL)
-let shown: string | null | undefined;                             // the task or node page the tree last revealed (see `fillTree`)
 let adding: { type: string | null; text: string } | null = null;   // open "create" row; type null: a group
 let focusAdd = false;                                             // focus the create row once it is built
 /**
- * Collapsed outline rows by key: the sidebar's and the group pages' (their keys hold node paths, so pages share one set).
- * The browser keeps them and the sidebar's scroll offset per tab session (saved on `pagehide`); a VSCode tab keeps its
- * page set in its webview state (saved by `render`). `prune` keeps only keys of existing, collapsed branches.
+ * Outline row states by key. `nav`: the sidebar rows the user set (true: expanded, false: collapsed); the rest are collapsed,
+ * except, while their page is shown, the unset branches above the current row (see `fillTree`). `page`: the group pages'
+ * collapsed rows (their keys hold node paths, so pages share one set). The browser keeps both and the sidebar's scroll offsets
+ * (`[top, left]`) per tab session (saved on `pagehide`); a VSCode tab keeps its page set in its webview state (saved by
+ * `render`). `prune` keeps only keys of existing branches.
  */
-const folds = { nav: new Set<string>(), page: new Set<string>() };
-let navScroll = 0;
+const folds = { nav: new Map<string, boolean>(), page: new Set<string>() };
+let navScroll = [0, 0];
 try {
   const ui = (embed ? vs!.getState() : JSON.parse(sessionStorage.getItem('plandown-ui') ?? 'null')) ?? {};
-  folds.nav = new Set(ui.nav); folds.page = new Set(ui.page); navScroll = Number(ui.scroll) || 0;
+  folds.nav = new Map(ui.nav); folds.page = new Set(ui.page); if (ui.scroll) navScroll = [...ui.scroll].map(Number);
 } catch { /* not persisted, or malformed */ }
 /** Stored UI state without defaults (empty sets, no scroll): JSON drops the undefined fields. */
-const uiState = () => ({ nav: folds.nav.size ? [...folds.nav] : undefined, page: folds.page.size ? [...folds.page] : undefined, scroll: navScroll || undefined });
+const uiState = () => ({ nav: folds.nav.size ? [...folds.nav] : undefined, page: folds.page.size ? [...folds.page] : undefined, scroll: navScroll.some(Boolean) ? navScroll : undefined });
 if (!embed) addEventListener('pagehide', () => {
   try {
     const ui = JSON.stringify(uiState());
@@ -269,7 +270,7 @@ async function run(op: Op, fromEditor = false): Promise<boolean> {
         sel = r.id;
         node = null;
         // A moved task is picked and revealed at its new row
-        if (op.op === 'move') { pickSel = true; shown = undefined; }
+        if (op.op === 'move') pickSel = true;
       }
     }
   } catch (e) {
@@ -487,7 +488,7 @@ function sidebar(): HTMLElement {
   if (panes.nav.collapsed) return h('aside', { className: 'sidebar collapsed' }, handle, head, createSection());
   // Clicking empty tree space drops the tree selection (new items then go to the root); navigation stays
   const tree = h('div', {
-    id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } }, onscroll: () => { navScroll = tree.scrollTop; },
+    id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } }, onscroll: () => { navScroll = [tree.scrollTop, tree.scrollLeft]; },
     // Any dragged link may be dropped: its URL names the task or node (see `dragged`)
     ondragover: (e: DragEvent) => {
       if (!e.dataTransfer?.types.some(t => t === 'text/uri-list' || t === 'text/plain')) return;
@@ -540,25 +541,21 @@ function fillTree(tree = $('tree')) {
     const e = all.find(isCur);
     if (e) pick = { key: e.key, near: e.near };
   }
-  // The create row's node and its ancestors open
-  if (adding && pick) for (const e of all) if ((e.n || e.merged) && (pick.near + '/').startsWith(e.near + '/')) folds.nav.delete(e.key);
-  let vis = visible(all, folds.nav);
-  // A newly opened task or page (by a link, history or the address) with no visible row: the branches above its first
-  // row open. Once per opening, so collapsing them again afterwards sticks
-  if ((sel ?? node) !== shown) {
-    shown = sel ?? node;
-    const i = all.findIndex(isCur);
-    if (i >= 0 && !vis.some(v => isCur(v.e))) {
-      for (let j = i - 1, d = all[i].depth; j >= 0 && d > 0; j--) if (all[j].depth < d) { d = all[j].depth; folds.nav.delete(all[j].key); }
-      vis = visible(all, folds.nav);
-    }
-  }
+  // Open rows: the expanded ones; while a page is shown, the branches above its row (the picked one, else the first) not
+  // collapsed by the user; the create row's node and its ancestors. Only the user's choices are stored
+  const open = new Set([...folds.nav].filter(([, v]) => v).map(([k]) => k));
+  const i = Math.max(all.findIndex(e => e.key === pick?.key && isCur(e)), 0), c = all.findIndex((e, j) => j >= i && isCur(e));
+  if (c >= 0) for (let j = c - 1, d = all[c].depth; j >= 0 && d > 0; j--) if (all[j].depth < d) { d = all[j].depth; if (folds.nav.get(all[j].key) !== false) open.add(all[j].key); }
+  if (adding && pick) for (const e of all) if ((e.n || e.merged) && (pick.near + '/').startsWith(e.near + '/')) open.add(e.key);
+  const vis = visible(all, k => !open.has(k));
   // Each entry's parent entry (the nearest shallower one above it): the context of drops next to its row
   const up = new Map<Entry, Entry | undefined>(), path: Entry[] = [];
   for (const e of all) { path.length = e.depth; up.set(e, path[e.depth - 1]); path[e.depth] = e; }
   const rows = vis.map(({ e, kids }) => {
-    const tw = twisty(e.key, kids, folds.nav, () => fillTree());
-    const r = e.n ? nodeRow(e.n, e.depth, tw) : row(e.t!, e.depth, e.near, e.merged, tw);
+    const o = open.has(e.key), tw = twisty(o, kids, v => { folds.nav.set(e.key, v); fillTree(); });
+    // A click on the current, expanded row collapses it back to unset; any other click on a branch expands it for good
+    const click = () => { if (o && isCur(e)) folds.nav.delete(e.key); else if (kids) folds.nav.set(e.key, true); };
+    const r = e.n ? nodeRow(e.n, e.depth, tw, click) : row(e.t!, e.depth, e.near, e.merged, tw, click);
     drops.set(r, { e, up: up.get(e) });
     return r;
   });
@@ -638,15 +635,13 @@ function moveOp(src: { id?: string; path?: string; url: string }, to: Drop): Op 
 const nodeIcon = (n: TreeNode) => h('span', { className: 'icon' }, n.folder ? '📁' : '📄');
 
 /**
- * Expand/collapse toggle of an outline row with children (keys in `fold` are collapsed), shown with `redraw`; rows without
- * children get an empty spacer, keeping titles aligned. Its clicks never reach the row (no navigation).
+ * Expand/collapse toggle of an outline row with children, which `set`s the new state and redraws (in a transition); rows
+ * without children get an empty spacer, keeping titles aligned. Its clicks never reach the row (no navigation).
  */
-function twisty(key: string, kids: boolean, fold: Set<string>, redraw: () => void): HTMLElement {
-  const open = !fold.has(key);
+function twisty(open: boolean, kids: boolean, set: (open: boolean) => void): HTMLElement {
   const toggle = (e: Event) => {
     e.preventDefault(); e.stopPropagation();
-    if (open) fold.add(key); else fold.delete(key);
-    transition(redraw);
+    transition(() => set(!open));
   };
   return kids
     ? h('span', { className: `twisty${open ? ' open' : ''}`, role: 'button', tabIndex: 0, ariaExpanded: String(open), ariaLabel: open ? 'Collapse' : 'Expand',
@@ -654,8 +649,8 @@ function twisty(key: string, kids: boolean, fold: Set<string>, redraw: () => voi
     : h('span', { className: 'twisty' });
 }
 
-/** Task row under tree node `near`; `merged` is the node the task is merged with (shown with its icon). Clicking opens the task and expands its row. */
-function row(t: Task, depth: number, near: string, merged?: TreeNode, tw: HTMLElement | null = null): HTMLElement {
+/** Task row under tree node `near`; `merged` is the node the task is merged with (shown with its icon). Clicking runs `click` (expansion) and opens the task. */
+function row(t: Task, depth: number, near: string, merged?: TreeNode, tw: HTMLElement | null = null, click = () => {}): HTMLElement {
   const done = t.props.done === true, tot = db.totals[t.id], key = `${near}\0${t.id}`;
   const cb = h('input', {
     type: 'checkbox', checked: done, title: 'Done',
@@ -664,19 +659,19 @@ function row(t: Task, depth: number, near: string, merged?: TreeNode, tw: HTMLEl
   });
   const r = taskLink(t.id, {
     className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
-    onclick: inApp(() => { pick = { key, near }; folds.nav.delete(key); if (!select(t.id)) fillTree(); }),
+    onclick: inApp(() => { pick = { key, near }; click(); if (!select(t.id)) fillTree(); }),
   }, tw, badge(t.type), h('span', { className: 'title' }, t.title), cb, merged ? nodeIcon(merged) : null,
     tot.effort || tot.spent ? h('span', { className: 'muted' }, `${hours(tot.spent)}/${hours(tot.effort)} h`) : null);
   r.style.paddingLeft = `${4 + depth * 10}px`;
   return r;
 }
 
-/** Folder and/or file row; clicking opens its page, expands it and sets where new items go. */
-function nodeRow(n: TreeNode, depth: number, tw: HTMLElement): HTMLElement {
+/** Folder and/or file row; clicking runs `click` (expansion), opens its page and sets where new items go. */
+function nodeRow(n: TreeNode, depth: number, tw: HTMLElement, click: () => void): HTMLElement {
   const key = n.path + '\0';
   const r = nodeLink(n, {
     className: `row node${n.done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${n.path === node ? ' cur' : ''}`, 'data-key': key,
-    onclick: inApp(() => { pick = { key, near: n.path }; folds.nav.delete(key); if (!selectNode(n.path)) fillTree(); }),
+    onclick: inApp(() => { pick = { key, near: n.path }; click(); if (!selectNode(n.path)) fillTree(); }),
   }, tw, h('span', { className: 'title' }, base(n.path)), nodeIcon(n));
   r.style.paddingLeft = `${4 + depth * 10}px`;
   return r;
@@ -1036,8 +1031,8 @@ function nodePage(n: TreeNode): HTMLElement {
   outline(n.kids, 0, all);
   // `--depth` indents the widget (CSS); the toggle sits left of it, like the link lists' bullets
   prune(all, folds.page, n.path);
-  const items = visible(all, folds.page).map(({ e, kids }) => {
-    const li = h('li', {}, twisty(e.key, kids, folds.page, render),
+  const items = visible(all, k => folds.page.has(k)).map(({ e, kids }) => {
+    const li = h('li', {}, twisty(!folds.page.has(e.key), kids, v => { if (v) folds.page.delete(e.key); else folds.page.add(e.key); render(); }),
       e.n ? nodeLink(e.n, { className: `ref node${e.n.done ? ' done' : ''}` }, nodeIcon(e.n), titleSpan(base(e.n.path))) : taskRefControls(e.t!));
     li.style.setProperty('--depth', String(e.depth));
     return li;
@@ -1195,8 +1190,18 @@ function render() {
   if (tab === 'Time') return main.replaceChildren(time());
   const t = sel ? db.tasks[sel] : undefined, n = node !== null ? findNode(db.tree, node) : undefined;
   const nav = embed ? [] : [sidebar()];
-  // The rebuilt tree gets its scroll offset back once attached
-  const attach = (page: HTMLElement) => { main.replaceChildren(...nav, page); if (!embed && !panes.nav.collapsed) $('tree').scrollTop = navScroll; };
+  // The rebuilt tree gets its scroll offsets back once attached, shifted so the picked row stays put while rows above it
+  // fold or unfold (the old page's revealed branches close). Rows are found by key: it holds `\0`, which selectors can't
+  const rowTop = (tree: Element | null) => pick && tree && Array.from(tree.querySelectorAll<HTMLElement>('.row')).find(r => r.dataset.key === pick!.key)?.getBoundingClientRect().top;
+  const attach = (page: HTMLElement) => {
+    const before = rowTop(document.getElementById('tree'));
+    main.replaceChildren(...nav, page);
+    if (embed || panes.nav.collapsed) return;
+    const tree = $('tree');
+    [tree.scrollTop, tree.scrollLeft] = navScroll;
+    const after = rowTop(tree);
+    if (before != null && after != null) tree.scrollTop += after - before;
+  };
   if (n) return attach(h('section', { className: 'editor' }, h('div', { className: 'editor-row' }, nodePage(n))));
   if (!t) { sel = null; dirty = false; }
   if (!t) return attach(h('section', { className: 'editor muted' }, embed ? `This ${embed === 'node' ? 'group' : 'task'} no longer exists.` : 'Select a task, or add one in the sidebar.'));
