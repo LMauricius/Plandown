@@ -134,6 +134,8 @@ The rest of the editor acts immediately:
 
 The title, the description and text properties share one editor. It shows formatted text; click into it to edit, and the text stays exactly where it is. Markdown markers (such as `**` for bold or `##` for a heading) appear beside the formatted text while the cursor is in it. A toolbar appears above the field, or below it when there is no room above, with buttons for common formatting on the left and a ✓ on the right that finishes editing.
 
+A fenced code block tagged `mermaid` is drawn as a [Mermaid](https://mermaid.js.org) diagram. Its code stays hidden; the **Source** button below the diagram shows it for editing, and the diagram follows your changes as you type. While the code has an error, the last working diagram stays dimmed and hovering it shows the error message.
+
 | Key | Effect |
 | --- | --- |
 | Enter | In the description, a new line. In other fields, finishes editing; once a field has several lines, adds another line. |

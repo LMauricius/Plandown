@@ -438,6 +438,19 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 .ln.quote { border-left: 3px solid var(--border); padding-left: .8em; color: var(--muted); }
 .ln.code, .ln.fence, .k-code { font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", monospace; font-size: .92em; background: var(--panel); }
 .ln.fence { color: var(--muted); }
+/* Mermaid: the opening fence line holds the diagram; its text and the block's other rows show via the Source button */
+.ln.mmd-ln { background: none; }
+.ln.mmd-ln > .fsrc:not([hidden]) { display: block; background: var(--panel); }
+.mmd { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 6px 0; font: 12px var(--sans); color: var(--fg); cursor: default; user-select: none; }
+.mmd > img { max-width: 100%; height: auto; }
+.mmd > img:not([src]) { display: none; }
+.mmd > button { padding: 1px 8px; font-size: 11px; }
+.mmd > button::before { content: attr(aria-label); }
+.mmd.err > img { opacity: .4; }
+.mmd.err > button { --c: var(--bad); }
+/* Dark mode inverts the light diagram; the hue turn restores its colors */
+:root[data-theme=dark] .mmd > img { filter: invert(1) hue-rotate(180deg); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) .mmd > img { filter: invert(1) hue-rotate(180deg); } }
 .k-code { border-radius: 3px; }
 /*
  * Tables: rows stay lines (1:1 with the source), shown as table rows; the browser wraps consecutive rows in one

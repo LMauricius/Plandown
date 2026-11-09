@@ -14,9 +14,11 @@ const STATIC: Record<string, [string, string]> = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/mdedit.js': ['mdedit.js', 'text/javascript; charset=utf-8'],
   '/motion.js': ['motion.js', 'text/javascript; charset=utf-8'],
+  '/mermaid.min.js': ['mermaid.min.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
-const HEADERS = { 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'self'; img-src 'self' data:" };
+// Inline styles: Mermaid measures labels in a page-side copy of the SVG, styled by its own <style>
+const HEADERS = { 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" };
 
 function send(res: ServerResponse, status: number, type: string, body: string | Buffer) {
   res.writeHead(status, { ...HEADERS, 'content-type': type });

@@ -77,12 +77,13 @@ const note = (text: string) => `<!doctype html><meta http-equiv="Content-Securit
 /**
  * Page for one view: the GUI's stylesheet and `app.js` as webview URIs, `<body data-view data-root data-task>` (read by
  * the GUI, and saved as its state for restoring the tab) and only `#main` and `#toast` (no header). CSP: nothing but
- * the webview's own resources; inline style properties set from script are CSSOM, not blocked.
+ * the webview's own resources, plus inline `<style>` (Mermaid measures labels in a page-side copy of the SVG, styled by
+ * its own `<style>`; with no outbound sources allowed, CSS cannot leak anything).
  */
 function html(webview: vscode.Webview, gui: vscode.Uri, root: Root, view: View): string {
   const src = (f: string) => webview.asWebviewUri(vscode.Uri.joinPath(gui, f));
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src ${webview.cspSource}">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; script-src ${webview.cspSource}">
 <link rel="stylesheet" href="${src('style.css')}"></head>
 <body data-view="${view.kind}" data-root="${esc(root.uri.fsPath)}"${view.kind === 'task' ? ` data-task="${esc(view.id)}"` : view.kind === 'node' ? ` data-node="${esc(view.path)}"` : ''}>
 <main id="main"></main><div id="toast" hidden></div>

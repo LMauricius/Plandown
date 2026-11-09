@@ -737,13 +737,90 @@ function paintInline(parent: HTMLElement, src: string, from: number, to: number,
   if (to > from) parent.append(src.slice(from, to));
 }
 
+// ---- Mermaid diagrams ----
+
+/** Diagram of one closed ```mermaid block. `rows` are the block's source elements its Source button shows and hides. */
+interface Fig { el: HTMLElement; img: HTMLImageElement; open: boolean; code?: string; rows: HTMLElement[] }
+
+let mermaidLib: Promise<any> | undefined;
+
 /**
- * Rebuilds a part's DOM: one `div.ln` per source line, so lines map 1:1 to the part's child nodes.
- * shortcut: full re-render per change; switch to per-line diffing if descriptions get very long.
+ * Loads `mermaid.min.js` (5 MB) on first use only, from beside this module: the server's route in the browser, a
+ * webview URI in VSCode. A failed load stays failed until the page reloads.
  */
-function paint(p: Part) {
-  const src = p.src;
-  p.el.replaceChildren(...tokenize(src).map(l => {
+function mermaid(): Promise<any> {
+  return mermaidLib ??= new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = new URL('mermaid.min.js', import.meta.url).href;
+    s.onload = () => {
+      const m = (globalThis as any).mermaid;
+      // `neutral` is grayscale, so the dark-mode CSS inversion keeps it readable
+      m.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true, theme: 'neutral',
+        fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--sans') });
+      ok(m);
+    };
+    s.onerror = fail;
+    document.head.append(s);
+  });
+}
+
+let renders = 0;
+
+/**
+ * Renders `code` into the figure's image unless it already shows it. The SVG goes into an `<img>`: it cannot run
+ * script, carries its own `<style>`, and keeps no text in the part (lines map to child text). Results of outdated
+ * code are dropped; an error keeps the last good image and puts the message in the tooltip.
+ */
+function draw(f: Fig, code: string) {
+  if (f.code === code) return;
+  f.code = code;
+  mermaid().then(m => m.render(`mmd${++renders}`, code)).then(({ svg }: { svg: string }) => {
+    if (f.code !== code) return;
+    // Mermaid sizes the root SVG `width="100%"`, which an <img> cannot resolve: the viewBox width is its natural one
+    f.img.style.width = (/viewBox="\S+ \S+ ([\d.]+)/.exec(svg.slice(0, svg.indexOf('>')))?.[1] ?? '') + 'px';
+    f.img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    f.el.classList.remove('err');
+    f.el.removeAttribute('title');
+  }, (e: unknown) => {
+    if (f.code !== code) return;
+    f.el.classList.add('err');
+    f.el.title = e instanceof Error ? e.message : String(e);
+  });
+}
+
+/**
+ * Figure with the diagram and its Source button, non-editable and without text (the label is CSS content from
+ * `aria-label`), so the line holding it reads as pure source. The button toggles the block's source rows.
+ */
+function figure(open: boolean): Fig {
+  const img = el('img', '') as HTMLImageElement, b = el('button', '');
+  img.alt = 'Mermaid diagram';
+  b.setAttribute('aria-label', 'Source');
+  b.setAttribute('aria-pressed', String(open));
+  const f: Fig = { el: el('div', 'mmd', img, b), img, open, rows: [] };
+  f.el.contentEditable = 'false';
+  // The part's own mouse handlers would move the caret
+  b.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+  b.addEventListener('click', e => {
+    e.stopPropagation();
+    f.open = !f.open;
+    b.setAttribute('aria-pressed', String(f.open));
+    f.rows.forEach(r => show(r, f.open));
+  });
+  return f;
+}
+
+/**
+ * Rebuilds a part's DOM: one `div.ln` per source line, so lines map 1:1 to the part's child nodes. A closed ```mermaid
+ * block also gets a figure in its opening line; its source rows start hidden, except for blocks a `fresh` repaint
+ * (an edit) creates, whose author is still typing them.
+ * shortcut: full re-render per change; switch to per-line diffing if descriptions get very long.
+ * shortcut: figures are matched to blocks by order, so adding a diagram above others shifts their Source states.
+ */
+function paint(p: Part, fresh = false) {
+  const src = p.src, ls = tokenize(src);
+  let k = 0, fig: Fig | undefined, close = -1;   // the diagram block being painted and its closing line
+  p.el.replaceChildren(...ls.map((l, i) => {
     const div = ranged(el('div', `ln ${l.block}`), l.start, l.end);
     if (l.depth) div.style.setProperty('--d', String(l.depth));
     if (l.check) div.dataset.cb = l.check;
@@ -759,8 +836,26 @@ function paint(p: Part) {
     else if (l.block === 'code' || l.block === 'fence') div.append(src.slice(l.start, l.end));
     else paintInline(div, src, l.mark, l.end, l.inl);
     if (l.start === l.end) div.append(document.createElement('br'));
+
+    // Mermaid: an opening fence whose block closes gets the figure, its text and the following rows the Source toggle
+    if (fig && i <= close) { div.hidden = !fig.open; fig.rows.push(div); }
+    else if (l.block === 'fence' && /^[ \t]*[`~]+[ \t]*mermaid\s*$/i.test(src.slice(l.start, l.end))) {
+      let j = i + 1;
+      while (ls[j]?.block === 'code') j++;
+      if (ls[j]?.block === 'fence') {
+        fig = p.figs[k++] ??= figure(fresh);
+        draw(fig, ls.slice(i + 1, j).map(x => src.slice(x.start, x.end)).join('\n'));
+        close = j;
+        const text = el('span', 'fsrc', ...Array.from(div.childNodes));
+        text.hidden = !fig.open;
+        fig.rows = [text];
+        div.classList.add('mmd-ln');
+        div.append(fig.el, text);
+      }
+    }
     return div;
   }));
+  p.figs.length = k;
   p.el.toggleAttribute('data-empty', !src);
 }
 
@@ -839,7 +934,7 @@ function reveal(part: HTMLElement) {
 // ---- Editing ----
 
 interface Snap { src: string; at: number }
-interface Part { el: HTMLElement; src: string; undo: Snap[]; redo: Snap[]; last: number }
+interface Part { el: HTMLElement; src: string; undo: Snap[]; redo: Snap[]; last: number; figs: Fig[] }
 interface State { frame: HTMLElement; o: EditorOpts; parts: Part[]; cur: Part | null }
 
 /** Records the part's current source for undo; keystrokes closer than 800 ms coalesce into one step. */
@@ -853,7 +948,7 @@ function snapshot(p: Part, at: number, force = false) {
 /** Replaces the part's whole source, repaints and puts the selection at `[a, b]`. */
 function commit(st: State, p: Part, src: string, a: number, b = a) {
   p.src = st.o.multiline === false ? src.replace(/\n/g, ' ') : src;
-  paint(p);
+  paint(p, true);
   setSel(p.el, Math.min(a, p.src.length), Math.min(b, p.src.length));
   reveal(p.el);
   place();
@@ -1020,7 +1115,7 @@ export function mdEditor(o: EditorOpts): Editor {
     if (o.multiline !== false) part.setAttribute('aria-multiline', 'true');
     if (o.label) part.setAttribute('aria-label', o.label);
     if (o.placeholder && o.parts.length === 1) part.dataset.ph = o.placeholder;
-    const p: Part = { el: part, src: x, undo: [], redo: [], last: 0 };
+    const p: Part = { el: part, src: x, undo: [], redo: [], last: 0, figs: [] };
     st.parts.push(p);
     paint(p);
     frame.append(part);
@@ -1056,7 +1151,7 @@ export function mdEditor(o: EditorOpts): Editor {
   return {
     el: frame,
     texts: () => st.parts.map(p => p.src),
-    set(texts) { st.parts.forEach((p, i) => { p.src = texts[i] ?? ''; p.undo = []; p.redo = []; paint(p); }); },
+    set(texts) { st.parts.forEach((p, i) => { p.src = texts[i] ?? ''; p.undo = []; p.redo = []; p.figs = []; paint(p); }); },
   };
 }
 

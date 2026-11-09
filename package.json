@@ -8,7 +8,7 @@
   "bin": { "plandown": "dist/cli.js" },
   "files": ["dist"],
   "scripts": {
-    "build": "tsc && node -e \"for (const f of ['index.html', 'style.css']) require('fs').copyFileSync('src/gui/' + f, 'dist/gui/' + f)\"",
+    "build": "tsc && node -e \"for (const f of ['index.html', 'style.css']) require('fs').copyFileSync('src/gui/' + f, 'dist/gui/' + f); require('fs').copyFileSync('node_modules/mermaid/dist/mermaid.min.js', 'dist/gui/mermaid.min.js')\"",
     "test": "npm run build && node --test \"dist/test/*.test.js\"",
     "start": "node dist/cli.js serve"
   },
@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "mermaid": "^12.3.0",
     "typescript": "^5.9.0"
   }
 }
