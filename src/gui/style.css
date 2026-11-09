@@ -468,11 +468,15 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 .mk { --corner: 2px; position: absolute; white-space: pre; opacity: 0; pointer-events: none; font: 400 13px/1.4 var(--sans); font-style: normal; text-decoration: none; padding: 0 0 0 4px; z-index: 1; }
 .mk.o { transform: translateX(-100%); }
 .mk.blank { visibility: hidden; }
+/* Hidden from native caret moves (Up, Down, Home, End), which would otherwise stop inside the marker boxes */
+.part.nav .mk { visibility: hidden; }
 .mk.c { border-radius: var(--corner) 999px 999px var(--corner); padding: 0 4px 0 0; }
 /* Heading markers would not fit left of the text in the frame's narrow (clipped) padding: they go to the line's right end */
 :is(.h1, .h2, .h3, .h4, .h5, .h6) > .mk.o { right: 0; transform: none; border-radius: var(--corner) 999px 999px var(--corner); padding: 0 4px 0 0; }
 /* Shown markers take clicks (the caret enters them to edit the syntax); hidden ones let clicks through to the text */
 .near > .mk, .ln.ol > .mk, .ln.near > .cell > .mk { opacity: 1; pointer-events: auto; }
+/* Clicks of a multi-click burst pass through the markers its first click revealed */
+.mdedit .part.pt .mk { pointer-events: none; }
 @media (prefers-reduced-motion: no-preference) { .mk { transition: opacity .15s; } }
 
 /* Toolbox: shared, fixed on top of everything at the focused editor. Transparent row of two toolbars (controls, confirm); clicks pass through the gap. */

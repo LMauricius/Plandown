@@ -796,6 +796,23 @@ function pointOf(part: HTMLElement, off: number): [Node, number] {
   return [part, part.childNodes.length];
 }
 
+/** Element holding a DOM point (a text node's parent), to test it against classes like `.mk` or `.cell`. */
+const elOf = (n: Node) => (n instanceof Element ? n : n.parentElement)!;
+
+/**
+ * Screen box `[x, top, bottom]` of a caret at a DOM point, from the character after it (else before it). A collapsed
+ * range's own rect is ambiguous at a soft wrap: it may sit at the end of the upper line while the caret is drawn at
+ * the start of the lower one.
+ */
+function caretBox(n: Node, o: number): [number, number, number] | null {
+  if (!(n instanceof Text) || !n.length) return null;
+  const r = document.createRange(), next = o < n.length;
+  r.setStart(n, next ? o : o - 1);
+  r.setEnd(n, next ? o + 1 : o);
+  const b = r.getClientRects()[0];
+  return b ? [next ? b.left : b.right, b.top, b.bottom] : null;
+}
+
 /** Current selection as sorted source offsets, or null when it is not inside the part. */
 function getSel(part: HTMLElement): [number, number] | null {
   const s = getSelection();
@@ -1095,13 +1112,72 @@ function listen(st: State, p: Part) {
     e.preventDefault();
     if (e.shiftKey) s.extend(...pointOf(part, y)); else setSel(part, y);
   };
+  // A caret at a marker's edge has the same offset as the text next to it but shows inside the bubble: moved out too
   const fix = () => {
     const s = getSel(part);
     if (!s || s[0] !== s[1]) return;
     const y = caretSnap(p.src, markMask(p.src), s[0]);
-    if (y !== s[0]) setSel(part, y);
+    if (y !== s[0] || elOf(getSelection()!.focusNode!).closest('.mk')) setSel(part, y);
   };
-  part.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('.mk')) fix(); });
+
+  // Table rows: cells are separate blocks to the browser, so its Up goes to the previous cell and Home/End stop at
+  // cell edges. Up/Down from a cell's first/last visual line instead go to the adjacent line at the same x (`goal`,
+  // kept across consecutive moves); Home/End go to the row's ends. Needs the markers hidden (`nav`) for hit testing.
+  let goal: number | null = null;
+  const lineOf = (ln: Element) => tokenize(p.src)[Array.prototype.indexOf.call(part.childNodes, ln)];
+  const tableMove = (e: KeyboardEvent): boolean => {
+    const s = getSelection()!, n = s.focusNode, cell = n && part.contains(n) && elOf(n).closest('.cell'), ln = cell && cell.parentElement;
+    if (!cell || !ln || e.ctrlKey || e.metaKey || e.altKey || !/^(ArrowUp|ArrowDown|Home|End)$/.test(e.key)) return false;
+    let y: number;
+    if (e.key === 'Home' || e.key === 'End') {
+      const l = lineOf(ln);
+      y = e.key === 'Home' ? l.start : l.end;
+    } else {
+      // Caret and cell content boxes (no caret box in an empty cell: the cell's own then)
+      const up = e.key === 'ArrowUp', c = document.createRange(), cb = cell.getBoundingClientRect();
+      c.selectNodeContents(cell);
+      const rs = Array.from(c.getClientRects()), [cx, top, bottom] = caretBox(n, s.focusOffset) ?? [cb.left, cb.top, cb.bottom], h = (bottom - top) / 2;
+      if (up ? top - Math.min(...rs.map(q => q.top)) > h : Math.max(...rs.map(q => q.bottom)) - bottom > h) return false;
+      goal ??= cx;
+      const to = up ? ln.previousElementSibling : ln.nextElementSibling;
+      if (!to) y = up ? 0 : p.src.length;
+      else {
+        // Into the target line's nearest visual line, in a row the cell under `goal`. A collapsed delimiter row's text
+        // has no width to hit: that cell's text start then.
+        const t = to.getBoundingClientRect(), d = Math.min(3, t.height / 2), gx = Math.min(Math.max(goal, t.left + 1), t.right - 1);
+        const at = document.caretPositionFromPoint(gx, up ? t.bottom - d : t.top + d), ks = Array.from(to.children).filter(k => k.classList.contains('cell'));
+        const k = ks.find(k => k.getBoundingClientRect().right >= gx) ?? ks.at(-1), box = k ?? to;
+        if (at && box.contains(at.offsetNode) && !to.matches('.tsep:not(.near)')) y = offsetOf(part, at.offsetNode, at.offset);
+        else { const l = lineOf(to); y = k ? l.cells![ks.indexOf(k)].open : l.start; }
+      }
+    }
+    e.preventDefault();
+    y = caretSnap(p.src, markMask(p.src), y);
+    if (e.shiftKey) s.extend(...pointOf(part, y)); else setSel(part, y);
+    return true;
+  };
+
+  // Triple click selects the clicked line's text (a table cell's in a row); the browser's paragraph would stop at
+  // the marker boxes. Any other click on text is corrected like a native move.
+  part.addEventListener('click', e => {
+    const t = e.target as HTMLElement, cell = t.closest('.cell'), ln = t.closest('.ln');
+    if (e.detail !== 3) { if (!t.closest('.mk')) fix(); return; }
+    if (!ln || ln.parentNode !== part) return;
+    const l = lineOf(ln);
+    const c = cell && l.cells?.[Array.prototype.indexOf.call(ln.children, cell)];
+    setSel(part, c ? c.open : l.mark, c ? c.close : l.end);
+  });
+
+  // Multi-click bursts: the first click reveals markers over neighboring text, so the next ones would land in their
+  // bubbles; revealed markers ignore the pointer until the burst ends. A burst starting on a shown marker edits it.
+  let burst: ReturnType<typeof setTimeout> | undefined;
+  part.addEventListener('mousedown', e => {
+    goal = null;
+    if (e.detail === 1 && (e.target as HTMLElement).closest('.mk')) return;
+    part.classList.add('pt');
+    clearTimeout(burst);
+    burst = setTimeout(() => part.classList.remove('pt'), 500);
+  });
 
   // Enter: Ctrl confirms, Shift inserts a newline; plain Enter confirms a single line in line mode, else continues lists
   // Enter, Tab and Shift+Tab edit table rows (see `tableEdit`); Tab, Shift+Tab and Backspace edit list items (see
@@ -1109,6 +1185,7 @@ function listen(st: State, p: Part) {
   part.addEventListener('keydown', e => {
     if (e.isComposing) return;
     const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') goal = null;
     if (e.key === 'Enter') {
       e.preventDefault();
       if (mod) confirm(st);
@@ -1116,7 +1193,12 @@ function listen(st: State, p: Part) {
       else confirm(st);
     } else if ((e.key === 'Tab' || e.key === 'Backspace') && !mod && !e.altKey) { if (listKey(e.key, e.shiftKey)) e.preventDefault(); }
     else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !mod && !e.altKey) arrow(e);
-    else if (/^(Arrow|Home$|End$|Page)/.test(e.key)) setTimeout(fix);
+    else if (/^(Arrow|Home$|End$|Page)/.test(e.key)) {
+      // Markers are absolutely positioned boxes the native move would treat as extra lines: hidden during it
+      part.classList.add('nav');
+      if (tableMove(e)) { part.classList.remove('nav'); return; }
+      setTimeout(() => { part.classList.remove('nav'); fix(); });
+    }
     else if (mod && (k === 'b' || k === 'i')) { e.preventDefault(); wrap(st, k === 'b' ? '**' : '*'); }
     else if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? history(st, p, p.redo, p.undo) : history(st, p, p.undo, p.redo); }
     else if (mod && k === 'y') { e.preventDefault(); history(st, p, p.redo, p.undo); }
