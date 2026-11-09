@@ -468,7 +468,9 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 .mk.c { border-radius: var(--corner) 999px 999px var(--corner); padding: 0 4px 0 2px; }
 /* Heading markers would not fit left of the text in the frame's narrow (clipped) padding: they go to the line's right end */
 :is(.h1, .h2, .h3, .h4, .h5, .h6) > .mk.o { right: 0; transform: none; border-radius: var(--corner) 999px 999px var(--corner); padding: 0 4px 0 2px; }
-.near > .mk, .ln.ol > .mk, .ln.near > .cell > .mk { opacity: 1; }
+/* Shown markers take clicks (the caret enters them to edit the syntax); hidden ones let clicks through to the text */
+.near > .mk, .ln.ol > .mk, .ln.near > .cell > .mk { opacity: 1; pointer-events: auto; }
+@media (prefers-reduced-motion: no-preference) { .mk { transition: opacity .15s; } }
 
 /* Toolbox: shared, fixed on top of everything at the focused editor. Transparent row of two toolbars (controls, confirm); clicks pass through the gap. */
 .mdtools { position: fixed; z-index: 100; display: flex; justify-content: space-between; gap: 6px; pointer-events: none; }

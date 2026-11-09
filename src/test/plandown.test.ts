@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
-import { clip, fromHtml, listEdit, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
+import { caretSnap, caretStep, clip, cut, fromHtml, markMask, listEdit, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -406,6 +406,45 @@ test('editor table keys: cell moves, appended rows and ending the table', () => 
   assert.equal(ed(tb, 'Enter'), '| a | b |\n|-|-|\n| []  |   |\n| c |   |');
   assert.equal(ed('| a | b |\n|-|-|\n|  ^ |   |', 'Enter'), '| a | b |\n|-|-|\n[]');
   assert.equal(ed('a^', 'Tab'), null);
+});
+
+test('editor caret: arrows skip markers, line ends stay reachable', () => {
+  // Offsets visited by repeated steps from `x` until they stop moving
+  const walk = (src: string, x: number, d: 1 | -1) => {
+    const m = markMask(src), out = [x];
+    for (let y = caretStep(src, m, x, d); y !== out.at(-1); y = caretStep(src, m, y, d)) out.push(y);
+    return out;
+  };
+  assert.deepEqual(walk('a**b**c', 0, 1), [0, 1, 4, 7]);
+  assert.deepEqual(walk('a**b**\n- x', 0, 1), [0, 1, 4, 6, 9, 10]);
+  assert.deepEqual(walk('a**b**\n- x', 10, -1), [10, 9, 6, 4, 3, 0]);
+  assert.deepEqual(walk('é👍🏽', 0, 1), [0, 1, 5]);
+  const snap = (src: string, x: number) => caretSnap(src, markMask(src), x);
+  assert.equal(snap('a**b**', 4), 6);
+  assert.equal(snap('a**b**', 2), 3);
+  assert.equal(snap('a**b** c', 5), 4);
+  assert.equal(snap('- x', 0), 2);
+  assert.equal(snap('a**b**c', 1), 1);
+});
+
+test('editor deletes: partly covered markers stay, covered elements go whole', () => {
+  // `^` marks the range's ends; `|` marks the caret in the result
+  const del = (s: string, text = '') => {
+    const [a, b] = [s.indexOf('^'), s.lastIndexOf('^') - 1], [out, at] = cut(s.replace(/\^/g, ''), a, b, text);
+    return out.slice(0, at) + '|' + out.slice(at);
+  };
+  assert.equal(del('x **b^ol^d** y'), 'x **b|d** y');
+  assert.equal(del('x **b^old** ^y'), 'x **b|**y');
+  assert.equal(del('x **^bold^** y'), 'x | y');
+  assert.equal(del('x ^**bold**^ y'), 'x | y');
+  assert.equal(del('**a *^b^* c**'), '**a | c**');
+  assert.equal(del('[l^in^k](u)', 'X'), '[lX|k](u)');
+  assert.equal(del('## T^it^le'), '## T|le');
+  assert.equal(del('## ^Title^'), '|');
+  assert.equal(del('a^\n## T^itle'), 'a|itle');
+  assert.equal(del('^a\n^## Title'), '|## Title');
+  assert.equal(del('- a^\n- ^b'), '- a|b');
+  assert.equal(del('| a^ | b^ |\n|-|-|'), '| a| |  |\n|-|-|');
 });
 
 test('editor clipboard: self-contained Markdown and its HTML rendering', () => {

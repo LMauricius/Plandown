@@ -317,6 +317,82 @@ export function clip(src: string, a: number, b: number): [number, number, string
   return [a, b, pre + open + src.slice(a, b) + close + post];
 }
 
+// ---- Caret (pure) ----
+
+/** Per source char: 0 text, 1 inside an opening marker (block, cell, inline), 2 inside a closing one. */
+export function markMask(src: string): Uint8Array {
+  const m = new Uint8Array(src.length), fill = (s: number, e: number, v: number) => m.fill(v, s, e);
+  for (const l of tokenize(src)) {
+    fill(l.start, l.mark, 1);
+    l.cells?.forEach(c => { fill(c.start, c.open, 1); fill(c.close, c.end, 2); });
+    walk(inlOf(l), n => { fill(n.start, n.open, 1); fill(n.close, n.end, 2); });
+  }
+  return m;
+}
+
+const eol = (src: string, i: number) => i === src.length || src[i] === '\n';
+const bol = (src: string, i: number) => i === 0 || src[i - 1] === '\n';
+
+/**
+ * Caret offset one arrow step (`d`) from `x`: marker chars (`m`, see `markMask`) are skipped fully, so a step moves
+ * over one visible grapheme. Line ends are stops even when markers hide them from the text (`**b**|`): crossing those
+ * markers is a step of its own. Moving right onto a new line also skips its block marker.
+ */
+export function caretStep(src: string, m: Uint8Array, x: number, d: 1 | -1): number {
+  const seg = new Intl.Segmenter().segment(src);
+  let y = x;
+  if (d > 0) {
+    while (y < src.length && m[y]) y++;
+    if ((y > x && eol(src, y)) || y === src.length) return y;
+    const g = seg.containing(y)!;
+    y = g.index + g.segment.length;
+    if (src[y - 1] === '\n') while (y < src.length && m[y]) y++;
+    return y;
+  }
+  while (y > 0 && m[y - 1]) y--;
+  if ((y < x && eol(src, x) && !bol(src, y)) || y === 0) return y;
+  return seg.containing(y - 1)!.index;
+}
+
+/**
+ * Caret offset `x` left by a native move (Home, End, Up, Down, word jumps) or a click on text, corrected like
+ * `caretStep`: to the line end when only markers follow it, out of a block marker it precedes, out of a marker it is
+ * inside of (to the text side).
+ */
+export function caretSnap(src: string, m: Uint8Array, x: number): number {
+  let y = x;
+  while (y < src.length && m[y]) y++;
+  if (eol(src, y) || bol(src, x) || (m[x] === 1 && m[x - 1])) return y;
+  if (m[x] !== 2 || !m[x - 1]) return x;
+  while (m[x - 1]) x--;
+  return x;
+}
+
+/**
+ * `[src, caret]` after replacing `[a, b)` with `text` (caret after it). Markers of elements only partly inside the
+ * range stay, so deleting never breaks syntax. An element goes whole once its content is covered: inline elements
+ * (even when their markers are outside the range), a line's block marker or a table row's pipes when the line's text
+ * is covered or the line break before it goes while text before the range stays (the marker would land mid-line).
+ */
+export function cut(src: string, a: number, b: number, text = ''): [string, number] {
+  const del = new Uint8Array(src.length).fill(1, a, b), keep = (s: number, e: number) => del.fill(0, s, e);
+  for (const l of tokenize(src)) {
+    if (l.end < a || l.start > b) continue;
+    // Block markers: a row's cells' pipes, or the line's prefix
+    const c = l.cells, open = c ? c[0].open : l.mark, close = c ? c.at(-1)!.close : l.end;
+    const v = (a <= open && close <= b) || (a < l.start && !bol(src, a)) ? 1 : 0;
+    for (const [s, e] of c ? c.flatMap(k => [[k.start, k.open], [k.close, k.end]]) : [[l.start, l.mark]]) del.fill(v, s, e);
+    // Inline elements, outermost first: an inner one covered goes whole even when its parent keeps its markers
+    walk(inlOf(l), n => { if (a <= n.open && n.close <= b) del.fill(1, n.start, n.end); else { keep(n.start, n.open); keep(n.close, n.end); } });
+  }
+  let out = '', at = 0;
+  for (let i = 0; i <= src.length; i++) {
+    if (i === a) { out += text; at = out.length; }
+    if (i < src.length && !del[i]) out += src[i];
+  }
+  return [out, at];
+}
+
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ESC[c]);
 /** Text outside code: backslash escapes of ASCII punctuation drop their backslash. */
@@ -974,7 +1050,34 @@ export function mdEditor(o: EditorOpts): Editor {
 /** Keys, paste, browser edits and link clicks of one part. */
 function listen(st: State, p: Part) {
   const { o } = st, part = p.el, multi = o.multiline !== false;
-  const insert = (text: string) => { const s = getSel(part); if (s) splice(st, p, s[0], s[1], text); };
+  /** Replaces `[a, b)` with `text` keeping partly deleted markers (`cut`); `force` makes it its own undo step. */
+  const replace = (a: number, b: number, text: string, force = true) => {
+    const [src, at] = cut(p.src, a, b, text);
+    if (src === p.src) return;
+    snapshot(p, a, force);
+    commit(st, p, src, at);
+  };
+  const insert = (text: string) => { const s = getSel(part); if (s) replace(s[0], s[1], text); };
+  /**
+   * Deletes the selection, or from a caret: the browser's range for word and line deletes, otherwise arrow steps
+   * (`caretStep`) until one deletes something, so Backspace never just eats into a marker.
+   */
+  const del = (e: InputEvent) => {
+    const s = getSel(part), r = e.getTargetRanges()[0];
+    if (!s) return;
+    let [a, b] = s;
+    if (a === b && r && !/^deleteContent(Backward|Forward)$/.test(e.inputType)) {
+      if (!part.contains(r.startContainer) || !part.contains(r.endContainer)) return;
+      [a, b] = [offsetOf(part, r.startContainer, r.startOffset), offsetOf(part, r.endContainer, r.endOffset)];
+    } else if (a === b) {
+      const src = p.src, m = markMask(src), d = e.inputType.endsWith('Forward') ? 1 : -1, x = a;
+      for (let y = x, z = caretStep(src, m, x, d); z !== y; y = z, z = caretStep(src, m, z, d)) {
+        [a, b] = z < x ? [z, x] : [x, z];
+        if (cut(src, a, b)[0] !== src) break;
+      }
+    }
+    replace(a, b, '', s[0] !== s[1]);
+  };
   /** Applies `tableEdit`, or `listEdit` on a collapsed caret; false when the key should keep its default. */
   const listKey = (key: 'Enter' | 'Tab' | 'Backspace', shift: boolean) => {
     const s = multi && getSel(part);
@@ -985,6 +1088,24 @@ function listen(st: State, p: Part) {
     else splice(st, p, ed[0], ed[1], ed[2], ed[3], ed[4]);
     return true;
   };
+
+  // Caret: Left/Right step over markers (`caretStep`); other moves and clicks on text are corrected after the fact
+  // (`caretSnap`). Clicks in a shown marker bubble keep the caret inside it, so the marker can be edited.
+  const arrow = (e: KeyboardEvent) => {
+    const s = getSelection();
+    if (!s?.focusNode || !part.contains(s.focusNode) || (!s.isCollapsed && !e.shiftKey)) return;
+    const x = offsetOf(part, s.focusNode, s.focusOffset), y = caretStep(p.src, markMask(p.src), x, e.key === 'ArrowLeft' ? -1 : 1);
+    if (y === x) return;
+    e.preventDefault();
+    if (e.shiftKey) s.extend(...pointOf(part, y)); else setSel(part, y);
+  };
+  const fix = () => {
+    const s = getSel(part);
+    if (!s || s[0] !== s[1]) return;
+    const y = caretSnap(p.src, markMask(p.src), s[0]);
+    if (y !== s[0]) setSel(part, y);
+  };
+  part.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('.mk')) fix(); });
 
   // Enter: Ctrl confirms, Shift inserts a newline; plain Enter confirms a single line in line mode, else continues lists
   // Enter, Tab and Shift+Tab edit table rows (see `tableEdit`); Tab, Shift+Tab and Backspace edit list items (see
@@ -998,17 +1119,23 @@ function listen(st: State, p: Part) {
       else if (e.shiftKey || o.mode === 'block' || p.src.includes('\n')) { if (multi && (e.shiftKey || !listKey('Enter', false))) insert('\n'); }
       else confirm(st);
     } else if ((e.key === 'Tab' || e.key === 'Backspace') && !mod && !e.altKey) { if (listKey(e.key, e.shiftKey)) e.preventDefault(); }
+    else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !mod && !e.altKey) arrow(e);
+    else if (/^(Arrow|Home$|End$|Page)/.test(e.key)) setTimeout(fix);
     else if (mod && (k === 'b' || k === 'i')) { e.preventDefault(); wrap(st, k === 'b' ? '**' : '*'); }
     else if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? history(st, p, p.redo, p.undo) : history(st, p, p.undo, p.redo); }
     else if (mod && k === 'y') { e.preventDefault(); history(st, p, p.redo, p.undo); }
   });
 
-  // Edits the browser would do as rich text: undo from menus, line breaks from virtual keyboards
+  // Edits the browser would do as rich text: undo from menus, line breaks from virtual keyboards, deletes
   part.addEventListener('beforeinput', e => {
     if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
       e.preventDefault();
       if (e.inputType === 'historyUndo') history(st, p, p.undo, p.redo); else history(st, p, p.redo, p.undo);
     } else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') { e.preventDefault(); if (multi) insert('\n'); }
+    // Deleting and typing over a selection keep partly covered markers (`cut`); drag moves and IME edits stay native
+    else if (!e.cancelable || e.isComposing) return;
+    else if (e.inputType.startsWith('delete') && e.inputType !== 'deleteByDrag') { e.preventDefault(); del(e); }
+    else if (e.inputType === 'insertText' && !getSelection()?.isCollapsed) { e.preventDefault(); insert(e.data ?? ''); }
   });
 
   // Paste: plain text is Markdown. HTML is converted (`fromHtml`) unless it is our own copy, whose plain text is the
@@ -1032,7 +1159,7 @@ function listen(st: State, p: Part) {
     const [a, b, md] = clip(p.src, s[0], s[1]);
     e.clipboardData.setData('text/plain', md);
     e.clipboardData.setData('text/html', toHtml(md));
-    if (e.type === 'cut') splice(st, p, a, b, '');
+    if (e.type === 'cut') replace(a, b, '');
   };
   part.addEventListener('copy', copy);
   part.addEventListener('cut', copy);
