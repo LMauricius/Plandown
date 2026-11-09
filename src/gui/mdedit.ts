@@ -267,6 +267,128 @@ export function tableEdit(src: string, at: number, key: 'Enter' | 'Tab', shift =
   return [at, at, '', a, b];
 }
 
+// ---- Clipboard (pure) ----
+
+/** Inline elements of a line (its cells' for table rows). */
+const inlOf = (l: Line) => l.cells ? l.cells.flatMap(c => c.inl) : l.inl;
+
+/** Visits inline trees; `post` visits children before their parent. */
+function walk(inl: Inl[], f: (n: Inl) => void, post = false) {
+  for (const n of inl) { if (!post) f(n); walk(n.kids, f, post); if (post) f(n); }
+}
+
+/**
+ * Markdown copied for the selection `[a, b)` as `[a, b, md]`, where `[a, b)` is the source range the selection stands
+ * for (cut deletes it). The copy is self-contained Markdown, rendering like what the user sees selected:
+ * - An edge inside a hidden marker, or at the text edge of an element, moves out to include the whole marker; a
+ *   selection starting at a line's text includes its block marker (`## `, `- [ ] `).
+ * - Elements cut by the selection get their missing markers added (`**bo` from `**bold**` copies as `**bo**`).
+ * - Across lines, a table copies whole rows plus its header and delimiter rows, and a code block keeps its fences.
+ * shortcut: a selection ending right after an opening fence line copies an empty code block; trim it if it ever matters.
+ */
+export function clip(src: string, a: number, b: number): [number, number, string] {
+  const ls = tokenize(src), at = (x: number) => ls.findIndex(l => l.start <= x && x <= l.end);
+  const ia = at(a), ib = at(b), la = ls[ia], lb = ls[ib], row = (l: Line) => src.slice(l.start, l.end);
+  let pre = '', post = '';
+
+  // Block context
+  if (a <= la.mark) a = la.start;
+  if (ia !== ib) {
+    if (la.cells) {
+      a = la.start;
+      let h = ia;
+      while (ls[h].block !== 'th') h--;
+      if (h < ia) pre = row(ls[h]) + '\n' + (la.block === 'td' ? row(ls[h + 1]) + '\n' : '');
+    }
+    if (lb.cells) { b = lb.end; if (lb.block === 'th') post = '\n' + row(ls[ib + 1]); }
+    if (la.block === 'code') { let f = ia; while (ls[f].block !== 'fence') f--; pre = row(ls[f]) + '\n'; }
+    if (lb.block === 'code') { const f = ls.findIndex((l, i) => i > ib && l.block === 'fence'); if (f >= 0) post = '\n' + row(ls[f]); }
+  }
+
+  // Edges in or next to markers move out, innermost first, so an outer element sees the moved edge
+  const snap = (x: number, n: Inl) => n.start < x && x <= n.open ? n.start : n.close <= x && x < n.end ? n.end : x;
+  walk(inlOf(la), n => { a = snap(a, n); }, true);
+  walk(inlOf(lb), n => { b = snap(b, n); }, true);
+
+  // Elements cut by an edge: reopen the ones `a` is inside of (outermost first), close the ones `b` is inside of
+  let open = '', close = '';
+  walk(inlOf(la), n => { if (n.start < a && a < n.close) open += src.slice(n.start, n.open); });
+  walk(inlOf(lb), n => { if (n.open < b && b < n.close) close = src.slice(n.close, n.end) + close; });
+  return [a, b, pre + open + src.slice(a, b) + close + post];
+}
+
+const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+const esc = (s: string) => s.replace(/[&<>"]/g, c => ESC[c]);
+/** Text outside code: backslash escapes of ASCII punctuation drop their backslash. */
+const text = (s: string) => esc(s.replace(/\\([!-/:-@[-`{-~])/g, '$1'));
+const TAG = { strong: 'strong', em: 'em', strike: 's', code: 'code', link: 'a' };
+
+function inlineHtml(src: string, from: number, to: number, inl: Inl[]): string {
+  let out = '';
+  for (const n of inl) {
+    const body = n.kind === 'code' ? esc(src.slice(n.open, n.close)) : inlineHtml(src, n.open, n.close, n.kids);
+    out += text(src.slice(from, n.start));
+    // Same schemes Ctrl+click follows; other links keep only their text
+    if (n.kind === 'link') out += /^(https?:|mailto:)/i.test(n.url!) ? `<a href="${esc(n.url!)}">${body}</a>` : body;
+    else out += `<${TAG[n.kind]}>${body}</${TAG[n.kind]}>`;
+    from = n.end;
+  }
+  return out + text(src.slice(from, to));
+}
+
+/**
+ * HTML rendering of Markdown for rich-text paste targets: semantic tags only (no classes or styles besides table
+ * alignment), so each target applies its own look. Lines of a paragraph or quote stay separate lines (`<br>`), as the
+ * editor shows them; nested lists follow item depth; task items get disabled checkboxes, as GitHub renders them.
+ */
+export function toHtml(src: string): string {
+  const ls = tokenize(src), out: string[] = [];
+  const body = (l: Line) => inlineHtml(src, l.mark, l.end, l.inl);
+  const cell = (tag: string, c: Cell) => `<${tag}${c.align ? ` style="text-align:${{ l: 'left', c: 'center', r: 'right' }[c.align]}"` : ''}>${inlineHtml(src, c.open, c.close, c.inl)}</${tag}>`;
+  const blank = (l: Line) => l.block === 'p' && !src.slice(l.start, l.end).trim();
+  for (let i = 0; i < ls.length;) {
+    const l = ls[i];
+    /** Lines from `i` on while `ok` holds; advances `i` past them. */
+    const take = (ok: (l: Line) => boolean) => { const g: Line[] = []; while (i < ls.length && ok(ls[i])) g.push(ls[i++]); return g; };
+    if (blank(l)) i++;
+    else if (l.block[0] === 'h') { out.push(`<${l.block}>${body(l)}</${l.block}>`); i++; }
+    else if (l.block === 'p' || l.block === 'quote') {
+      const g = take(x => x.block === l.block && !blank(x)).map(body).join('<br>');
+      out.push(l.block === 'p' ? `<p>${g}</p>` : `<blockquote><p>${g}</p></blockquote>`);
+    } else if (l.block === 'fence') {
+      i++;
+      const code = take(x => x.block === 'code').map(x => src.slice(x.start, x.end)).join('\n');
+      if (ls[i]?.block === 'fence') i++;
+      const lang = /^[ \t]*[`~]+[ \t]*([^\s`]*)/.exec(src.slice(l.start, l.end))![1];
+      out.push(`<pre><code${lang ? ` class="language-${esc(lang)}"` : ''}>${esc(code)}</code></pre>`);
+    } else if (l.cells) {
+      // Only reached at a header row: body rows and the delimiter row always follow one
+      const [h, , ...rows] = take(x => !!x.cells && (x === l || x.block !== 'th'));
+      out.push(`<table><thead><tr>${h.cells!.map(c => cell('th', c)).join('')}</tr></thead>`
+        + `<tbody>${rows.map(r => `<tr>${r.cells!.map(c => cell('td', c)).join('')}</tr>`).join('')}</tbody></table>`);
+    } else {
+      // Lists: `stack` holds the open list tags; an item opens a nested list inside the previous, still open, item
+      const stack: string[] = [], base = l.depth;
+      let s = '';
+      for (const x of take(x => x.block === 'li' || x.block === 'ol')) {
+        const tag = x.block === 'ol' ? 'ol' : 'ul', d = Math.min(Math.max(0, x.depth - base), stack.length);
+        while (stack.length > d + 1) s += `</li></${stack.pop()}>`;
+        if (stack.length === d + 1 && stack[d] === tag) s += '</li>';
+        else {
+          if (stack.length === d + 1) s += `</li></${stack.pop()}>`;
+          const n = tag === 'ol' ? parseInt(src.slice(x.start, x.mark).trim()) : 1;
+          s += n === 1 ? `<${tag}>` : `<${tag} start="${n}">`;
+          stack.push(tag);
+        }
+        s += `<li>${x.check ? `<input type="checkbox" disabled${x.check === 'x' ? ' checked' : ''}> ` : ''}${body(x)}`;
+      }
+      while (stack.length) s += `</li></${stack.pop()}>`;
+      out.push(s);
+    }
+  }
+  return out.join('');
+}
+
 // ---- DOM helpers ----
 
 /** Element with classes; the editor builds its DOM by hand to stay independent of the app's helpers. */
@@ -659,6 +781,20 @@ function listen(st: State, p: Part) {
     const t = (e.clipboardData?.getData('text/plain') ?? '').replace(/\r\n?/g, '\n');
     insert(multi ? t : t.replace(/\n/g, ' '));
   });
+
+  // Copy and cut put the selection's Markdown (`clip`) as plain text and its rendering as HTML; the browser's own copy
+  // would serialize the marker bubbles
+  const copy = (e: ClipboardEvent) => {
+    const s = getSel(part);
+    if (!s || s[0] === s[1] || !e.clipboardData) return;
+    e.preventDefault();
+    const [a, b, md] = clip(p.src, s[0], s[1]);
+    e.clipboardData.setData('text/plain', md);
+    e.clipboardData.setData('text/html', toHtml(md));
+    if (e.type === 'cut') splice(st, p, a, b, '');
+  };
+  part.addEventListener('copy', copy);
+  part.addEventListener('cut', copy);
 
   // Typing, deleting and dropping are left to the browser, then the source is re-read and repainted
   const sync = () => {

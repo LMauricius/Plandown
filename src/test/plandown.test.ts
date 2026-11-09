@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
-import { listEdit, tableEdit, tokenize } from '../gui/mdedit.js';
+import { clip, listEdit, tableEdit, tokenize, toHtml } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -406,4 +406,26 @@ test('editor table keys: cell moves, appended rows and ending the table', () => 
   assert.equal(ed(tb, 'Enter'), '| a | b |\n|-|-|\n| []  |   |\n| c |   |');
   assert.equal(ed('| a | b |\n|-|-|\n|  ^ |   |', 'Enter'), '| a | b |\n|-|-|\n[]');
   assert.equal(ed('a^', 'Tab'), null);
+});
+
+test('editor clipboard: self-contained Markdown and its HTML rendering', () => {
+  // `^` marks the selection's ends
+  const md = (s: string) => { const [a, b] = [s.indexOf('^'), s.lastIndexOf('^') - 1], t = s.replace(/\^/g, ''); return clip(t, a, b)[2]; };
+  assert.equal(md('x **^bold^** y'), '**bold**');
+  assert.equal(md('x **b^ol^d** y'), '**ol**');
+  assert.equal(md('x **b^old** y^'), '**old** y');
+  assert.equal(md('^x [a *b^* c](u)'), 'x [a *b*](u)');
+  assert.equal(md('## ^Head^'), '## Head');
+  assert.equal(md('- [x] ^a\n\t- b^'), '- [x] a\n\t- b');
+  assert.equal(md('| h |\n|-|\n| ^a |\n| b^ |'), '| h |\n|-|\n| a |\n| b |');
+  assert.equal(md('```js\na^\nb^\n```'), '```js\n\nb\n```');
+  assert.deepEqual(clip('x **b**', 2, 5), [2, 7, '**b**']);
+
+  assert.equal(toHtml('# T\na *b* `<c>`\nd \\* [l](https://e.x) [j](javascript:x)\n\n> q'),
+    '<h1>T</h1><p>a <em>b</em> <code>&lt;c&gt;</code><br>d * <a href="https://e.x">l</a> j</p><blockquote><p>q</p></blockquote>');
+  assert.equal(toHtml('- a\n\t- [x] b\n2. c'),
+    '<ul><li>a<ul><li><input type="checkbox" disabled checked> b</li></ul></li></ul><ol start="2"><li>c</li></ol>');
+  assert.equal(toHtml('| a | b |\n|-|:-:|\n| 1 | **2** |'),
+    '<table><thead><tr><th>a</th><th style="text-align:center">b</th></tr></thead><tbody><tr><td>1</td><td style="text-align:center"><strong>2</strong></td></tr></tbody></table>');
+  assert.equal(toHtml('```ts\n<a>\n```'), '<pre><code class="language-ts">&lt;a&gt;</code></pre>');
 });
