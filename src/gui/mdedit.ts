@@ -389,6 +389,241 @@ export function toHtml(src: string): string {
   return out.join('');
 }
 
+// ---- Paste: HTML to Markdown (pure) ----
+
+/** The DOM surface `fromHtml` reads: DOM nodes fit it, and node tests build plain objects. */
+export interface HNode { nodeType: number; nodeName: string; nodeValue: string | null; childNodes: ArrayLike<HNode>; getAttribute?(name: string): string | null }
+
+/** Inline formatting of a text run; `href` is a link target. */
+interface Marks { strong?: boolean; em?: boolean; strike?: boolean; code?: boolean; href?: string }
+/** Text with its marks; `'\n'` alone is a line break. */
+interface Run { text: string; m: Marks }
+
+const SKIP = /^(HEAD|SCRIPT|STYLE|TEMPLATE|NOSCRIPT|TITLE|META|LINK|INPUT|BUTTON|SELECT|TEXTAREA|IMG|SVG|CANVAS|VIDEO|AUDIO|IFRAME|OBJECT)$/;
+const BLOCK = /^(P|DIV|H[1-6]|UL|OL|LI|BLOCKQUOTE|PRE|TABLE|THEAD|TBODY|TFOOT|TR|TH|TD|CAPTION|HR|SECTION|ARTICLE|HEADER|FOOTER|NAV|ASIDE|MAIN|FIGURE|FIGCAPTION|DL|DT|DD|ADDRESS|DETAILS|SUMMARY|BODY|HTML|FORM|FIELDSET|CENTER)$/;
+
+const kids = (n: HNode) => Array.from(n.childNodes);
+const tagOf = (n: HNode) => n.nodeName.toUpperCase();
+const attr = (n: HNode | undefined, a: string) => n?.getAttribute?.(a) ?? '';
+/** Last value of a CSS property in an inline style: editors repeat properties as fallbacks (`pre; pre-wrap`). */
+const css = (n: HNode | undefined, p: string) => [...attr(n, 'style').toLowerCase().matchAll(new RegExp(`(?:^|;)\\s*${p}\\s*:\\s*([^;]+)`, 'g'))].at(-1)?.[1].trim();
+const mkey = (m: Marks) => `${+!!m.strong}${+!!m.em}${+!!m.strike}${+!!m.code}${m.href ?? ''}`;
+
+/** Raw text of a node (`pre` content): `br` is a newline. */
+const raw = (n: HNode): string => n.nodeType === 3 ? n.nodeValue ?? '' : tagOf(n) === 'BR' ? '\n' : kids(n).map(raw).join('');
+
+/** Text escaped to show literally; `_` only at word edges (intraword it never marks), line starts are left to `mdLine`. */
+const mdEsc = (s: string) => s.replace(/\\(?=[!-/:-@[-`{-~]|$)|[`*[]|~(?=~)|(?<!\w)_|_(?!\w)/g, '\\$&');
+
+/**
+ * Marks of `n`'s content: tags set them, inline styles set or clear them (Google Docs marks only with styles and wraps
+ * everything in a `<b style="font-weight:normal">`). Links keep the schemes Ctrl+click follows.
+ */
+function marks(n: HNode, tag: string, m: Marks): Marks {
+  const r = { ...m }, w = css(n, 'font-weight'), st = css(n, 'font-style');
+  if (tag === 'B' || tag === 'STRONG') r.strong = true;
+  if (w) r.strong = w === 'bold' || w === 'bolder' || +w >= 600;
+  if (/^(I|EM|CITE|VAR|DFN)$/.test(tag)) r.em = true;
+  if (st) r.em = st !== 'normal';
+  if (/^(S|DEL|STRIKE)$/.test(tag) || /line-through/.test(css(n, 'text-decoration(?:-line)?') ?? '')) r.strike = true;
+  if (/^(CODE|KBD|SAMP|TT)$/.test(tag) || /mono|courier|consolas/.test(css(n, 'font-family') ?? '')) r.code = true;
+  if (tag === 'A' && /^(https?:|mailto:)/i.test(attr(n, 'href'))) r.href = attr(n, 'href');
+  return r;
+}
+
+/**
+ * Markdown of one line of runs. Marks open as late and close as early as possible, edge spaces staying outside the
+ * markers (the tokenizer needs markers to hug text); a mark lasting longer opens outermost. An emphasis opening right
+ * after a `*` uses `_` (`***` cannot open in the tokenizer).
+ */
+function mdLine(runs: Run[]): string {
+  let out = '';
+  const stack: { k: 'href' | 'strike' | 'strong' | 'em'; v: unknown; close: string }[] = [];
+  /** Closes the stack down to `n` marks, moving trailing spaces after the closers. */
+  const closeTo = (n: number) => {
+    const ws = /\s*$/.exec(out)![0];
+    out = out.slice(0, out.length - ws.length);
+    while (stack.length > n) out += stack.pop()!.close;
+    out += ws;
+  };
+  for (let i = 0; i < runs.length; i++) {
+    const { text, m } = runs[i], [, lead, core, trail] = /^(\s*)(.*?)(\s*)$/s.exec(text)!;
+    if (!core) { out += text; continue; }
+    // A dropped mark closes the marks opened after it too; still active ones reopen below
+    const drop = stack.findIndex(s => m[s.k] !== s.v);
+    if (drop >= 0) closeTo(drop);
+    out += lead;
+    const lasts = (k: keyof Marks) => { let j = i; while (j < runs.length && runs[j].m[k] === m[k]) j++; return j; };
+    for (const k of (['href', 'strike', 'strong', 'em'] as const).filter(k => m[k] && !stack.some(s => s.k === k)).sort((x, y) => lasts(y) - lasts(x))) {
+      const star = out.endsWith('*'), o = k === 'href' ? '[' : k === 'strike' ? '~~' : k === 'strong' ? (star ? '__' : '**') : star ? '_' : '*';
+      out += o;
+      stack.push({ k, v: m[k], close: k === 'href' ? `](${m.href!.replace(/[ ()]/g, c => '%' + c.charCodeAt(0).toString(16))})` : o });
+    }
+    if (m.code) {
+      // Fence longer than any backtick run inside; a backtick at an edge needs a space between it and the fence
+      const f = '`'.repeat(Math.max(0, ...(core.match(/`+/g) ?? []).map(r => r.length)) + 1), pad = /^`|`$/.test(core) ? ' ' : '';
+      out += f + pad + core + pad + f;
+    } else out += mdEsc(core);
+    out += trail;
+  }
+  closeTo(0);
+  // Text that would start a block at the line start: `#`, `>`, `-`, `+`, `1.` (`*` and backticks are always escaped)
+  return out.trim().replace(/^(?:>|[#+-](?=\s|$))/, '\\$&').replace(/^(\d{1,9})([.)])(?=\s)/, '$1\\$2');
+}
+
+/** Markdown of inline runs: lines split at breaks, equal neighbors merged (split code spans would collide). */
+function mdRuns(runs: Run[]): string {
+  const lines: Run[][] = [[]];
+  for (const r of runs) {
+    const l = lines.at(-1)!, p = l.at(-1);
+    if (r.text === '\n') lines.push([]);
+    else if (p && mkey(p.m) === mkey(r.m)) p.text += r.text;
+    else l.push({ ...r });
+  }
+  return lines.map(mdLine).join('\n').replace(/^\n+|\n+$/g, '');
+}
+
+/** First task checkbox of a list item (not of its sublists): `'x'`, `' '` or null. */
+function checkbox(n: HNode): string | null {
+  for (const k of kids(n)) {
+    const t = tagOf(k);
+    if (t === 'INPUT' && attr(k, 'type').toLowerCase() === 'checkbox') return k.getAttribute?.('checked') != null ? 'x' : ' ';
+    const r = k.nodeType === 1 && t !== 'UL' && t !== 'OL' ? checkbox(k) : null;
+    if (r) return r;
+  }
+  return null;
+}
+
+/** Text of the first `mso-list: Ignore` element in `n`: a Word list item's marker. */
+function msoMarker(n: HNode): string {
+  for (const k of kids(n)) {
+    if (k.nodeType !== 1) continue;
+    if (css(k, 'mso-list') === 'ignore') return raw(k);
+    const r = msoMarker(k);
+    if (r) return r;
+  }
+  return '';
+}
+
+/**
+ * Markdown blocks of the nodes `ns`. Paragraph-like blocks are separated by blank lines, but consecutive `div`s of
+ * inline content join with one newline: many editors (Gmail, contenteditable apps) make each line such a `div`, and an
+ * empty one (`<div><br></div>`) is their blank line. Word's lists are paragraphs styled `mso-list: lN levelN` whose
+ * marker (`·`, `o`, `1.`, `a)`) sits in a `mso-list: Ignore` span: they become list items, numbered per level.
+ */
+function mdBlocks(ns: HNode[], m: Marks): string[] {
+  const out: string[] = [];
+  // `join`: kind of the last block; a block of the same nonempty kind joins it with one newline
+  let runs: Run[] = [], join = '', nums: number[] = [];
+  const push = (md: string, kind = '') => {
+    if (kind && kind === join) out[out.length - 1] += '\n' + md; else out.push(md);
+    join = kind;
+    if (kind !== 'mso') nums = [];
+  };
+  const flush = () => { const md = mdRuns(runs); runs = []; if (md.trim()) push(md); };
+  const visit = (n: HNode, m: Marks) => {
+    if (n.nodeType === 3) {
+      // HTML whitespace collapses, across neighboring text nodes too
+      let t = (n.nodeValue ?? '').replace(/\s+/g, ' ');
+      if (t[0] === ' ' && (runs.at(-1)?.text ?? ' ').endsWith(' ')) t = t.slice(1);
+      if (t) runs.push({ text: t, m });
+      return;
+    }
+    const tag = tagOf(n);
+    if (n.nodeType !== 1 || SKIP.test(tag) || css(n, 'mso-list') === 'ignore') return;
+    if (tag === 'BR') { runs.push({ text: '\n', m }); return; }
+    const mm = marks(n, tag, m);
+    // Inline elements may hold blocks (Google Docs' outer `<b>`): they only pass their marks down
+    if (!BLOCK.test(tag)) { for (const k of kids(n)) visit(k, mm); return; }
+    flush();
+    const lvl = tag === 'P' ? +(/level(\d+)/.exec(css(n, 'mso-list') ?? '')?.[1] ?? 0) : 0;
+    if (lvl) {
+      // Word list item: digits keep their number, letters and roman numerals count per level (deeper levels restart)
+      const mk = msoMarker(n).replace(/\s+/g, ''), d = /^\(?(\d+)[.)]$/.exec(mk);
+      nums.length = lvl;
+      nums[lvl - 1] = (nums[lvl - 1] ?? 0) + 1;
+      const item = d || /^\(?[a-z]{1,4}[.)]$/i.test(mk) ? `${d ? +d[1] : nums[lvl - 1]}. ` : '- ';
+      push('\t'.repeat(lvl - 1) + item + mdBlocks(kids(n), mm).join(' ').replace(/\s*\n\s*/g, ' '), 'mso');
+      return;
+    }
+    const bs = mdBlock(n, tag, mm);
+    if (tag !== 'DIV' || kids(n).some(k => BLOCK.test(tagOf(k)))) for (const b of bs) push(b);
+    else if (bs.length) push(bs.join('\n\n'), 'div');
+    else join = '';
+  };
+  for (const n of ns) visit(n, m);
+  flush();
+  return out;
+}
+
+/** Markdown blocks of the block element `n`. */
+function mdBlock(n: HNode, tag: string, m: Marks): string[] {
+  const inner = () => mdBlocks(kids(n), m);
+  /** Content as one line (headings, cells). */
+  const flat = (x: HNode) => mdBlocks(kids(x), m).join(' ').replace(/\s*\n\s*/g, ' ');
+  if (/^H[1-6]$/.test(tag)) { const t = flat(n); return t ? ['#'.repeat(+tag[1]) + ' ' + t] : []; }
+  if (tag === 'HR') return ['---'];
+  if (tag === 'PRE') {
+    const code = raw(n).replace(/\n$/, ''), lang = /language-([\w+#.-]+)/.exec(`${attr(n, 'class')} ${kids(n).map(k => attr(k, 'class')).join(' ')}`)?.[1] ?? '';
+    const f = '`'.repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map(r => r.length + 1)));
+    return [`${f}${lang}\n${code}\n${f}`];
+  }
+  if (tag === 'BLOCKQUOTE') {
+    const md = inner().join('\n\n');
+    return md ? [md.split('\n').map(l => l ? '> ' + l : '>').join('\n')] : [];
+  }
+  if (tag === 'UL' || tag === 'OL') {
+    // An item's lines after its first (sublists, more paragraphs) indent one level; a blank line would end the list
+    const lines: string[] = [], start = parseInt(attr(n, 'start'));
+    let i = Number.isFinite(start) ? start : 1;
+    for (const k of kids(n)) {
+      if (k.nodeType !== 1) continue;
+      const li = tagOf(k) === 'LI', md = mdBlocks(li ? kids(k) : [k], m).join('\n').split('\n').filter(l => l.trim());
+      // A list nested directly in a list (no `li` around it) belongs to the previous item
+      if (!li) { lines.push(...md.map(l => '\t' + l)); continue; }
+      const box = checkbox(k);
+      lines.push((tag === 'OL' ? `${i++}. ` : '- ') + (box ? `[${box}] ` : '') + (md[0] ?? ''), ...md.slice(1).map(l => '\t' + l));
+    }
+    return lines.length ? [lines.join('\n')] : [];
+  }
+  if (tag === 'TABLE') {
+    // Rows of this table, not of nested ones; the first is the header, short rows pad with blank cells
+    const rows: HNode[][] = [];
+    const find = (x: HNode) => {
+      for (const k of kids(x)) {
+        if (tagOf(k) === 'TR') rows.push(kids(k).filter(c => /^T[HD]$/.test(tagOf(c))));
+        else if (k.nodeType === 1 && tagOf(k) !== 'TABLE') find(k);
+      }
+    };
+    find(n);
+    const w = Math.max(0, ...rows.map(r => r.length));
+    if (!w) return [];
+    const pad = (r: HNode[]) => Array.from({ length: w }, (_, i) => r[i] as HNode | undefined);
+    const row = (cs: string[]) => '| ' + cs.join(' | ') + ' |';
+    const cell = (c?: HNode) => (c && flat(c).replace(/\|/g, '\\|')) || ' ';
+    const align = (c?: HNode) => ({ left: ':--', center: ':-:', right: '--:' })[(css(c, 'text-align') ?? attr(c, 'align')).toLowerCase()] ?? '---';
+    const [h, ...body] = rows;
+    return [[row(pad(h).map(cell)), row(pad(h).map(align)), ...body.map(r => row(pad(r).map(cell)))].join('\n')];
+  }
+  return inner();
+}
+
+/**
+ * Markdown of pasted HTML (`root` is its body), or null when the HTML is source text: all of it inside `pre` or
+ * `white-space: pre`, as code editors (VSCode, JetBrains) copy. Their plain text is the exact source, while their
+ * HTML only styles it (a bold `**x**` would paste as `**\*\*x\*\***`).
+ */
+export function fromHtml(root: HNode): string | null {
+  let text = false;
+  const source = (n: HNode, pre: boolean): boolean => {
+    if (n.nodeType === 3) { if (/\S/.test(n.nodeValue ?? '')) { if (!pre) return false; text = true; } return true; }
+    if (n.nodeType !== 1 || SKIP.test(tagOf(n))) return true;
+    const p = pre || tagOf(n) === 'PRE' || css(n, 'white-space') === 'pre';
+    return kids(n).every(k => source(k, p));
+  };
+  return source(root, false) && text ? null : mdBlocks(kids(root), {}).join('\n\n');
+}
+
 // ---- DOM helpers ----
 
 /** Element with classes; the editor builds its DOM by hand to stay independent of the app's helpers. */
@@ -776,9 +1011,15 @@ function listen(st: State, p: Part) {
     } else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') { e.preventDefault(); if (multi) insert('\n'); }
   });
 
+  // Paste: plain text is Markdown. HTML is converted (`fromHtml`) unless it is our own copy, whose plain text is the
+  // exact source, or source text from a code editor. Deeply nested HTML could overflow the stack: plain text then.
   part.addEventListener('paste', e => {
     e.preventDefault();
-    const t = (e.clipboardData?.getData('text/plain') ?? '').replace(/\r\n?/g, '\n');
+    const plain = (e.clipboardData?.getData('text/plain') ?? '').replace(/\r\n?/g, '\n'), html = e.clipboardData?.getData('text/html');
+    let t = plain;
+    if (html && !html.includes(toHtml(plain) || '\0')) {
+      try { t = fromHtml(new DOMParser().parseFromString(html, 'text/html').body)?.replace(/\r\n?/g, '\n') || plain; } catch { /* plain */ }
+    }
     insert(multi ? t : t.replace(/\n/g, ' '));
   });
 

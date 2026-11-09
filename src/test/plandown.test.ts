@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
-import { clip, listEdit, tableEdit, tokenize, toHtml } from '../gui/mdedit.js';
+import { clip, fromHtml, listEdit, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -428,4 +428,36 @@ test('editor clipboard: self-contained Markdown and its HTML rendering', () => {
   assert.equal(toHtml('| a | b |\n|-|:-:|\n| 1 | **2** |'),
     '<table><thead><tr><th>a</th><th style="text-align:center">b</th></tr></thead><tbody><tr><td>1</td><td style="text-align:center"><strong>2</strong></td></tr></tbody></table>');
   assert.equal(toHtml('```ts\n<a>\n```'), '<pre><code class="language-ts">&lt;a&gt;</code></pre>');
+});
+
+test('editor paste: HTML to Markdown', () => {
+  const H = (tag: string, attrs: Record<string, string> = {}, ...kids: (HNode | string)[]): HNode => ({
+    nodeType: 1, nodeName: tag.toUpperCase(), nodeValue: null, getAttribute: a => attrs[a] ?? null,
+    childNodes: kids.map(k => typeof k === 'string' ? { nodeType: 3, nodeName: '#text', nodeValue: k, childNodes: [] } : k),
+  });
+  const md = (...kids: HNode[]) => fromHtml(H('body', {}, ...kids));
+  // Google Docs: marks only in styles, an outer `<b>` clearing bold, `pre; pre-wrap` spans
+  const ws = 'white-space:pre;white-space:pre-wrap;';
+  assert.equal(md(H('b', { style: 'font-weight:normal' },
+    H('p', {}, H('span', { style: ws + 'font-weight:700' }, 'Bold'), H('span', { style: ws }, ' and '), H('span', { style: 'font-style:italic' }, 'it')),
+    H('p', {}, '5 * 3 = [x] snake_case _y_\n  1. no'), H('p', {}, '- z'))),
+    '**Bold** and *it*\n\n5 \\* 3 = \\[x] snake_case \\_y\\_ 1. no\n\n\\- z');
+  assert.equal(md(H('ul', {}, H('li', {}, H('input', { type: 'checkbox', checked: '' }), ' a', H('ul', {}, H('li', {}, 'b')))), H('ol', { start: '3' }, H('li', {}, H('p', {}, 'c')))),
+    '- [x] a\n\t- b\n\n3. c');
+  assert.equal(md(H('h2', {}, 'T'), H('pre', { class: 'language-js' }, 'a`\n'), H('blockquote', {}, H('p', {}, 'q')),
+    H('p', {}, H('a', { href: 'https://e.x/a b' }, 'l'), ' ', H('code', {}, 'x`y'), ' ', H('a', { href: 'javascript:1' }, 'j'))),
+    '## T\n\n```js\na`\n```\n\n> q\n\n[l](https://e.x/a%20b) ``x`y`` j');
+  // Adjacent and overlapping marks never form runs the tokenizer cannot read
+  assert.equal(md(H('p', {}, H('b', {}, 'a'), H('b', {}, H('i', {}, 'b')), ' ', H('i', {}, 'c'), H('b', {}, 'd '), 'e')), '**a*b*** *c*__d__ e');
+  assert.equal(md(H('table', {}, H('tr', {}, H('th', {}, 'a'), H('th', { style: 'text-align: right' }, 'b|')), H('tr', {}, H('td', {}, H('b', {}, '1'))))),
+    '| a | b\\| |\n| --- | --: |\n| **1** |   |');
+  // Line divs join with one newline; an empty one is a blank line
+  assert.equal(md(H('div', {}, 'a'), H('div', {}, H('br')), H('div', {}, 'b'), H('div', {}, 'c')), 'a\n\nb\nc');
+  // Word lists: marker spans dropped, levels nest, letters count, other blocks end the numbering
+  const mso = (lvl: number, mk: string, text: string) => H('p', { class: 'MsoListParagraph', style: `text-indent:-.25in;mso-list:l0 level${lvl} lfo1` },
+    H('span', { style: 'font-family:Symbol' }, H('span', { style: 'mso-list:Ignore' }, mk, H('span', { style: 'font:7.0pt "Times New Roman"' }, '\u00a0\u00a0 '))), text);
+  assert.equal(md(mso(1, '·', 'a'), mso(2, 'o', 'b'), mso(1, '3.', 'c'), mso(2, 'a)', 'd'), mso(2, 'b)', 'e'), H('p', {}, 'x'), mso(1, 'i.', 'f')),
+    '- a\n\t- b\n3. c\n\t1. d\n\t2. e\n\nx\n\n1. f');
+  // Code editors: the plain text is the source
+  assert.equal(md(H('div', { style: 'white-space: pre;' }, H('div', {}, H('span', { style: 'font-weight: bold' }, '**x**')))), null);
 });
