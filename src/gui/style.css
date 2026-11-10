@@ -441,7 +441,8 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
  * look (padding, bullet, quote bar); the lines drop theirs. A space stands for each newline, a `↵` marker for its source.
  */
 .grp { position: relative; }
-.part > .grp > .ln { display: inline; padding: 0; border: 0; }
+/* `static`: a positioned inline line paints over the caret, which Chromium draws with the group (hid it in code spans) */
+.part > .grp > .ln { display: inline; position: static; padding: 0; border: 0; }
 .part > .grp > .ln::before { content: none; }
 .part > .grp > .ln:not(:last-child)::after { content: ' '; }
 .mk.nl::before { content: '↵'; }
@@ -480,7 +481,8 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 .cell > .mk.c { right: 0; transform: translateX(50%); }
 .cell[data-a=c] { text-align: center; }
 .cell[data-a=r] { text-align: right; }
-.k-strong { font-weight: 600; }
+/* 700, not 600: fonts without a semibold face get synthetic bold only from 700 (fontconfig), so 600 rendered regular */
+.k-strong { font-weight: 700; }
 .k-em { font-style: italic; }
 .k-strike { text-decoration: line-through; }
 .k-link { color: var(--accent); text-decoration: underline; }
