@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
-import { caretSnap, caretStep, clip, cut, fromHtml, markMask, listEdit, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
+import { caretSnap, caretStep, clip, cut, enterText, fromHtml, markMask, listEdit, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -461,12 +461,28 @@ test('editor clipboard: self-contained Markdown and its HTML rendering', () => {
   assert.deepEqual(clip('x **b**', 2, 5), [2, 7, '**b**']);
 
   assert.equal(toHtml('# T\na *b* `<c>`\nd \\* [l](https://e.x) [j](javascript:x)\n\n> q'),
-    '<h1>T</h1><p>a <em>b</em> <code>&lt;c&gt;</code><br>d * <a href="https://e.x">l</a> j</p><blockquote><p>q</p></blockquote>');
+    '<h1>T</h1><p>a <em>b</em> <code>&lt;c&gt;</code>\nd * <a href="https://e.x">l</a> j</p><blockquote><p>q</p></blockquote>');
   assert.equal(toHtml('- a\n\t- [x] b\n2. c'),
     '<ul><li>a<ul><li><input type="checkbox" disabled checked> b</li></ul></li></ul><ol start="2"><li>c</li></ol>');
   assert.equal(toHtml('| a | b |\n|-|:-:|\n| 1 | **2** |'),
     '<table><thead><tr><th>a</th><th style="text-align:center">b</th></tr></thead><tbody><tr><td>1</td><td style="text-align:center"><strong>2</strong></td></tr></tbody></table>');
   assert.equal(toHtml('```ts\n<a>\n```'), '<pre><code class="language-ts">&lt;a&gt;</code></pre>');
+  assert.equal(toHtml('a  \nb\\\nc\n- d\ne\n> f\ng'), '<p>a  <br>b<br>c</p><ul><li>d\ne</li></ul><blockquote><p>f\ng</p></blockquote>');
+});
+
+test('editor line breaks: soft, hard, Enter', () => {
+  const joins = (src: string) => tokenize(src).map(l => l.join ?? '-').join(' ');
+  assert.equal(joins('a\nb  \nc\\\nd\n\ne'), '- soft hard hard - -');
+  assert.equal(joins('# h\na\n- b\n  c\n> q\n> r\ns\n```\nx\n```'), '- - - soft - soft soft - - -');
+  assert.equal(joins('a\\\\\nb'), '- soft');   // escaped backslash: no break
+  const ls = tokenize('a\\\nb');
+  assert.equal(ls[0].hb, true);
+  assert.deepEqual(Array.from(markMask('a\\\nb')), [0, 2, 0, 0]);
+  assert.deepEqual(cut('a\\\nb', 2, 3), ['ab', 1]);
+  assert.equal(enterText('ab', 1, false), '\n\n');
+  assert.equal(enterText('ab', 1, true), '\\\n');
+  assert.equal(enterText('# h', 3, false), '\n');
+  assert.equal(enterText('```\nx', 5, true), '\n');
 });
 
 test('editor paste: HTML to Markdown', () => {
@@ -490,8 +506,9 @@ test('editor paste: HTML to Markdown', () => {
   assert.equal(md(H('p', {}, H('b', {}, 'a'), H('b', {}, H('i', {}, 'b')), ' ', H('i', {}, 'c'), H('b', {}, 'd '), 'e')), '**a*b*** *c*__d__ e');
   assert.equal(md(H('table', {}, H('tr', {}, H('th', {}, 'a'), H('th', { style: 'text-align: right' }, 'b|')), H('tr', {}, H('td', {}, H('b', {}, '1'))))),
     '| a | b\\| |\n| --- | --: |\n| **1** |   |');
-  // Line divs join with one newline; an empty one is a blank line
-  assert.equal(md(H('div', {}, 'a'), H('div', {}, H('br')), H('div', {}, 'b'), H('div', {}, 'c')), 'a\n\nb\nc');
+  // Line divs and `br` join with a hard break; an empty div or a double `br` is a blank line
+  assert.equal(md(H('div', {}, 'a'), H('div', {}, H('br')), H('div', {}, 'b'), H('div', {}, 'c')), 'a\n\nb\\\nc');
+  assert.equal(md(H('p', {}, 'a', H('br'), 'b', H('br'), H('br'), 'c'), H('h1', {}, 'd', H('br'), 'e')), 'a\\\nb\n\nc\n\n# d e');
   // Word lists: marker spans dropped, levels nest, letters count, other blocks end the numbering
   const mso = (lvl: number, mk: string, text: string) => H('p', { class: 'MsoListParagraph', style: `text-indent:-.25in;mso-list:l0 level${lvl} lfo1` },
     H('span', { style: 'font-family:Symbol' }, H('span', { style: 'mso-list:Ignore' }, mk, H('span', { style: 'font:7.0pt "Times New Roman"' }, '\u00a0\u00a0 '))), text);

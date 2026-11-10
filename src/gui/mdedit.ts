@@ -32,6 +32,8 @@ export interface Line {
   depth: number;                     // list nesting (2 columns per level)
   check?: string;                    // task-list checkbox state: ' ' or 'x'
   cells?: Cell[];                    // table rows (th, tsep, td) only; their `inl` stays empty
+  join?: 'soft' | 'hard';            // continues the previous line's paragraph: after a plain newline, or a hard break
+  hb?: boolean;                      // ends with a backslash hard break: that `\` is a closing marker
   inl: Inl[];
 }
 
@@ -87,6 +89,10 @@ function cells(src: string, start: number, end: number, aligns: Cell['align'][] 
  * Splits source into lines and classifies blocks; inside fences nothing is parsed. Unknown syntax stays plain text.
  * Tables follow GFM: a header row (with an unescaped `|`) directly followed by a delimiter row with as many cells,
  * then body rows until a blank line or another block starts.
+ * Line breaks follow CommonMark: a nonblank text line (`p`, or `quote` after a quote) right after a paragraph, list
+ * item or quote line continues it (`join`). The break is soft (a space when rendered) unless the previous line ends
+ * with 2+ spaces or a backslash (hard). shortcut: a backslash before any newline is a break marker (`hb`), even before
+ * a blank line, where CommonMark keeps it literal; it saves the backslash flashing up while Shift+Enter starts a line.
  */
 export function tokenize(src: string): Line[] {
   const out: Line[] = [], texts = src.split('\n');
@@ -129,7 +135,11 @@ export function tokenize(src: string): Line[] {
       if (m[3]) l.check = m[3].toLowerCase();
     } else if ((m = QUOTE.exec(text))) l = line('quote', start + m[0].length);
     else l = line('p');
-    l.inl = inline(src, l.mark, end);
+    const body = src.slice(l.mark, end), prev = out.at(-1), TEXT = /^(p|li|ol|quote)$/;
+    l.hb = TEXT.test(l.block) && i < texts.length - 1 && /(?:^|[^\\])(?:\\\\)*\\$/.test(body);
+    if (prev && TEXT.test(prev.block) && /\S/.test(src.slice(prev.mark, prev.end)) && /\S/.test(body) && (l.block === 'p' || (l.block === 'quote' && prev.block === 'quote')))
+      l.join = prev.hb || / {2,}$/.test(src.slice(prev.start, prev.end)) ? 'hard' : 'soft';
+    l.inl = inline(src, l.mark, end - +l.hb);
     out.push(l);
   }
   return out;
@@ -235,6 +245,18 @@ export function listEdit(src: string, at: number, key: 'Enter' | 'Tab' | 'Backsp
 }
 
 /**
+ * Text Enter inserts at `at` when no list or table edit applies: code and table rows take a raw newline; otherwise
+ * Shift+Enter makes a hard break (`\` + newline) and Enter in a nonblank paragraph or quote starts a new paragraph,
+ * since a plain newline there is a soft break, rendered as a space.
+ */
+export function enterText(src: string, at: number, shift: boolean): string {
+  const l = tokenize(src).find(l => l.start <= at && at <= l.end)!;
+  if (l.block === 'code' || l.block === 'fence' || l.cells) return '\n';
+  if (shift) return '\\\n';
+  return (l.block === 'p' || l.block === 'quote') && /\S/.test(src.slice(l.mark, l.end)) ? '\n\n' : '\n';
+}
+
+/**
  * Edit a table key makes at caret `at` as `[a, b, text, selA, selB]` (`[a, b)` becomes `text`); a move edits nothing.
  * Null when not in a table row, or Shift+Tab in its first cell (focus moves on).
  * - Tab/Shift+Tab select the next/previous cell's content (a blank cell gets the caret after its first space), skipping
@@ -324,6 +346,7 @@ export function markMask(src: string): Uint8Array {
   const m = new Uint8Array(src.length), fill = (s: number, e: number, v: number) => m.fill(v, s, e);
   for (const l of tokenize(src)) {
     fill(l.start, l.mark, 1);
+    if (l.hb) fill(l.end - 1, l.end, 2);
     l.cells?.forEach(c => { fill(c.start, c.open, 1); fill(c.close, c.end, 2); });
     walk(inlOf(l), n => { fill(n.start, n.open, 1); fill(n.close, n.end, 2); });
   }
@@ -384,6 +407,8 @@ export function cut(src: string, a: number, b: number, text = ''): [string, numb
     for (const [s, e] of c ? c.flatMap(k => [[k.start, k.open], [k.close, k.end]]) : [[l.start, l.mark]]) del.fill(v, s, e);
     // Inline elements, outermost first: an inner one covered goes whole even when its parent keeps its markers
     walk(inlOf(l), n => { if (a <= n.open && n.close <= b) del.fill(1, n.start, n.end); else { keep(n.start, n.open); keep(n.close, n.end); } });
+    // A hard break's backslash goes with its newline (it would stay as a literal `\`)
+    if (l.hb && a <= l.end && l.end < b) del[l.end - 1] = 1;
   }
   let out = '', at = 0;
   for (let i = 0; i <= src.length; i++) {
@@ -414,12 +439,14 @@ function inlineHtml(src: string, from: number, to: number, inl: Inl[]): string {
 
 /**
  * HTML rendering of Markdown for rich-text paste targets: semantic tags only (no classes or styles besides table
- * alignment), so each target applies its own look. Lines of a paragraph or quote stay separate lines (`<br>`), as the
- * editor shows them; nested lists follow item depth; task items get disabled checkboxes, as GitHub renders them.
+ * alignment), so each target applies its own look. Continuation lines join their paragraph, list item or quote with
+ * a newline (soft break) or `<br>` (hard break), as do a quote's other lines; nested lists follow item depth; task items get disabled checkboxes, as GitHub renders them.
  */
 export function toHtml(src: string): string {
   const ls = tokenize(src), out: string[] = [];
-  const body = (l: Line) => inlineHtml(src, l.mark, l.end, l.inl);
+  const body = (l: Line) => inlineHtml(src, l.mark, l.end - +!!l.hb, l.inl);
+  /** A continuation line with its break before it. */
+  const cont = (l: Line) => (l.join === 'soft' ? '\n' : '<br>') + body(l);
   const cell = (tag: string, c: Cell) => `<${tag}${c.align ? ` style="text-align:${{ l: 'left', c: 'center', r: 'right' }[c.align]}"` : ''}>${inlineHtml(src, c.open, c.close, c.inl)}</${tag}>`;
   const blank = (l: Line) => l.block === 'p' && !src.slice(l.start, l.end).trim();
   for (let i = 0; i < ls.length;) {
@@ -429,8 +456,8 @@ export function toHtml(src: string): string {
     if (blank(l)) i++;
     else if (l.block[0] === 'h') { out.push(`<${l.block}>${body(l)}</${l.block}>`); i++; }
     else if (l.block === 'p' || l.block === 'quote') {
-      const g = take(x => x.block === l.block && !blank(x)).map(body).join('<br>');
-      out.push(l.block === 'p' ? `<p>${g}</p>` : `<blockquote><p>${g}</p></blockquote>`);
+      const [h, ...g] = take(x => x === l || !!x.join || (l.block === 'quote' && x.block === 'quote')), t = body(h) + g.map(cont).join('');
+      out.push(l.block === 'p' ? `<p>${t}</p>` : `<blockquote><p>${t}</p></blockquote>`);
     } else if (l.block === 'fence') {
       i++;
       const code = take(x => x.block === 'code').map(x => src.slice(x.start, x.end)).join('\n');
@@ -446,7 +473,8 @@ export function toHtml(src: string): string {
       // Lists: `stack` holds the open list tags; an item opens a nested list inside the previous, still open, item
       const stack: string[] = [], base = l.depth;
       let s = '';
-      for (const x of take(x => x.block === 'li' || x.block === 'ol')) {
+      for (const x of take(x => x.block === 'li' || x.block === 'ol' || (x.block === 'p' && !!x.join))) {
+        if (x.block === 'p') { s += cont(x); continue; }
         const tag = x.block === 'ol' ? 'ol' : 'ul', d = Math.min(Math.max(0, x.depth - base), stack.length);
         while (stack.length > d + 1) s += `</li></${stack.pop()}>`;
         if (stack.length === d + 1 && stack[d] === tag) s += '</li>';
@@ -484,6 +512,9 @@ const attr = (n: HNode | undefined, a: string) => n?.getAttribute?.(a) ?? '';
 /** Last value of a CSS property in an inline style: editors repeat properties as fallbacks (`pre; pre-wrap`). */
 const css = (n: HNode | undefined, p: string) => [...attr(n, 'style').toLowerCase().matchAll(new RegExp(`(?:^|;)\\s*${p}\\s*:\\s*([^;]+)`, 'g'))].at(-1)?.[1].trim();
 const mkey = (m: Marks) => `${+!!m.strong}${+!!m.em}${+!!m.strike}${+!!m.code}${m.href ?? ''}`;
+
+/** Markdown joined into one line: line breaks, hard ones with their backslash, become spaces. */
+const oneLine = (md: string) => md.replace(/\\?\s*\n\s*/g, ' ');
 
 /** Raw text of a node (`pre` content): `br` is a newline. */
 const raw = (n: HNode): string => n.nodeType === 3 ? n.nodeValue ?? '' : tagOf(n) === 'BR' ? '\n' : kids(n).map(raw).join('');
@@ -547,7 +578,10 @@ function mdLine(runs: Run[]): string {
   return out.trim().replace(/^(?:>|[#+-](?=\s|$))/, '\\$&').replace(/^(\d{1,9})([.)])(?=\s)/, '$1\\$2');
 }
 
-/** Markdown of inline runs: lines split at breaks, equal neighbors merged (split code spans would collide). */
+/**
+ * Markdown of inline runs: lines split at breaks, equal neighbors merged (split code spans would collide). A break
+ * between text lines is hard (`\`), as a plain newline would render as a space; an empty line splits paragraphs.
+ */
 function mdRuns(runs: Run[]): string {
   const lines: Run[][] = [[]];
   for (const r of runs) {
@@ -556,7 +590,7 @@ function mdRuns(runs: Run[]): string {
     else if (p && mkey(p.m) === mkey(r.m)) p.text += r.text;
     else l.push({ ...r });
   }
-  return lines.map(mdLine).join('\n').replace(/^\n+|\n+$/g, '');
+  return lines.map(mdLine).join('\n').replace(/^\n+|\n+$/g, '').replace(/(?<=[^\n])\n(?=[^\n])/g, '\\\n');
 }
 
 /** First task checkbox of a list item (not of its sublists): `'x'`, `' '` or null. */
@@ -589,10 +623,10 @@ function msoMarker(n: HNode): string {
  */
 function mdBlocks(ns: HNode[], m: Marks): string[] {
   const out: string[] = [];
-  // `join`: kind of the last block; a block of the same nonempty kind joins it with one newline
+  // `join`: kind of the last block; a block of the same nonempty kind joins it on the next line (line divs: hard break)
   let runs: Run[] = [], join = '', nums: number[] = [];
   const push = (md: string, kind = '') => {
-    if (kind && kind === join) out[out.length - 1] += '\n' + md; else out.push(md);
+    if (kind && kind === join) out[out.length - 1] += (kind === 'div' ? '\\\n' : '\n') + md; else out.push(md);
     join = kind;
     if (kind !== 'mso') nums = [];
   };
@@ -619,7 +653,7 @@ function mdBlocks(ns: HNode[], m: Marks): string[] {
       nums.length = lvl;
       nums[lvl - 1] = (nums[lvl - 1] ?? 0) + 1;
       const item = d || /^\(?[a-z]{1,4}[.)]$/i.test(mk) ? `${d ? +d[1] : nums[lvl - 1]}. ` : '- ';
-      push('\t'.repeat(lvl - 1) + item + mdBlocks(kids(n), mm).join(' ').replace(/\s*\n\s*/g, ' '), 'mso');
+      push('\t'.repeat(lvl - 1) + item + oneLine(mdBlocks(kids(n), mm).join(' ')), 'mso');
       return;
     }
     const bs = mdBlock(n, tag, mm);
@@ -636,7 +670,7 @@ function mdBlocks(ns: HNode[], m: Marks): string[] {
 function mdBlock(n: HNode, tag: string, m: Marks): string[] {
   const inner = () => mdBlocks(kids(n), m);
   /** Content as one line (headings, cells). */
-  const flat = (x: HNode) => mdBlocks(kids(x), m).join(' ').replace(/\s*\n\s*/g, ' ');
+  const flat = (x: HNode) => oneLine(mdBlocks(kids(x), m).join(' '));
   if (/^H[1-6]$/.test(tag)) { const t = flat(n); return t ? ['#'.repeat(+tag[1]) + ' ' + t] : []; }
   if (tag === 'HR') return ['---'];
   if (tag === 'PRE') {
@@ -721,6 +755,12 @@ function ranged<T extends HTMLElement>(e: T, s: number, end: number): T {
 function marker(text: string, side: 'o' | 'c'): HTMLElement {
   return el('span', `mk ${side}${text.trim() ? '' : ' blank'}`, text);
 }
+
+/** Soft-break group: the lines of one paragraph joined by plain newlines, flowing inline in one block (see `paint`). */
+const isGrp = (n: Node | null): n is HTMLElement => n instanceof HTMLElement && n.classList.contains('grp');
+
+/** Line elements of a part in source order: its children, each soft-break group replaced by its lines. */
+const rows = (part: HTMLElement): Node[] => Array.from(part.childNodes).flatMap(n => isGrp(n) ? Array.from(n.childNodes) : [n]);
 
 /** Appends text and inline elements of `[from, to)` to `parent`. */
 function paintInline(parent: HTMLElement, src: string, from: number, to: number, inl: Inl[]) {
@@ -811,7 +851,10 @@ function figure(open: boolean): Fig {
 }
 
 /**
- * Rebuilds a part's DOM: one `div.ln` per source line, so lines map 1:1 to the part's child nodes. A closed ```mermaid
+ * Rebuilds a part's DOM: one `div.ln` per source line, so lines map 1:1 to the part's `rows`. Lines joined by soft
+ * breaks go into one `div.grp` taking the first line's block look, where they flow inline; the newline itself shows
+ * as an empty `↵` marker (CSS content, so the line's text stays pure source) and a space after the previous line.
+ * A closed ```mermaid
  * block also gets a figure in its opening line; its source rows start hidden, except for blocks a `fresh` repaint
  * (an edit) creates, whose author is still typing them.
  * shortcut: full re-render per change; switch to per-line diffing if descriptions get very long.
@@ -820,10 +863,14 @@ function figure(open: boolean): Fig {
 function paint(p: Part, fresh = false) {
   const src = p.src, ls = tokenize(src);
   let k = 0, fig: Fig | undefined, close = -1;   // the diagram block being painted and its closing line
-  p.el.replaceChildren(...ls.map((l, i) => {
-    const div = ranged(el('div', `ln ${l.block}`), l.start, l.end);
-    if (l.depth) div.style.setProperty('--d', String(l.depth));
-    if (l.check) div.dataset.cb = l.check;
+  const look = (e: HTMLElement, l: Line) => {
+    if (l.depth) e.style.setProperty('--d', String(l.depth));
+    if (l.check) e.dataset.cb = l.check;
+    return e;
+  };
+  const divs = ls.map((l, i) => {
+    const div = look(ranged(el('div', `ln ${l.block}`), l.start, l.end), l);
+    if (l.join === 'soft' && l.mark === l.start) div.append(el('span', 'mk o nl'));
     if (l.mark > l.start) div.append(marker(src.slice(l.start, l.mark), 'o'));
     if (l.cells) div.append(...l.cells.map(c => {
       const cell = ranged(el('span', 'cell'), c.start, c.end);
@@ -834,7 +881,8 @@ function paint(p: Part, fresh = false) {
       return cell;
     }));
     else if (l.block === 'code' || l.block === 'fence') div.append(src.slice(l.start, l.end));
-    else paintInline(div, src, l.mark, l.end, l.inl);
+    else paintInline(div, src, l.mark, l.end - +!!l.hb, l.inl);
+    if (l.hb) div.append(marker('\\', 'c'));
     if (l.start === l.end) div.append(document.createElement('br'));
 
     // Mermaid: an opening fence whose block closes gets the figure, its text and the following rows the Source toggle
@@ -854,29 +902,42 @@ function paint(p: Part, fresh = false) {
       }
     }
     return div;
-  }));
+  });
+  // Soft breaks: a joined line goes into its previous line's group, created on the first join
+  const out: HTMLElement[] = [];
+  divs.forEach((d, i) => {
+    if (ls[i].join !== 'soft') { out.push(d); return; }
+    if (!isGrp(out.at(-1)!)) out.push(look(el('div', `grp ${ls[i - 1].block}`, out.pop()!), ls[i - 1]));
+    out.at(-1)!.append(d);
+  });
+  p.el.replaceChildren(...out);
   p.figs.length = k;
   p.el.toggleAttribute('data-empty', !src);
 }
 
-/** Source text of a part. Each child node is one line (the browser may merge or add nodes before `paint` runs). */
-const read = (part: HTMLElement) => Array.from(part.childNodes).map(n => n.textContent ?? '').join('\n');
+/** Source text of a part. Each row is one line (the browser may merge or add nodes before `paint` runs). */
+const read = (part: HTMLElement) => rows(part).map(n => n.textContent ?? '').join('\n');
 
 /** Source offset of a DOM point inside a part. */
 function offsetOf(part: HTMLElement, node: Node, off: number): number {
-  const kids = Array.from(part.childNodes), before = (i: number) => kids.slice(0, i).reduce((a, n) => a + (n.textContent ?? '').length + 1, 0);
-  if (node === part) return Math.max(0, before(off) - (off === kids.length && off ? 1 : 0));
+  const ls = rows(part), before = (i: number) => ls.slice(0, i).reduce((a, n) => a + (n.textContent ?? '').length + 1, 0);
+  // Between children of the part or a group: the start of the next child's first line, else the end of the last line
+  if (node === part || isGrp(node)) {
+    const k = node.childNodes[off], z = node.lastChild;
+    if (k) return before(ls.indexOf(isGrp(k) ? k.firstChild! : k));
+    return z ? before(ls.indexOf(isGrp(z) ? z.lastChild! : z) + 1) - 1 : 0;
+  }
   let ln = node;
-  while (ln.parentNode !== part) ln = ln.parentNode!;
+  while (ln.parentNode !== part && !isGrp(ln.parentNode)) ln = ln.parentNode!;
   const r = document.createRange();
   r.setStart(ln, 0);
   r.setEnd(node, off);
-  return before(kids.indexOf(ln as ChildNode)) + r.toString().length;
+  return before(ls.indexOf(ln)) + r.toString().length;
 }
 
 /** DOM point of a source offset. At a boundary between a marker and text, the text side wins (typing lands there). */
 function pointOf(part: HTMLElement, off: number): [Node, number] {
-  for (const ln of Array.from(part.childNodes)) {
+  for (const ln of rows(part)) {
     const len = (ln.textContent ?? '').length;
     if (off > len) { off -= len + 1; continue; }
     const w = document.createTreeWalker(ln, NodeFilter.SHOW_TEXT);
@@ -1166,6 +1227,8 @@ function listen(st: State, p: Part) {
     commit(st, p, src, at);
   };
   const insert = (text: string) => { const s = getSel(part); if (s) replace(s[0], s[1], text); };
+  /** Inserts what Enter (`hard`: Shift+Enter) makes at the selection (`enterText`). */
+  const insertBreak = (hard: boolean) => { const s = getSel(part); if (s) insert(enterText(p.src, s[0], hard)); };
   /**
    * Deletes the selection, or from a caret: the browser's range for word and line deletes, otherwise arrow steps
    * (`caretStep`) until one deletes something, so Backspace never just eats into a marker.
@@ -1219,7 +1282,7 @@ function listen(st: State, p: Part) {
   // cell edges. Up/Down from a cell's first/last visual line instead go to the adjacent line at the same x (`goal`,
   // kept across consecutive moves); Home/End go to the row's ends. Needs the markers hidden (`nav`) for hit testing.
   let goal: number | null = null;
-  const lineOf = (ln: Element) => tokenize(p.src)[Array.prototype.indexOf.call(part.childNodes, ln)];
+  const lineOf = (ln: Element) => tokenize(p.src)[rows(part).indexOf(ln)];
   const tableMove = (e: KeyboardEvent): boolean => {
     const s = getSelection()!, n = s.focusNode, cell = n && part.contains(n) && elOf(n).closest('.cell'), ln = cell && cell.parentElement;
     if (!cell || !ln || e.ctrlKey || e.metaKey || e.altKey || !/^(ArrowUp|ArrowDown|Home|End)$/.test(e.key)) return false;
@@ -1234,7 +1297,8 @@ function listen(st: State, p: Part) {
       const rs = Array.from(c.getClientRects()), [cx, top, bottom] = caretBox(n, s.focusOffset) ?? [cb.left, cb.top, cb.bottom], h = (bottom - top) / 2;
       if (up ? top - Math.min(...rs.map(q => q.top)) > h : Math.max(...rs.map(q => q.bottom)) - bottom > h) return false;
       goal ??= cx;
-      const to = up ? ln.previousElementSibling : ln.nextElementSibling;
+      let to = up ? ln.previousElementSibling : ln.nextElementSibling;
+      if (isGrp(to)) to = up ? to.lastElementChild : to.firstElementChild;
       if (!to) y = up ? 0 : p.src.length;
       else {
         // Into the target line's nearest visual line, in a row the cell under `goal`. A collapsed delimiter row's text
@@ -1257,7 +1321,7 @@ function listen(st: State, p: Part) {
   part.addEventListener('click', e => {
     const t = e.target as HTMLElement, cell = t.closest('.cell'), ln = t.closest('.ln');
     if (e.detail !== 3) { if (!t.closest('.mk')) fix(); return; }
-    if (!ln || ln.parentNode !== part) return;
+    if (!ln || !rows(part).includes(ln)) return;
     const l = lineOf(ln);
     const c = cell && l.cells?.[Array.prototype.indexOf.call(ln.children, cell)];
     setSel(part, c ? c.open : l.mark, c ? c.close : l.end);
@@ -1274,7 +1338,8 @@ function listen(st: State, p: Part) {
     burst = setTimeout(() => part.classList.remove('pt'), 500);
   });
 
-  // Enter: Ctrl confirms, Shift inserts a newline; plain Enter confirms a single line in line mode, else continues lists
+  // Enter: Ctrl confirms, Shift inserts a hard break; plain Enter confirms a single line in line mode, else continues
+  // lists or starts a paragraph (`enterText`)
   // Enter, Tab and Shift+Tab edit table rows (see `tableEdit`); Tab, Shift+Tab and Backspace edit list items (see
   // `listEdit`); elsewhere they keep their default
   part.addEventListener('keydown', e => {
@@ -1284,7 +1349,7 @@ function listen(st: State, p: Part) {
     if (e.key === 'Enter') {
       e.preventDefault();
       if (mod) confirm(st);
-      else if (e.shiftKey || o.mode === 'block' || p.src.includes('\n')) { if (multi && (e.shiftKey || !listKey('Enter', false))) insert('\n'); }
+      else if (e.shiftKey || o.mode === 'block' || p.src.includes('\n')) { if (multi && (e.shiftKey || !listKey('Enter', false))) insertBreak(e.shiftKey); }
       else confirm(st);
     } else if ((e.key === 'Tab' || e.key === 'Backspace') && !mod && !e.altKey) { if (listKey(e.key, e.shiftKey)) e.preventDefault(); }
     else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !mod && !e.altKey) arrow(e);
@@ -1304,7 +1369,7 @@ function listen(st: State, p: Part) {
     if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
       e.preventDefault();
       if (e.inputType === 'historyUndo') history(st, p, p.undo, p.redo); else history(st, p, p.redo, p.undo);
-    } else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') { e.preventDefault(); if (multi) insert('\n'); }
+    } else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') { e.preventDefault(); if (multi) insertBreak(e.inputType === 'insertLineBreak'); }
     // Deleting and typing over a selection keep partly covered markers (`cut`); drag moves and IME edits stay native
     else if (!e.cancelable || e.isComposing) return;
     else if (e.inputType.startsWith('delete') && e.inputType !== 'deleteByDrag') { e.preventDefault(); del(e); }

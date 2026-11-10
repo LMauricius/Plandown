@@ -430,12 +430,22 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 .ln { position: relative; min-height: 1.5em; }
 .ln.h1, .ln.h2, .ln.h3, .ln.h4, .ln.h5, .ln.h6 { font-weight: 600; line-height: 1.3; margin-top: .3em; }
 .ln.h1 { font-size: 1.6em; } .ln.h2 { font-size: 1.35em; } .ln.h3 { font-size: 1.15em; }
-.ln.li, .ln.ol { --ind: clamp(1em, 4cqi, 1.4em); padding-left: calc(var(--ind) * (var(--d, 0) + 1)); }
-.ln.li::before { content: '•'; position: absolute; left: calc(var(--ind) * var(--d, 0) + .4em); color: var(--muted); }
-.ln.li[data-cb=" "]::before { content: '☐'; left: calc(var(--ind) * var(--d, 0) + .2em); }
-.ln.li[data-cb="x"]::before { content: '☑'; left: calc(var(--ind) * var(--d, 0) + .2em); color: var(--accent); }
-.ln.li.near::before { visibility: hidden; }
-.ln.quote { border-left: 3px solid var(--border); padding-left: .8em; color: var(--muted); }
+:is(.ln, .grp):is(.li, .ol) { --ind: clamp(1em, 4cqi, 1.4em); padding-left: calc(var(--ind) * (var(--d, 0) + 1)); }
+:is(.ln, .grp).li::before { content: '•'; position: absolute; left: calc(var(--ind) * var(--d, 0) + .4em); color: var(--muted); }
+:is(.ln, .grp).li[data-cb=" "]::before { content: '☐'; left: calc(var(--ind) * var(--d, 0) + .2em); }
+:is(.ln, .grp).li[data-cb="x"]::before { content: '☑'; left: calc(var(--ind) * var(--d, 0) + .2em); color: var(--accent); }
+.ln.li.near::before, .grp.li:has(> .near:first-child)::before { visibility: hidden; }
+:is(.ln, .grp).quote { border-left: 3px solid var(--border); padding-left: .8em; color: var(--muted); }
+/*
+ * Soft breaks: a paragraph's lines joined by plain newlines flow inline in one group, which takes the first line's block
+ * look (padding, bullet, quote bar); the lines drop theirs. A space stands for each newline, a `↵` marker for its source.
+ */
+.grp { position: relative; }
+.part > .grp > .ln { display: inline; padding: 0; border: 0; }
+.part > .grp > .ln::before { content: none; }
+.part > .grp > .ln:not(:last-child)::after { content: ' '; }
+.mk.nl::before { content: '↵'; }
+.near > .mk.nl { pointer-events: none; }
 .ln.code, .ln.fence, .k-code { font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", monospace; font-size: .92em; background: var(--panel); }
 .ln.fence { color: var(--muted); }
 /* Mermaid: the opening fence line holds the diagram; its text and the block's other rows show via the Source button */
