@@ -104,7 +104,7 @@ export function tokenize(src: string): Line[] {
     const line = (block: Line['block'], mark = start, depth = 0): Line => ({ start, end, mark, block, depth, inl: [] });
     const row = (block: Line['block']) => ({ ...line(block), cells: cells(src, start, end, aligns!) });
     if (fence) {
-      const closes = !!f && f[1][0] === fence[0] && f[1].length >= fence.length;
+      const closes = !!f && f[1][0] === fence[0] && f[1].length >= fence.length && text.trim() === f[1];   // a bare run (CommonMark)
       out.push(line(closes ? 'fence' : 'code'));
       if (closes) fence = null;
       continue;

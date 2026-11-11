@@ -93,7 +93,7 @@ If a needed type, property or link is missing, **do not invent it in a task file
 When adding or editing declarations:
 
 - One `# [<Type>]` heading per type; never declare a type twice.
-- Every list needs a `<Link>:` label line directly above it (no blank line between). Unlabeled lists are errors here.
+- Every list needs a `<Link>:` label line above it (blank lines between are allowed). Unlabeled lists are errors here. Separate lists with their labels; a blank line alone does not end a list.
 - For every non-reflexive entry you add, decide whether the target type should create the link too; if so, add the matching reverse declaration in the same change. When removing an entry, remove its reverse too.
 - Do not list the same target type twice under one link.
 - Renaming a type, property or link in the format file does **not** rename uses in task files. Update the task files as well, or warn the user.

@@ -4,7 +4,7 @@
  * Edits only touch the lines an operation concerns; everything else in the files stays byte-identical.
  */
 import { Document, parseDocument, isMap, isScalar } from 'yaml';
-import { bodyTexts, FENCE, gaps, rangeText, type Node, type ParsedFile } from './markdown.js';
+import { bodyTexts, BULLET, closesFence, DOC_END, fenceRun, gaps, indentOf, rangeText, sameMarker, type Node, type ParsedFile } from './markdown.js';
 import { FORMAT_FILE, PARENT, SUBTASK } from './format.js';
 import { taskId, type Db, type Occ, type Task } from './db.js';
 import { baseName, fileStem, findNode, namesTask } from './tree.js';
@@ -97,25 +97,51 @@ const hasBody = (pf: ParsedFile, n: Node) => !!n.props || n.lists.length > 0 || 
  * item's lines for the list's marker (`  - `), so a moved block can be re-indented to it.
  */
 function addItem({ pf, node }: Occ, label: string | null, item: (bullet: string) => string[]): Edit {
-  const list = node.lists.find(l => l.label === label);
+  const list = node.lists.find(l => (l.label ?? SUBTASK) === (label ?? SUBTASK));
   if (list) return { file: pf.file, start: list.end, end: list.end, lines: item(list.bullet) };
 
-  // New list at the end of the occurrence's own content, separated by a blank line
+  // New list at the end of the occurrence's own content, separated by a blank line. An unlabeled list would continue a
+  // `-` list ending there (CommonMark), so it is labeled explicitly then
   let at = node.own.end;
   while (at > node.own.start && !pf.lines[at - 1].trim()) at--;
+  if (label === null && endsList(pf, node.own.start, at, node.indent.length)) label = SUBTASK;
   const lines = [...(node.kind === 'heading' || at > node.own.start ? [''] : []), ...(label ? [node.indent + label + ':'] : []), ...item(node.indent + '- ')];
   if (node.kind === 'heading' && at < pf.lines.length && pf.lines[at].trim()) lines.push('');
   return { file: pf.file, start: at, end: at, lines };
 }
 
+/** Whether the content in [from, at) ends with a `-` list at column `col`: a `- ` list appended after it would join it. */
+function endsList(pf: ParsedFile, from: number, at: number, col: number): boolean {
+  for (let k = at - 1; k >= from; k--) {
+    const l = pf.lines[k];
+    if (!l.trim() || indentOf(l) > col) continue;
+    const b = BULLET.exec(l);
+    return !!b && b[1].length === col && sameMarker(b[2], '-');
+  }
+  return false;
+}
+
 /** Item renderer for `addItem`: a plain `[type] title` reference. */
 const ref = (type: string, title: string) => (bullet: string) => [`${bullet}[${type}] ${title}`];
 
-/** Removes a bullet occurrence, and its `<Link type>:` label when it was the list's only item. */
+/**
+ * Removes a bullet occurrence, and its `<Link type>:` label when it was the list's only item. In a loose list the blank
+ * lines after the item (before the next one) go with it; the last item takes the blank lines before it instead.
+ */
 function removeItem(pf: ParsedFile, node: Node): Edit {
-  const l = node.list;
-  const start = l && l.labelLine === node.block.start - 1 && l.end === node.block.end ? l.labelLine : node.block.start;
-  return { file: pf.file, start, end: node.block.end, lines: [] };
+  const l = node.list!;
+  if (l.labelLine >= 0 && l.start === node.block.start && l.end === node.block.end) {
+    // The whole labeled list: its surrounding blank lines collapse into one separator (none at the end of the file)
+    let start = l.labelLine, end = node.block.end;
+    while (end < pf.lines.length && !pf.lines[end].trim()) end++;
+    if (end === pf.lines.length) while (start > 0 && !pf.lines[start - 1].trim()) start--;
+    const sep = end < pf.lines.length && start > 0 && pf.lines[start - 1].trim() && end > node.block.end;
+    return { file: pf.file, start, end, lines: sep ? [''] : [] };
+  }
+  let start = node.block.start, end = node.block.end;
+  if (end < l.end) while (!pf.lines[end].trim()) end++;
+  else while (start > l.start && !pf.lines[start - 1].trim()) start--;
+  return { file: pf.file, start, end, lines: [] };
 }
 
 /**
@@ -142,7 +168,14 @@ function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | nu
   // Fence: longer than any backtick run starting a YAML line, so a multi-line value cannot close it
   const ind = node.indent, yaml = doc.toString().trimEnd().split('\n');
   const fence = '`'.repeat(Math.max(3, ...yaml.map(l => /^\s*(`*)/.exec(l)![1].length + 1)));
-  const lines = node.kind === 'heading' ? yaml.map(l => l ? '    ' + l : l)
+  // A heading's `---`/`...` closing line is kept as written, with the blank lines before it
+  let term: string[] = [];
+  if (node.props?.style === 'indent' && DOC_END.test(pf.lines[node.props.end - 1])) {
+    let k = node.props.end - 1;
+    while (k > node.props.start && !pf.lines[k - 1].trim()) k--;
+    term = pf.lines.slice(k, node.props.end);
+  }
+  const lines = node.kind === 'heading' ? [...yaml.map(l => l ? '    ' + l : l), ...term]
     : [ind + fence + 'yaml', ...yaml.map(l => l ? ind + l : l), ind + fence];
   // A heading's block gets a blank line before whatever follows it (readability only; the parser does not need it). Not for
   // bullets: a blank line inside an item would make its whole list loose
@@ -192,8 +225,14 @@ function update(ctx: Ctx, op: Extract<Op, { op: 'update' }>): Plan {
     }
   }
   // Props before description: with no YAML block both edits start at the same line, and the later edit is applied first
-  if (op.props !== undefined) { const e = propsEdit(home(ctx, t), op.props); if (e) edits.push(e); }
-  if (op.body !== undefined) edits.push(...bodyEdits(home(ctx, t), op.body));
+  const pe = op.props !== undefined ? propsEdit(home(ctx, t), op.props) : null;
+  if (pe) edits.push(pe);
+  if (op.body !== undefined) {
+    const be = bodyEdits(home(ctx, t), op.body);
+    // A rewritten first description already brings its blank line (or is emptied): drop the props block's separator
+    if (pe?.lines.at(-1) === '' && be[0]?.start === pe.end && (!be[0].lines.length || be[0].lines[0] === '')) pe.lines.pop();
+    edits.push(...be);
+  }
   return { edits, id, moves };
 }
 
@@ -336,10 +375,8 @@ function reshape({ pf, node }: Occ, form: Form): string[] {
     if (!l) return l;
     l = l.slice(cut);
     if ('level' in form && i >= body) {
-      const f = FENCE.exec(l);
-      if (fence) { if (f?.[1] === fence) fence = null; }
-      else if (f) fence = f[1];
-      else if (/^#{1,6}([ \t]|$)/.test(l)) l = '\\' + l;
+      if (fence) { if (closesFence(l, fence)) fence = null; }
+      else if ((fence = fenceRun(l)) === null && /^#{1,6}([ \t]|$)/.test(l)) l = '\\' + l;
     }
     return pad + l;
   });

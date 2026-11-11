@@ -69,7 +69,7 @@ A YAML block right after a task's title holds its properties. Under a heading, i
 Recipes, shopping lists and edits keep working without a network and sync when it returns.
 ```
 
-The block ends at the first line indented by less than four spaces, so the description continues at the left margin. A blank line after the block is customary but optional, and blank lines may also separate the block from the title or appear inside it. Markdown viewers render the block as an ordinary code block.
+The block ends at the first line indented by less than four spaces, so the description continues at the left margin. It may also be closed explicitly by a `---` or `...` line (the YAML document markers), indented or not; that line belongs to the block, so a description cannot start with a `---` horizontal rule. A blank line after the block is customary but optional, and blank lines may also separate the block from the title or appear inside it. Markdown viewers render the block as an ordinary code block.
 
 Under a bullet task, put the properties in a fenced `yaml` code block indented to the bullet's text instead:
 
@@ -115,7 +115,7 @@ Tasks are connected by *links*. Every link has a type, and every link type has a
 There are two ways to make a subtask:
 
 1. **Sub-headings.** A task heading nested under another task heading is its subtask, even with ordinary headings in between.
-2. **Unlabeled lists.** A list of task bullets that has no text directly above it (a blank line, the title, or the property block is fine) contains subtasks of the task it belongs to.
+2. **Unlabeled lists.** A list of task bullets that has no `<Link type>:` line above it contains subtasks of the task it belongs to.
 
 ```markdown
 # [Task] Pantry 1.0
@@ -126,13 +126,13 @@ There are two ways to make a subtask:
 - [Task] Local recipe cache
 ```
 
-Here `Offline mode` is a subtask of `Pantry 1.0`, and both bullets are subtasks of `Offline mode`. Each subtask in turn has its parent linked as `Parent`. A list labeled `Parent:` declares parents explicitly.
+Here `Offline mode` is a subtask of `Pantry 1.0`, and both bullets are subtasks of `Offline mode`. Each subtask in turn has its parent linked as `Parent`. A list labeled `Parent:` declares parents explicitly, and a list may also be labeled `Subtask:` (useful when it follows another list, see below).
 
 Bullet tasks can have their own nested lists, so subtasks can be nested as deep as you like.
 
 ### Other link types
 
-To use any other link type, put a line of the form `<Link type>:` directly above the list:
+To use any other link type, put a line of the form `<Link type>:` above the list (blank lines between them are fine):
 
 ```markdown
 ## [Task] Offline mode
@@ -143,7 +143,7 @@ Blocked by:
 
 The entries are ordinary task occurrences. If `[Task] Account system` is defined elsewhere, this is a reference to it; if not, this line defines it.
 
-A blank line ends a list. Keep the items of one list together, and start a new list (with its own label, or none for subtasks) after a blank line.
+Lists follow the CommonMark rules, so formatters such as Prettier can reformat them safely. Blank lines between items do not end a list, and items may span several paragraphs. A list ends at a line that is not part of it (such as the next label) or at a bullet with a different marker: `-`, `*` and `+` each start their own list, as do `1.` and `1)`. To put a subtask list right after another list, label it `Subtask:`; an unlabeled list after a blank line would simply continue the list above it. Plandown adds this label itself when the GUI appends such a list.
 
 The same relation only needs to be written once. Writing `Blocked by: [Task] Account system` under Offline mode is equivalent to writing `Blocks: [Task] Offline mode` under Account system; if both are written, Plandown counts the link once.
 

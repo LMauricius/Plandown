@@ -58,7 +58,7 @@ Under a bullet task, a fenced `yaml` block indented to the bullet's text column 
 
 Rules:
 
-- A heading's block ends at the first line indented by less than four spaces. Keep nested YAML indented relative to those four spaces. Leave a blank line between the block and the description (optional, but the default style).
+- A heading's block ends at the first line indented by less than four spaces, or at a `---` / `...` line (indented or not), which belongs to the block. Keep nested YAML indented relative to those four spaces. Leave a blank line between the block and the description (optional, but the default style).
 - Always close a bullet's fence. `~~~` and `yml` are accepted too, and a heading accepts a fence as well, but write the styles above.
 - The first block of a task's section is always its properties: never start a description with a code block when the task has no property block.
 - Blocks delimited by `---` lines are the old style: convert them to the current style when you edit them.
@@ -80,7 +80,7 @@ Free text after the title (and property block).
 Two ways, both equivalent:
 
 1. **Sub-heading:** a task heading nested under a task heading (ordinary headings in between are fine).
-2. **Unlabeled list:** a list of task bullets with no text line directly above it (blank line, title or property block above is fine).
+2. **Unlabeled list:** a list of task bullets with no `<Link type>:` line above it.
 
 ```markdown
 # [Task] Pantry 1.0
@@ -92,13 +92,13 @@ Two ways, both equivalent:
   - [Task] Nested subtasks work too
 ```
 
-A list labeled `Parent:` declares parents explicitly. Never write `Subtask:` as a label; use an unlabeled list.
+A list labeled `Parent:` declares parents explicitly. Write subtask lists unlabeled, except right after another list with the same marker: label those `Subtask:`, or they continue the list above.
 
 **Add subtasks by editing the parent**, not by writing a `Parent:` list in the child. When a child lives in its own file, append an unlabeled list of bare `[Type] Title` references to the parent (e.g. under a `## Tasks` sub-heading), in work order. This keeps the hierarchy readable from the parent. Use `Parent:` only when the user asks for it.
 
 ## Links
 
-Put a `<Link type>:` line **directly above** the list (no blank line):
+Put a `<Link type>:` line above the list (directly above is the default style; a blank line between is allowed):
 
 ```markdown
 ## [Task] Offline mode
@@ -112,7 +112,7 @@ Blocked by:
 - An entry is a normal occurrence: if the target exists elsewhere this references it; if not, this line **defines** it. Verify exact titles so you reference rather than create.
 - Write each relation once. `Blocked by: [Task] B` under A equals `Blocks: [Task] A` under B; do not write both.
 - A task must not link to itself.
-- A blank line ends a list. Keep one list's items contiguous; start a new labeled list after a blank line.
+- Lists follow CommonMark: blank lines between items do not end a list. A list ends at the next non-list line (such as another label) or at a bullet with a different marker (`-`, `*`, `+`).
 - A labeled list outside any task is warned about; keep lists under their task.
 
 ## Editing safely
@@ -134,5 +134,5 @@ Make surgical edits; leave all unrelated lines byte for byte unchanged.
 1. Every type, property, value and link is allowed by `plandown-format.md`.
 2. No accidental new tasks from misspelled titles; no accidental merges from reused titles.
 3. Properties exist only at the home occurrence; every block is closed.
-4. Every link list has its label directly above and no blank lines inside.
+4. Every link list has its label above it, and no list accidentally continues another one.
 5. If the `plandown` CLI is available, run `plandown check <folder>`; fix every error it reports for lines you touched (`file:line` diagnostics, non-zero exit on errors).

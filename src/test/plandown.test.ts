@@ -26,8 +26,8 @@ test('format: flips may be omitted (one-directional) but not contradicted', () =
   assert.deepEqual(meta.diagnostics.map(d => d.message), ['Unknown type setting "$meta.icon"', '"$meta" must be a map of type settings']);
 });
 
-test('parser: checkboxes, links and code are not tasks; lists end at blank lines', () => {
-  const pf = parseMarkdown('a.md', '# [T] A\n- [x] done item\n- [link](x) text\n\n```\n# [T] Code\n```\nBlocked by:\n- [x] [T] B\n\n- [T] C\n');
+test('parser: checkboxes, links and code are not tasks; a new marker starts a new list', () => {
+  const pf = parseMarkdown('a.md', '# [T] A\n- [x] done item\n- [link](x) text\n\n```\n# [T] Code\n```\nBlocked by:\n- [x] [T] B\n\n* [T] C\n');
   assert.deepEqual(pf.nodes.map(n => n.title), ['A', 'B', 'C']);
   assert.deepEqual(pf.nodes[0].lists.map(l => l.label), ['Blocked by', null]);
 });
@@ -154,6 +154,34 @@ test('edits: property edits write the current style, converting a legacy block a
   await m.apply({ op: 'update', id: '[T] B', props: { note: 'x\n```\ny' } });
   assert.equal(read(d, 'a.md'), '# [T] A\n    # keep\n    effort: 2\n\nText\n- [T] B\n  ````yaml\n  note: |-\n    x\n    ```\n    y\n  ````\n  more\n');
   assert.equal(m.db.tasks['[T] B'].props.note, 'x\n```\ny');
+});
+
+test('lists as formatters leave them: blank lines after labels and between items; fences close CommonMark-style', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-'));
+  writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n\nBlocks:\n\n- [T] Blocked by\n\nBlocked by:\n\n- [T] Blocks\n');
+  writeFileSync(join(d, 'a.md'), [
+    '# [T] A', '', '    effort: 1', '', '...', '', 'Blocks:', '', '- [T] B', '', '- [T] C', '', '- [T] D',
+    '', '````', '```js', '- [T] Code', '````', '',
+    '# [T] E', '- [T] F',
+  ].join('\n') + '\n');
+  const m = await Plandown.open(d);
+  assert.deepEqual(m.db.diagnostics, []);
+  assert.equal(m.db.tasks['[T] A'].props.effort, 1);
+  assert.deepEqual(links(m, '[T] A'), ['Blocks [T] B', 'Blocks [T] C', 'Blocks [T] D']);
+  assert.ok(!m.db.tasks['[T] Code']);
+  // Removal keeps the loose list tidy; the last item's removal drops the label too
+  await m.apply({ op: 'unlink', from: '[T] A', type: 'Blocks', to: '[T] C' });
+  await m.apply({ op: 'unlink', from: '[T] A', type: 'Blocks', to: '[T] D' });
+  await m.apply({ op: 'update', id: '[T] A', props: { effort: 2 } });
+  assert.equal(read(d, 'a.md').split('\n# [T] E')[0], '# [T] A\n\n    effort: 2\n\n...\n\nBlocks:\n\n- [T] B\n\n````\n```js\n- [T] Code\n````\n');
+  await m.apply({ op: 'unlink', from: '[T] A', type: 'Blocks', to: '[T] B' });
+  assert.ok(read(d, 'a.md').startsWith('# [T] A\n\n    effort: 2\n\n...\n\n````'));
+  // A subtask list appended after a `-` list is labeled, or it would join that list
+  await m.apply({ op: 'link', from: '[T] E', type: 'Blocks', to: '[T] A' });
+  await m.apply({ op: 'create', type: 'T', title: 'G', parent: '[T] E' });
+  await m.apply({ op: 'create', type: 'T', title: 'H', parent: '[T] E' });
+  assert.equal(read(d, 'a.md').split('# [T] E\n')[1], '- [T] F\n- [T] G\n- [T] H\n\nBlocks:\n- [T] A\n');
+  assert.deepEqual(links(m, '[T] E'), ['Blocks [T] A', 'Subtask [T] F', 'Subtask [T] G', 'Subtask [T] H']);
 });
 
 test('edits: refuse to write over files changed on disk', async () => {
