@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
-import { caretSnap, caretStep, clip, cut, enterText, fromHtml, markMask, listEdit, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
+import { caretSnap, caretStep, clip, cut, enterText, fromHtml, groupTexts, markMask, listEdit, rewrap, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -451,6 +451,13 @@ test('editor caret: arrows skip markers, line ends stay reachable', () => {
   assert.equal(snap('a**b** c', 5), 4);
   assert.equal(snap('- x', 0), 2);
   assert.equal(snap('a**b**c', 1), 1);
+  // Hard breaks: the line end stops before their text, which the next step crosses with the newline
+  assert.deepEqual(walk('ab \\\n> c', 0, 1), [0, 1, 2, 7, 8]);
+  assert.deepEqual(walk('ab \\\n> c', 8, -1), [8, 7, 2, 1, 0]);
+  assert.deepEqual(walk('**a**\\\nb', 7, -1), [7, 5, 2, 0]);
+  assert.equal(snap('ab  \nc', 4), 2);
+  assert.equal(snap('ab  \nc', 3), 2);
+  assert.equal(snap('ab  \nc', 2), 2);
 });
 
 test('editor deletes: partly covered markers stay, covered elements go whole', () => {
@@ -493,7 +500,7 @@ test('editor clipboard: self-contained Markdown and its HTML rendering', () => {
   assert.equal(toHtml('| a | b |\n|-|:-:|\n| 1 | **2** |'),
     '<table><thead><tr><th>a</th><th style="text-align:center">b</th></tr></thead><tbody><tr><td>1</td><td style="text-align:center"><strong>2</strong></td></tr></tbody></table>');
   assert.equal(toHtml('```ts\n<a>\n```'), '<pre><code class="language-ts">&lt;a&gt;</code></pre>');
-  assert.equal(toHtml('a  \nb\\\nc\n- d\ne\n> f\ng'), '<p>a  <br>b<br>c</p><ul><li>d\ne</li></ul><blockquote><p>f\ng</p></blockquote>');
+  assert.equal(toHtml('a  \nb\\\nc\n- d\ne\n> f\ng'), '<p>a<br>b<br>c</p><ul><li>d\ne</li></ul><blockquote><p>f\ng</p></blockquote>');
 });
 
 test('editor line breaks: soft, hard, Enter', () => {
@@ -502,13 +509,30 @@ test('editor line breaks: soft, hard, Enter', () => {
   assert.equal(joins('# h\na\n- b\n  c\n> q\n> r\ns\n```\nx\n```'), '- - - soft - soft soft - - -');
   assert.equal(joins('a\\\\\nb'), '- soft');   // escaped backslash: no break
   const ls = tokenize('a\\\nb');
-  assert.equal(ls[0].hb, true);
-  assert.deepEqual(Array.from(markMask('a\\\nb')), [0, 2, 0, 0]);
+  assert.equal(ls[0].br, 1);
+  assert.equal(tokenize('a   \nb')[0].br, 3);
+  assert.deepEqual(Array.from(markMask('a  \nb')), [0, 3, 3, 0, 0]);
+  assert.equal(tokenize('a \t\\\nb')[0].br, 3);
+  assert.deepEqual(Array.from(markMask('a\\\nb')), [0, 3, 0, 0]);
   assert.deepEqual(cut('a\\\nb', 2, 3), ['ab', 1]);
   assert.equal(enterText('ab', 1, false), '\n\n');
   assert.equal(enterText('ab', 1, true), '\\\n');
   assert.equal(enterText('# h', 3, false), '\n');
   assert.equal(enterText('```\nx', 5, true), '\n');
+});
+
+test('editor rewrap: edited soft-wrapped paragraphs break where the view wraps', () => {
+  // Fake layout: a visual line per 20 source characters
+  const box = (off: number): [number, number] => [Math.floor(off / 20) * 10, 10], none = new Set<string>();
+  assert.equal(rewrap('aaa bbb ccc ddd eee fff ggg hhh\niii jjj', none, box), 'aaa bbb ccc ddd eee\nfff ggg hhh iii jjj');
+  assert.equal(rewrap('> aaa bbb ccc ddd eee fff\n> ggg', none, box), '> aaa bbb ccc ddd eee\n> fff ggg');
+  // No break that would start a list item, or inside an inline element
+  assert.equal(rewrap('aaa bbb ccc ddd eee - ff\nx', none, box), 'aaa bbb ccc ddd eee - ff x');
+  assert.equal(rewrap('aaa bbb ccc ddd **eee fff**\nx', none, box), 'aaa bbb ccc ddd **eee fff**\nx');   // the wrap inside moves to the next run
+  // Unedited groups, lines without soft breaks and missing layout stay as they are
+  const src = 'aaa bbb ccc ddd eee fff\nx\n\naaa bbb ccc ddd eee fff ggg';
+  assert.equal(rewrap(src, groupTexts(src), box), src);
+  assert.equal(rewrap('a b\nc', none, () => null), 'a b\nc');
 });
 
 test('editor paste: HTML to Markdown', () => {

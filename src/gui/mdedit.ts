@@ -33,7 +33,7 @@ export interface Line {
   check?: string;                    // task-list checkbox state: ' ' or 'x'
   cells?: Cell[];                    // table rows (th, tsep, td) only; their `inl` stays empty
   join?: 'soft' | 'hard';            // continues the previous line's paragraph: after a plain newline, or a hard break
-  hb?: boolean;                      // ends with a backslash hard break: that `\` is a closing marker
+  br?: number;                       // length of its hard break's text ending it (2+ spaces, or `\` with the spaces before it): a closing marker
   inl: Inl[];
 }
 
@@ -51,7 +51,7 @@ export interface EditorOpts {
 
 export interface Editor {
   el: HTMLElement;
-  /** Source of each text part, in order. */
+  /** Source of each text part, in order; edited hard-wrapped paragraphs are rewrapped as shown (`rewrap`). */
   texts(): string[];
   /** Replaces all text parts and clears their undo history; widgets stay. */
   set(texts: string[]): void;
@@ -91,8 +91,9 @@ function cells(src: string, start: number, end: number, aligns: Cell['align'][] 
  * then body rows until a blank line or another block starts.
  * Line breaks follow CommonMark: a nonblank text line (`p`, or `quote` after a quote) right after a paragraph, list
  * item or quote line continues it (`join`). The break is soft (a space when rendered) unless the previous line ends
- * with 2+ spaces or a backslash (hard). shortcut: a backslash before any newline is a break marker (`hb`), even before
- * a blank line, where CommonMark keeps it literal; it saves the backslash flashing up while Shift+Enter starts a line.
+ * with 2+ spaces or a backslash (hard; that text is the line's `br`). shortcut: a backslash before any newline is a break
+ * marker, even before a blank line, where CommonMark keeps it literal; it saves the backslash flashing up while
+ * Shift+Enter starts a line.
  */
 export function tokenize(src: string): Line[] {
   const out: Line[] = [], texts = src.split('\n');
@@ -136,10 +137,13 @@ export function tokenize(src: string): Line[] {
     } else if ((m = QUOTE.exec(text))) l = line('quote', start + m[0].length);
     else l = line('p');
     const body = src.slice(l.mark, end), prev = out.at(-1), TEXT = /^(p|li|ol|quote)$/;
-    l.hb = TEXT.test(l.block) && i < texts.length - 1 && /(?:^|[^\\])(?:\\\\)*\\$/.test(body);
-    if (prev && TEXT.test(prev.block) && /\S/.test(src.slice(prev.mark, prev.end)) && /\S/.test(body) && (l.block === 'p' || (l.block === 'quote' && prev.block === 'quote')))
-      l.join = prev.hb || / {2,}$/.test(src.slice(prev.start, prev.end)) ? 'hard' : 'soft';
-    l.inl = inline(src, l.mark, end - +l.hb);
+    if (TEXT.test(l.block) && i < texts.length - 1 && /(?:^|[^\\])(?:\\\\)*\\$/.test(body)) l.br = /[ \t]*\\$/.exec(body)![0].length;
+    if (prev && TEXT.test(prev.block) && /\S/.test(src.slice(prev.mark, prev.end)) && /\S/.test(body) && (l.block === 'p' || (l.block === 'quote' && prev.block === 'quote'))) {
+      // Trailing spaces end no inline element, so `prev.inl` stays valid when they become its break
+      prev.br ??= / {2,}$/.exec(src.slice(prev.mark, prev.end))?.[0].length;
+      l.join = prev.br ? 'hard' : 'soft';
+    }
+    l.inl = inline(src, l.mark, end - (l.br ?? 0));
     out.push(l);
   }
   return out;
@@ -289,6 +293,80 @@ export function tableEdit(src: string, at: number, key: 'Enter' | 'Tab', shift =
   return [at, at, '', a, b];
 }
 
+// ---- Rewrapping (pure) ----
+
+/** Soft-break groups of `ls` as `[first, last]` line indices: a paragraph's lines joined by plain newlines (one `div.grp` each). */
+function groups(ls: Line[]): [number, number][] {
+  const out: [number, number][] = [];
+  ls.forEach((l, i) => {
+    if (l.join !== 'soft') return;
+    const g = out.at(-1);
+    if (g && g[1] === i - 1) g[1] = i; else out.push([i - 1, i]);
+  });
+  return out;
+}
+
+/** Source texts of the soft-break groups of `src`: the unedited ones `rewrap` keeps. */
+export function groupTexts(src: string): Set<string> {
+  const ls = tokenize(src);
+  return new Set(groups(ls).map(([a, b]) => src.slice(ls[a].start, ls[b].end)));
+}
+
+/**
+ * Source to save: each soft-break group not in `keep` (an edited hard-wrapped paragraph) gets its newlines where the
+ * editor shows it wrapping. `box(off)` is the screen `[top, height]` of the first visible character at source offset
+ * `off`; one lower by over half a line starts a visual line. Without layout (null) the group stays as typed.
+ * Breaks replace whole whitespace runs outside inline elements (the tokenizer reads those per line), and only where
+ * the new line still continues the paragraph (not a list item, quote, table row or hard break); old newlines that
+ * no longer fall at a wrap become spaces. Continuation lines get the group's second line's prefix (`> `, indentation).
+ */
+export function rewrap(src: string, keep: Set<string>, box: (off: number) => [number, number] | null): string {
+  const ls = tokenize(src);
+  const lead = (l: Line) => l.mark + /^[ \t]*/.exec(src.slice(l.mark, l.end))![0].length;
+  const tail = (l: Line) => l.mark + src.slice(l.mark, l.end).trimEnd().length;
+
+  /** Rewrapped text of the group `[a, b]`, or null without layout. */
+  const group = (a: number, b: number): string | null => {
+    // Candidate runs `[ws, we, join]`: between lines (trailing blanks, newline, prefix, leading blanks) and inside them
+    const runs: [number, number, boolean][] = [];
+    for (let i = a; i <= b; i++) {
+      const l = ls[i], bs = lead(l);
+      if (i > a) runs.push([tail(ls[i - 1]), bs, true]);
+      for (const m of src.slice(bs, tail(l)).matchAll(/[ \t]+/g)) {
+        const ws = bs + m.index;
+        if (!l.inl.some(n => n.start < ws && ws < n.end)) runs.push([ws, ws + m[0].length, false]);
+      }
+    }
+    const pre = src.slice(ls[a + 1].start, lead(ls[a + 1]));
+    let res = '', from = ls[a].start, last = box(lead(ls[a]));
+    if (!last) return null;
+    for (const [ws, we, join] of runs) {
+      const t = box(we);
+      if (!t) return null;
+      if (t[0] > last[0] + last[1] / 2) {
+        last = t;
+        // Valid only if the tokenizer still joins the new line softly to the current one
+        const done = res + src.slice(from, ws), cur = done.slice(done.lastIndexOf('\n') + 1), eol = src.indexOf('\n', we);
+        const two = tokenize(cur + '\n' + pre + src.slice(we, eol < 0 ? src.length : eol));
+        if (two.length === 2 && two[1].join === 'soft') { res = done + '\n' + pre; from = we; continue; }
+      }
+      if (join) { res += src.slice(from, ws) + ' '; from = we; }
+    }
+    return res + src.slice(from, ls[b].end);
+  };
+
+  let out = '', at = 0;
+  for (const [a, b] of groups(ls)) {
+    const s = ls[a].start, e = ls[b].end;
+    if (keep.has(src.slice(s, e))) continue;
+    const g = group(a, b);
+    if (g === null) continue;
+    out += src.slice(at, s) + g;
+    at = e;
+  }
+  return out + src.slice(at);
+}
+
 // ---- Clipboard (pure) ----
 
 /** Inline elements of a line (its cells' for table rows). */
@@ -346,7 +424,7 @@ export function markMask(src: string): Uint8Array {
   const m = new Uint8Array(src.length), fill = (s: number, e: number, v: number) => m.fill(v, s, e);
   for (const l of tokenize(src)) {
     fill(l.start, l.mark, 1);
-    if (l.hb) fill(l.end - 1, l.end, 2);
+    if (l.br) fill(l.end - l.br, l.end, 3);
     l.cells?.forEach(c => { fill(c.start, c.open, 1); fill(c.close, c.end, 2); });
     walk(inlOf(l), n => { fill(n.start, n.open, 1); fill(n.close, n.end, 2); });
   }
@@ -356,16 +434,30 @@ export function markMask(src: string): Uint8Array {
 const eol = (src: string, i: number) => i === src.length || src[i] === '\n';
 const bol = (src: string, i: number) => i === 0 || src[i - 1] === '\n';
 
+/** Start of the hard break text (`markMask` 3) `x` is in or right after, else `x`: the caret's line end before it. */
+function brStart(m: Uint8Array, x: number): number {
+  while (m[x - 1] === 3) x--;
+  return x;
+}
+
 /**
  * Caret offset one arrow step (`d`) from `x`: marker chars (`m`, see `markMask`) are skipped fully, so a step moves
  * over one visible grapheme. Line ends are stops even when markers hide them from the text (`**b**|`): crossing those
- * markers is a step of its own. Moving right onto a new line also skips its block marker.
+ * markers is a step of its own. A hard break's text is the exception: the line end stops before it (typing after a
+ * `\` would undo the break), and the next step crosses it with the newline. Moving right onto a new line also skips
+ * its block marker.
  */
 export function caretStep(src: string, m: Uint8Array, x: number, d: 1 | -1): number {
   const seg = new Intl.Segmenter().segment(src);
   let y = x;
   if (d > 0) {
-    while (y < src.length && m[y]) y++;
+    while (y < src.length && m[y] && m[y] !== 3) y++;
+    if (m[y] === 3) {
+      if (y > x) return y;
+      while (m[y] === 3) y++;
+      for (y++; y < src.length && m[y]; y++);
+      return y;
+    }
     if ((y > x && eol(src, y)) || y === src.length) return y;
     const g = seg.containing(y)!;
     y = g.index + g.segment.length;
@@ -374,17 +466,19 @@ export function caretStep(src: string, m: Uint8Array, x: number, d: 1 | -1): num
   }
   while (y > 0 && m[y - 1]) y--;
   if ((y < x && eol(src, x) && !bol(src, y)) || y === 0) return y;
-  return seg.containing(y - 1)!.index;
+  return brStart(m, seg.containing(y - 1)!.index);
 }
 
 /**
  * Caret offset `x` left by a native move (Home, End, Up, Down, word jumps) or a click on text, corrected like
- * `caretStep`: to the line end when only markers follow it, out of a block marker it precedes, out of a marker it is
- * inside of (to the text side).
+ * `caretStep`: to the line end when only markers follow it (before a hard break's text), out of a block marker it
+ * precedes, out of a marker it is inside of (to the text side).
  */
 export function caretSnap(src: string, m: Uint8Array, x: number): number {
+  if (m[x - 1] === 3) return brStart(m, x);
   let y = x;
-  while (y < src.length && m[y]) y++;
+  while (y < src.length && m[y] && m[y] !== 3) y++;
+  if (m[y] === 3) return y;
   if (eol(src, y) || bol(src, x) || (m[x] === 1 && m[x - 1])) return y;
   if (m[x] !== 2 || !m[x - 1]) return x;
   while (m[x - 1]) x--;
@@ -407,8 +501,8 @@ export function cut(src: string, a: number, b: number, text = ''): [string, numb
     for (const [s, e] of c ? c.flatMap(k => [[k.start, k.open], [k.close, k.end]]) : [[l.start, l.mark]]) del.fill(v, s, e);
     // Inline elements, outermost first: an inner one covered goes whole even when its parent keeps its markers
     walk(inlOf(l), n => { if (a <= n.open && n.close <= b) del.fill(1, n.start, n.end); else { keep(n.start, n.open); keep(n.close, n.end); } });
-    // A hard break's backslash goes with its newline (it would stay as a literal `\`)
-    if (l.hb && a <= l.end && l.end < b) del[l.end - 1] = 1;
+    // A hard break's text goes with its newline (a backslash would stay literal)
+    if (l.br && a <= l.end && l.end < b) del.fill(1, l.end - l.br, l.end);
   }
   let out = '', at = 0;
   for (let i = 0; i <= src.length; i++) {
@@ -444,7 +538,7 @@ function inlineHtml(src: string, from: number, to: number, inl: Inl[]): string {
  */
 export function toHtml(src: string): string {
   const ls = tokenize(src), out: string[] = [];
-  const body = (l: Line) => inlineHtml(src, l.mark, l.end - +!!l.hb, l.inl);
+  const body = (l: Line) => inlineHtml(src, l.mark, l.end - (l.br ?? 0), l.inl);
   /** A continuation line with its break before it. */
   const cont = (l: Line) => (l.join === 'soft' ? '\n' : '<br>') + body(l);
   const cell = (tag: string, c: Cell) => `<${tag}${c.align ? ` style="text-align:${{ l: 'left', c: 'center', r: 'right' }[c.align]}"` : ''}>${inlineHtml(src, c.open, c.close, c.inl)}</${tag}>`;
@@ -852,8 +946,9 @@ function figure(open: boolean): Fig {
 
 /**
  * Rebuilds a part's DOM: one `div.ln` per source line, so lines map 1:1 to the part's `rows`. Lines joined by soft
- * breaks go into one `div.grp` taking the first line's block look, where they flow inline; the newline itself shows
- * as an empty `↵` marker (CSS content, so the line's text stays pure source) and a space after the previous line.
+ * breaks go into one `div.grp` taking the first line's block look, where they flow inline, the newline shown as a
+ * space after the previous line. A hard break's text (`\` or spaces) is a closing marker followed by `↵` (CSS content,
+ * so the line's text stays pure source), shown only while the caret is at its line's text end or in the next line.
  * A closed ```mermaid
  * block also gets a figure in its opening line; its source rows start hidden, except for blocks a `fresh` repaint
  * (an edit) creates, whose author is still typing them.
@@ -870,7 +965,6 @@ function paint(p: Part, fresh = false) {
   };
   const divs = ls.map((l, i) => {
     const div = look(ranged(el('div', `ln ${l.block}`), l.start, l.end), l);
-    if (l.join === 'soft' && l.mark === l.start) div.append(el('span', 'mk o nl'));
     if (l.mark > l.start) div.append(marker(src.slice(l.start, l.mark), 'o'));
     if (l.cells) div.append(...l.cells.map(c => {
       const cell = ranged(el('span', 'cell'), c.start, c.end);
@@ -881,8 +975,8 @@ function paint(p: Part, fresh = false) {
       return cell;
     }));
     else if (l.block === 'code' || l.block === 'fence') div.append(src.slice(l.start, l.end));
-    else paintInline(div, src, l.mark, l.end - +!!l.hb, l.inl);
-    if (l.hb) div.append(marker('\\', 'c'));
+    else paintInline(div, src, l.mark, l.end - (l.br ?? 0), l.inl);
+    if (l.br) div.append(ranged(el('span', 'mk c br', src.slice(l.end - l.br, l.end)), l.end - l.br, ls[i + 1]?.end ?? l.end));
     if (l.start === l.end) div.append(document.createElement('br'));
 
     // Mermaid: an opening fence whose block closes gets the figure, its text and the following rows the Source toggle
@@ -969,6 +1063,25 @@ function caretBox(n: Node, o: number): [number, number, number] | null {
   return b ? [next ? b.left : b.right, b.top, b.bottom] : null;
 }
 
+/** Screen `[top, height]` of the first non-marker character at or after source offset `off` in its line (`rewrap`). */
+function boxAt(part: HTMLElement, off: number): [number, number] | null {
+  for (const ln of rows(part)) {
+    const len = (ln.textContent ?? '').length;
+    if (off > len) { off -= len + 1; continue; }
+    const w = document.createTreeWalker(ln, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode() as Text | null, p = 0; t; p += t.length, t = w.nextNode() as Text | null) {
+      if (p + t.length <= off || t.parentElement!.closest('.mk')) continue;
+      const r = document.createRange(), i = Math.max(0, off - p);
+      r.setStart(t, i);
+      r.setEnd(t, i + 1);
+      const b = r.getClientRects()[0];
+      return b ? [b.top, b.height] : null;
+    }
+    return null;
+  }
+  return null;
+}
+
 /** Current selection as sorted source offsets, or null when it is not inside the part. */
 function getSel(part: HTMLElement): [number, number] | null {
   const s = getSelection();
@@ -995,7 +1108,8 @@ function reveal(part: HTMLElement) {
 // ---- Editing ----
 
 interface Snap { src: string; at: number }
-interface Part { el: HTMLElement; src: string; undo: Snap[]; redo: Snap[]; last: number; figs: Fig[] }
+/** `keep`: soft-break groups of the source as set, saved unchanged (`rewrap`). */
+interface Part { el: HTMLElement; src: string; keep: Set<string>; undo: Snap[]; redo: Snap[]; last: number; figs: Fig[] }
 interface State { frame: HTMLElement; o: EditorOpts; parts: Part[]; cur: Part | null }
 
 /** Records the part's current source for undo; keystrokes closer than 800 ms coalesce into one step. */
@@ -1176,7 +1290,7 @@ export function mdEditor(o: EditorOpts): Editor {
     if (o.multiline !== false) part.setAttribute('aria-multiline', 'true');
     if (o.label) part.setAttribute('aria-label', o.label);
     if (o.placeholder && o.parts.length === 1) part.dataset.ph = o.placeholder;
-    const p: Part = { el: part, src: x, undo: [], redo: [], last: 0, figs: [] };
+    const p: Part = { el: part, src: x, keep: groupTexts(x), undo: [], redo: [], last: 0, figs: [] };
     st.parts.push(p);
     paint(p);
     frame.append(part);
@@ -1211,8 +1325,8 @@ export function mdEditor(o: EditorOpts): Editor {
 
   return {
     el: frame,
-    texts: () => st.parts.map(p => p.src),
-    set(texts) { st.parts.forEach((p, i) => { p.src = texts[i] ?? ''; p.undo = []; p.redo = []; p.figs = []; paint(p); }); },
+    texts: () => st.parts.map(p => rewrap(p.src, p.keep, off => boxAt(p.el, off))),
+    set(texts) { st.parts.forEach((p, i) => { p.src = texts[i] ?? ''; p.keep = groupTexts(p.src); p.undo = []; p.redo = []; p.figs = []; paint(p); }); },
   };
 }
 

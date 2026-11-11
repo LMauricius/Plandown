@@ -438,15 +438,13 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 :is(.ln, .grp).quote { border-left: 3px solid var(--border); padding-left: .8em; color: var(--muted); }
 /*
  * Soft breaks: a paragraph's lines joined by plain newlines flow inline in one group, which takes the first line's block
- * look (padding, bullet, quote bar); the lines drop theirs. A space stands for each newline, a `↵` marker for its source.
+ * look (padding, bullet, quote bar); the lines drop theirs. A space stands for each newline.
  */
 .grp { position: relative; }
 /* `static`: a positioned inline line paints over the caret, which Chromium draws with the group (hid it in code spans) */
 .part > .grp > .ln { display: inline; position: static; padding: 0; border: 0; }
 .part > .grp > .ln::before { content: none; }
 .part > .grp > .ln:not(:last-child)::after { content: ' '; }
-.mk.nl::before { content: '↵'; }
-.near > .mk.nl { pointer-events: none; }
 .ln.code, .ln.fence, .k-code { font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", monospace; font-size: .92em; background: var(--panel); }
 .ln.fence { color: var(--muted); }
 /* Mermaid: the opening fence line holds the diagram; its text and the block's other rows show via the Source button */
@@ -499,7 +497,10 @@ form.sub-add { display: flex; flex-direction: column; align-items: flex-start; g
 /* Heading markers would not fit left of the text in the frame's narrow (clipped) padding: they go to the line's right end */
 :is(.h1, .h2, .h3, .h4, .h5, .h6) > .mk.o { right: 0; transform: none; border-radius: var(--corner) 999px 999px var(--corner); padding: 0 4px 0 0; }
 /* Shown markers take clicks (the caret enters them to edit the syntax); hidden ones let clicks through to the text */
-.near > .mk, .ln.ol > .mk, .ln.near > .cell > .mk { opacity: 1; pointer-events: auto; }
+/* A hard break's marker (its spaces and `\`, then `↵`; round on the left, cut straight on the right) is ranged itself: its line's text end and the next line */
+.mk.br { border-radius: 999px var(--corner) var(--corner) 999px; padding: 0 0 0 4px; }
+.mk.br::after { content: '↵'; }
+.near > .mk:not(.br), .mk.br.near, .ln.ol > .mk.o, .ln.near > .cell > .mk { opacity: 1; pointer-events: auto; }
 /* Clicks of a multi-click burst pass through the markers its first click revealed */
 .mdedit .part.pt .mk { pointer-events: none; }
 @media (prefers-reduced-motion: no-preference) { .mk { transition: opacity .15s; } }
