@@ -13,17 +13,15 @@ Always read the format file before writing tasks. Nothing outside it is allowed,
 
 The format file uses the same Markdown shape as task files, with a different meaning.
 
-````markdown
+```markdown
 # [Task] A unit of planned work
-```yaml
-$meta:
-  color: '#2f6fbf'
-Due-date: date
-Priority:
-  type: number
-  enum: [1, 2, 3]
-  description: 1 is the most urgent
-```
+    $meta:
+      color: '#2f6fbf'
+    Due-date: date
+    Priority:
+      type: number
+      enum: [1, 2, 3]
+      description: 1 is the most urgent
 
 Blocks:
 - [Task] Blocked by
@@ -31,12 +29,12 @@ Blocks:
 
 Related:
 - [Task] Related
-````
+```
 
 | Element | Meaning |
 |---|---|
 | `# [<Type>] <text>` heading | Declares task type `<Type>`. The text after it is only a description. |
-| Property block (a ```` ```yaml ```` fence right below the heading) | The type's property schema. |
+| Property block (indented by four spaces, right below the heading) | The type's property schema. |
 | `<Link>:` line directly above a list | Declares link type `<Link>` for tasks of this type. |
 | List entry `- [<Target>] <Reverse>` | Tasks of this type may link via `<Link>` to tasks of type `<Target>`; the target sees the link as `<Reverse>`. |
 

@@ -35,19 +35,18 @@ Each place a task appears is an *occurrence*. The first one (in natural file ord
 
 ## Properties
 
-A fenced `yaml` block directly under the title line (no blank line between):
+Under a heading, a YAML block indented by four spaces, directly below the title:
 
-````markdown
+```markdown
 ## [Task] Offline mode
-```yaml
-Due-date: 2026-12-01
-Priority: 1
-effort: 16
-```
-Description text starts here.
-````
+    Due-date: 2026-12-01
+    Priority: 1
+    effort: 16
 
-For a bullet task, indent the block to the bullet's text column:
+Description text starts here, at the left margin.
+```
+
+Under a bullet task, a fenced `yaml` block indented to the bullet's text column (never plain indented lines; they merge into the title):
 
 ````markdown
 - [Task] Choose an auth provider
@@ -59,8 +58,10 @@ For a bullet task, indent the block to the bullet's text column:
 
 Rules:
 
-- Always close the fence. Write new blocks as ```` ```yaml ````; `~~~` and `yml` are accepted too.
-- Blocks delimited by `---` lines are the old style: convert them to a `yaml` fence when you edit them.
+- A heading's block ends at the first line indented by less than four spaces. Keep nested YAML indented relative to those four spaces. Leave a blank line between the block and the description (optional, but the default style).
+- Always close a bullet's fence. `~~~` and `yml` are accepted too, and a heading accepts a fence as well, but write the styles above.
+- The first block of a task's section is always its properties: never start a description with a code block when the task has no property block.
+- Blocks delimited by `---` lines are the old style: convert them to the current style when you edit them.
 - Use only properties declared for the task's type (plus built-ins), with values of the declared type: `date` as `YYYY-MM-DD`, `datetime` as ISO 8601, `number` unquoted, `boolean` as `true`/`false`, `enum` values exactly as listed.
 - Do not write or edit `started` by hand (the timer manages it).
 - Omit the block entirely when there are no properties.

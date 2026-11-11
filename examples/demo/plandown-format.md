@@ -1,14 +1,12 @@
 # [Task] A unit of planned work
-```yaml
-$meta:
-  color: '#2f6fbf'
-Due-date:
-  type: date
-  description: The day the task must be finished.
-Priority:
-  type: number
-  enum: [1, 2, 3]
-```
+    $meta:
+      color: '#2f6fbf'
+    Due-date:
+      type: date
+      description: The day the task must be finished.
+    Priority:
+      type: number
+      enum: [1, 2, 3]
 
 Blocks:
 - [Task] Blocked by
@@ -26,16 +24,14 @@ Revealed:
 - [Bug] Discovered during
 
 # [Bug] A defect to fix
-```yaml
-$meta:
-  color: crimson
-Severity:
-  type: string
-  enum: [low, medium, high]
-Fix-in-release:
-  type: string
-  description: Version that must ship the fix.
-```
+    $meta:
+      color: crimson
+    Severity:
+      type: string
+      enum: [low, medium, high]
+    Fix-in-release:
+      type: string
+      description: Version that must ship the fix.
 
 Blocks:
 - [Task] Blocked by

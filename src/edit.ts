@@ -118,7 +118,10 @@ function removeItem(pf: ParsedFile, node: Node): Edit {
   return { file: pf.file, start, end: node.block.end, lines: [] };
 }
 
-/** Rewrites the YAML block as a ```yaml fence (converting a legacy `---` block), preserving comments, order and formatting of untouched keys. */
+/**
+ * Rewrites the property block in the current style (a heading's as an indented block, a bullet's as a ```yaml fence;
+ * legacy `---` blocks convert), preserving comments, order and formatting of untouched keys.
+ */
 function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | null {
   if (!props || typeof props !== 'object' || Array.isArray(props)) throw new Error('Properties must be an object');
   const parsed = parseDocument(node.props?.raw ?? '');
@@ -135,11 +138,17 @@ function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | nu
     }
   for (const [k, v] of keep) if (JSON.stringify(old[k]) !== JSON.stringify(v)) doc.set(k, v);
 
-  // Fence longer than any backtick run starting a YAML line, so a multi-line value cannot close it
+  // Indented block: blank YAML lines stay inside it (CommonMark), and it ends at the first non-blank line indented less
+  // Fence: longer than any backtick run starting a YAML line, so a multi-line value cannot close it
   const ind = node.indent, yaml = doc.toString().trimEnd().split('\n');
   const fence = '`'.repeat(Math.max(3, ...yaml.map(l => /^\s*(`*)/.exec(l)![1].length + 1)));
-  const lines = [ind + fence + 'yaml', ...yaml.map(l => l ? ind + l : l), ind + fence];
-  return node.props ? { file: pf.file, start: node.props.start, end: node.props.end, lines } : { file: pf.file, start: node.line + 1, end: node.line + 1, lines };
+  const lines = node.kind === 'heading' ? yaml.map(l => l ? '    ' + l : l)
+    : [ind + fence + 'yaml', ...yaml.map(l => l ? ind + l : l), ind + fence];
+  // A heading's block gets a blank line before whatever follows it (readability only; the parser does not need it). Not for
+  // bullets: a blank line inside an item would make its whole list loose
+  const start = node.props?.start ?? node.line + 1, end = node.props?.end ?? start;
+  if (node.kind === 'heading' && pf.lines[end]?.trim()) lines.push('');
+  return { file: pf.file, start, end, lines };
 }
 
 /**

@@ -127,14 +127,32 @@ test('parser: YAML fences and legacy "---" property blocks; unclosed ones never 
   ]);
 });
 
-test('edits: property edits write a fence, converting a legacy block and keeping its comments', async () => {
+test('parser: indented property blocks below headings, as formatters leave them; bullets need a fence', () => {
+  const pf = parseMarkdown('a.md', [
+    '# [T] A', '', '    effort: 4', '    # comment', '', '    tags:', '      - a', '', 'About A.',   // Prettier output: blank lines around the block
+    '# [T] B', '\tb: 1', '  \tc: [2]', 'About B.',                                           // tabs reach column 4
+    '# [T] C', '', '```yaml', 'c: 3', '```',                                                   // a heading's fence may follow a blank line too
+    '# [T] D', '   d: 4',                                                                      // under 4 columns: description
+    '- [T] E', '      e: 5',                                                                   // bullets: description, never props
+    '# [T] F', '', '---', 'f: 6', '---',                                                       // legacy only directly under the title
+    '- [T] G', '', '  ```yaml', '  g: 7', '  ```',                                             // loose item (Prettier): blank line before the fence
+    '- [T] H', '', '```yaml', 'h: 8', '```',                                                   // not inside the item
+  ].join('\n') + '\n');
+  const props = Object.fromEntries(pf.nodes.map(n => [n.title, n.props?.data]));
+  assert.deepEqual(props, { A: { effort: 4, tags: ['a'] }, B: { b: 1, c: [2] }, C: { c: 3 }, D: undefined, E: undefined, F: undefined, G: { g: 7 }, H: undefined });
+  assert.deepEqual(pf.nodes.map(n => n.own.start), [7, 12, 18, 19, 21, 23, 32, 33]);
+  assert.deepEqual(pf.heads.map(h => h.line), [0, 9, 13, 18, 22]);
+  assert.deepEqual(pf.diagnostics, []);
+});
+
+test('edits: property edits write the current style, converting a legacy block and keeping its comments', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-'));
   writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n');
   writeFileSync(join(d, 'a.md'), '# [T] A\n---\n# keep\neffort: 1\n---\nText\n- [T] B\n  more\n');
   const m = await Plandown.open(d);
   await m.apply({ op: 'update', id: '[T] A', props: { effort: 2 } });
   await m.apply({ op: 'update', id: '[T] B', props: { note: 'x\n```\ny' } });
-  assert.equal(read(d, 'a.md'), '# [T] A\n```yaml\n# keep\neffort: 2\n```\nText\n- [T] B\n  ````yaml\n  note: |-\n    x\n    ```\n    y\n  ````\n  more\n');
+  assert.equal(read(d, 'a.md'), '# [T] A\n    # keep\n    effort: 2\n\nText\n- [T] B\n  ````yaml\n  note: |-\n    x\n    ```\n    y\n  ````\n  more\n');
   assert.equal(m.db.tasks['[T] B'].props.note, 'x\n```\ny');
 });
 

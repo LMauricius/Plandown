@@ -57,20 +57,21 @@ Tasks that are not nested under another task are top-level tasks. Usually these 
 
 ## Properties
 
-Right after a task's title line, a fenced `yaml` code block holds its properties:
+A YAML block right after a task's title holds its properties. Under a heading, indent the block by four spaces:
 
-````markdown
+```markdown
 ## [Task] Offline mode
-```yaml
-Due-date: 2026-12-01
-Priority: 1
-effort: 16
-spent: 3.5
-```
-Recipes, shopping lists and edits keep working without a network and sync when it returns.
-````
+    Due-date: 2026-12-01
+    Priority: 1
+    effort: 16
+    spent: 3.5
 
-For a bullet task, indent the block to the bullet's text:
+Recipes, shopping lists and edits keep working without a network and sync when it returns.
+```
+
+The block ends at the first line indented by less than four spaces, so the description continues at the left margin. A blank line after the block is customary but optional, and blank lines may also separate the block from the title or appear inside it. Markdown viewers render the block as an ordinary code block.
+
+Under a bullet task, put the properties in a fenced `yaml` code block indented to the bullet's text instead:
 
 ````markdown
 - [Task] Choose an auth provider
@@ -80,9 +81,13 @@ For a bullet task, indent the block to the bullet's text:
   ```
 ````
 
-The block must start on the line directly below the title. Both fence styles work (```` ``` ```` and `~~~`), and the language may be written as `yaml` or `yml`. Because it is an ordinary code block, every Markdown viewer renders it cleanly and formatters leave it alone. A missing closing fence is reported as an error; the search stops at the next task heading (or, for a bullet task, at the end of its item), so an unclosed block never swallows other tasks. YAML comments are allowed and are preserved when the GUI edits the block.
+Indented lines below a bullet would merge with its title in Markdown viewers and formatters, which is why bullets need the fence. Both fence styles work (```` ``` ```` and `~~~`), and the language may be written as `yaml` or `yml`. A heading accepts a fence as well. A missing closing fence is reported as an error; the search stops at the next task heading (or, for a bullet task, at the end of its item), so an unclosed block never swallows other tasks.
 
-Earlier versions delimited the block with two `---` lines. That style is still read, but `plandown check` reports it as a warning, and the next edit of the task's properties rewrites it as a `yaml` fence. It was replaced because most Markdown renderers turn the YAML above a closing `---` into a heading.
+Note that the first block of a task's section is always read as its properties. To start a description with a code block, put the properties (or an empty fenced `yaml` block) above it.
+
+YAML comments are allowed and are preserved when the GUI edits the block. A heading's block is written back indented and followed by a blank line, and a bullet's block is written back as a fence.
+
+Earlier versions delimited the block with two `---` lines directly below the title. That style is still read, but `plandown check` reports it as a warning, and the next edit of the task's properties rewrites it in the current style. It was replaced because most Markdown renderers (and formatters such as Prettier) turn the YAML above a closing `---` into a heading.
 
 Which properties a task may have is declared by its type in `plandown-format.md`. In addition, every type has these built-in properties:
 
@@ -150,14 +155,12 @@ The same relation only needs to be written once. Writing `Blocked by: [Task] Acc
 - The property block **declares the type's property schema**.
 - Each labeled list **declares a link type** that tasks of this type can use. Every entry `[<Target type>] <Reverse link>` allows linking to tasks of the target type and names the link type that the target sees in the opposite direction.
 
-````markdown
+```markdown
 # [Task] A unit of planned work
-```yaml
-Due-date: date
-Priority:
-  type: number
-  enum: [1, 2, 3]
-```
+    Due-date: date
+    Priority:
+      type: number
+      enum: [1, 2, 3]
 
 Blocks:
 - [Task] Blocked by
@@ -170,7 +173,7 @@ Blocked by:
 Related:
 - [Task] Related
 - [Bug] Related
-````
+```
 
 ### Property schemas
 
@@ -188,14 +191,12 @@ The built-in properties (`done`, `effort`, `spent`, `started`) cannot be redecla
 
 The reserved `$meta` key in a type's property block holds settings of the type itself rather than a property:
 
-````markdown
+```markdown
 # [Bug] A defect to fix
-```yaml
-$meta:
-  color: crimson
-Severity: string
+    $meta:
+      color: crimson
+    Severity: string
 ```
-````
 
 | Key | Meaning |
 |---|---|
