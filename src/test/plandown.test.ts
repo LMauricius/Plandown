@@ -60,15 +60,18 @@ test('db: anchors follow GitHub heading slugs and stay unique', () => {
 
 test('db: invalid links and properties are reported', async () => {
   const d = copy();
-  writeFileSync(join(d, 'bad.md'), '# [Bug] X\n```yaml\nSeverity: huge\nFoo: 1\n```\n\nBlocks:\n- [Nope] Y\n\nRevealed:\n- [Task] Z\n');
+  writeFileSync(join(d, 'bad.md'), '# [Bug] X\n```yaml\nSeverity: huge\nFoo: 1\n```\n\nBlocks:\n- [Nope] Y\n\nRevealed:\n- [Task] Z\n\nRelated:\n- [Task] Ghost\n\n# [Nope] Y\n\n# [Task] Z\n');
   const m = await Plandown.open(d);
   assert.deepEqual(m.db.diagnostics.map(d => d.message).sort(), [
     'Link "Blocks" of [Bug] cannot target [Nope]',
     'Link "Revealed" of [Bug] cannot target [Task]',
+    'No task [Task] Ghost: a task needs its own heading',
     'Property "Severity" of [Bug] X must be one of low, medium, high',
+    'Unknown task type [Nope]',
     'Unknown task type [Nope]',
     '[Bug] does not declare property "Foo"',
   ]);
+  assert.ok(!m.db.tasks['[Task] Ghost'] && !links(m, '[Bug] X').includes('Related [Task] Ghost'), 'a bullet alone defines no task');
 });
 
 test('edits: update, create, link, unlink, timer and delete rewrite only their lines', async () => {
@@ -112,47 +115,51 @@ test('edits: update, create, link, unlink, timer and delete rewrite only their l
   assert.deepEqual(m.db.diagnostics, []);
 });
 
-test('parser: YAML fences and legacy "---" property blocks; unclosed ones never swallow tasks', () => {
+test('parser: YAML fences and legacy "---" property blocks; unclosed ones never swallow tasks; bullets are references', () => {
   const pf = parseMarkdown('a.md', [
     '# [T] A', '~~~~yml', '# comment', 'a: |', '  ~~~', '  ```', '~~~~',                // shorter or different closers do not close
-    '- [T] B', '  ```YAML', '  b: 2', '  ```', '  - [T] B1',
-    '- [T] C', '  ```yaml', '  c: 3', '- [T] D',                                         // unclosed: ends at the less indented line
+    '- [T] B', '  ```yaml', '  b: 2', '  ```', '  - [T] B1', '  Plain note.',            // a bullet's nested fence and tasks are ignored, with a warning
+    '- [T] C', '  Plain note.',                                                          // plain nested text is fine
     '# [T] E', '---', 'e: 5', '---',
     '# [T] F', '```yaml', 'f: 6', '# [T] G', '```yaml', 'g: 7', '```',                 // unclosed: ends at the next task heading
   ].join('\n') + '\n');
   const props = Object.fromEntries(pf.nodes.map(n => [n.title, n.props?.data]));
-  assert.deepEqual(props, { A: { a: '~~~\n```\n' }, B: { b: 2 }, B1: undefined, C: undefined, D: undefined, E: { e: 5 }, F: undefined, G: { g: 7 } });
+  assert.deepEqual(props, { A: { a: '~~~\n```\n' }, B: undefined, C: undefined, E: { e: 5 }, F: undefined, G: { g: 7 } });
   assert.deepEqual(pf.diagnostics.map(d => [d.line, d.severity, d.message.slice(0, 30)]), [
-    [13, 'error', 'Unclosed property block (missi'], [17, 'warning', 'Property block uses the "---" '], [21, 'error', 'Unclosed property block (missi'],
+    [7, 'warning', 'A bullet only refers to [T] B;'], [16, 'warning', 'Property block uses the "---" '], [20, 'error', 'Unclosed property block (missi'],
   ]);
 });
 
-test('parser: indented property blocks below headings, as formatters leave them; bullets need a fence', () => {
+test('parser: indented property blocks below headings, as formatters leave them', () => {
   const pf = parseMarkdown('a.md', [
     '# [T] A', '', '    effort: 4', '    # comment', '', '    tags:', '      - a', '', 'About A.',   // Prettier output: blank lines around the block
     '# [T] B', '\tb: 1', '  \tc: [2]', 'About B.',                                           // tabs reach column 4
     '# [T] C', '', '```yaml', 'c: 3', '```',                                                   // a heading's fence may follow a blank line too
     '# [T] D', '   d: 4',                                                                      // under 4 columns: description
-    '- [T] E', '      e: 5',                                                                   // bullets: description, never props
     '# [T] F', '', '---', 'f: 6', '---',                                                       // legacy only directly under the title
-    '- [T] G', '', '  ```yaml', '  g: 7', '  ```',                                             // loose item (Prettier): blank line before the fence
-    '- [T] H', '', '```yaml', 'h: 8', '```',                                                   // not inside the item
   ].join('\n') + '\n');
   const props = Object.fromEntries(pf.nodes.map(n => [n.title, n.props?.data]));
-  assert.deepEqual(props, { A: { effort: 4, tags: ['a'] }, B: { b: 1, c: [2] }, C: { c: 3 }, D: undefined, E: undefined, F: undefined, G: { g: 7 }, H: undefined });
-  assert.deepEqual(pf.nodes.map(n => n.own.start), [7, 12, 18, 19, 21, 23, 32, 33]);
-  assert.deepEqual(pf.heads.map(h => h.line), [0, 9, 13, 18, 22]);
+  assert.deepEqual(props, { A: { effort: 4, tags: ['a'] }, B: { b: 1, c: [2] }, C: { c: 3 }, D: undefined, F: undefined });
+  assert.deepEqual(pf.nodes.map(n => n.own.start), [7, 12, 18, 19, 21]);
+  assert.deepEqual(pf.heads.map(h => h.line), [0, 9, 13, 18, 20]);
   assert.deepEqual(pf.diagnostics, []);
+});
+
+test('parser: only a paragraph line labels a list; a heading ending in ":" does not', () => {
+  const pf = parseMarkdown('a.md', '# [T] A\n\n## Blocks:\n- [T] B\n\nBlocks:\n\n* [T] C\n');
+  assert.deepEqual(pf.nodes[0].lists.map(l => l.label), [null, 'Blocks']);
+  assert.deepEqual(pf.nodes[0].spans.map(s => s.start), [3, 5], 'a span starts at its label, past blank lines');
+  assert.deepEqual(pf.diagnostics.map(d => [d.line, d.severity]), [[2, 'warning']]);
 });
 
 test('edits: property edits write the current style, converting a legacy block and keeping its comments', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-'));
   writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n');
-  writeFileSync(join(d, 'a.md'), '# [T] A\n---\n# keep\neffort: 1\n---\nText\n- [T] B\n  more\n');
+  writeFileSync(join(d, 'a.md'), '# [T] A\n---\n# keep\neffort: 1\n---\nText\n# [T] B\n```yaml\nold: 1\n```\nmore\n');
   const m = await Plandown.open(d);
   await m.apply({ op: 'update', id: '[T] A', props: { effort: 2 } });
   await m.apply({ op: 'update', id: '[T] B', props: { note: 'x\n```\ny' } });
-  assert.equal(read(d, 'a.md'), '# [T] A\n    # keep\n    effort: 2\n\nText\n- [T] B\n  ````yaml\n  note: |-\n    x\n    ```\n    y\n  ````\n  more\n');
+  assert.equal(read(d, 'a.md'), '# [T] A\n    # keep\n    effort: 2\n\nText\n# [T] B\n    note: |-\n      x\n      ```\n      y\n\nmore\n');
   assert.equal(m.db.tasks['[T] B'].props.note, 'x\n```\ny');
 });
 
@@ -162,7 +169,7 @@ test('lists as formatters leave them: blank lines after labels and between items
   writeFileSync(join(d, 'a.md'), [
     '# [T] A', '', '    effort: 1', '', '...', '', 'Blocks:', '', '- [T] B', '', '- [T] C', '', '- [T] D',
     '', '````', '```js', '- [T] Code', '````', '',
-    '# [T] E', '- [T] F',
+    '# [T] E', 'Blocks:', '- [T] A', '', '# [T] F', '', '# [T] G', '', '# [T] B', '# [T] C', '# [T] D',
   ].join('\n') + '\n');
   const m = await Plandown.open(d);
   assert.deepEqual(m.db.diagnostics, []);
@@ -176,11 +183,11 @@ test('lists as formatters leave them: blank lines after labels and between items
   assert.equal(read(d, 'a.md').split('\n# [T] E')[0], '# [T] A\n\n    effort: 2\n\n...\n\nBlocks:\n\n- [T] B\n\n````\n```js\n- [T] Code\n````\n');
   await m.apply({ op: 'unlink', from: '[T] A', type: 'Blocks', to: '[T] B' });
   assert.ok(read(d, 'a.md').startsWith('# [T] A\n\n    effort: 2\n\n...\n\n````'));
-  // A subtask list appended after a `-` list is labeled, or it would join that list
-  await m.apply({ op: 'link', from: '[T] E', type: 'Blocks', to: '[T] A' });
-  await m.apply({ op: 'create', type: 'T', title: 'G', parent: '[T] E' });
+  // A subtask list appended after a `-` list is labeled, or it would join that list; a created subtask is a sub-heading
+  await m.apply({ op: 'link', from: '[T] E', type: 'Subtask', to: '[T] F' });
+  await m.apply({ op: 'link', from: '[T] E', type: 'Subtask', to: '[T] G' });
   await m.apply({ op: 'create', type: 'T', title: 'H', parent: '[T] E' });
-  assert.equal(read(d, 'a.md').split('# [T] E\n')[1], '- [T] F\n- [T] G\n- [T] H\n\nBlocks:\n- [T] A\n');
+  assert.equal(read(d, 'a.md').split('# [T] E\n')[1], 'Blocks:\n- [T] A\n\nSubtask:\n- [T] F\n- [T] G\n\n## [T] H\n\n# [T] F\n\n# [T] G\n\n# [T] B\n# [T] C\n# [T] D\n');
   assert.deepEqual(links(m, '[T] E'), ['Blocks [T] A', 'Subtask [T] F', 'Subtask [T] G', 'Subtask [T] H']);
 });
 
@@ -194,16 +201,16 @@ test('edits: refuse to write over files changed on disk', async () => {
 test('body: text gaps around task lists, sub-chapters included, edited gap by gap', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-'));
   writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n\nBlocks:\n- [T] Blocks\n');
-  writeFileSync(join(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nMid\n\n## Notes\nMore\n\nBlocks:\n- [T] C\n\nTail\n\n## [T] D\n');
+  writeFileSync(join(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nMid\n\n## Notes\nMore\n\nBlocks:\n- [T] C\n\nTail\n\n## [T] D\n# [T] B\nAbout B.\n\n# [T] C\n');
   const m = await Plandown.open(d);
   assert.deepEqual(m.db.tasks['[T] A'].body, ['Intro', { links: ['Subtask'] }, 'Mid\n\n## Notes\nMore', { links: ['Blocks'] }, 'Tail']);
-  assert.deepEqual(m.db.tasks['[T] B'].body, ['Bullet text']);
+  assert.deepEqual(m.db.tasks['[T] B'].body, ['About B.'], 'text nested under a bullet is not its description');
   assert.ok(links(m, '[T] A').includes('Subtask [T] D'), 'task sub-heading still nests');
 
   await m.apply({ op: 'update', id: '[T] A', body: ['Intro', '', 'Tail\ntwo'] });
-  assert.equal(read(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nBlocks:\n- [T] C\n\nTail\ntwo\n\n## [T] D\n');
+  assert.equal(read(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nBlocks:\n- [T] C\n\nTail\ntwo\n\n## [T] D\n# [T] B\nAbout B.\n\n# [T] C\n');
   await m.apply({ op: 'update', id: '[T] B', body: ['New\n\ntext'] });
-  assert.ok(read(d, 'a.md').includes('- [T] B\n  New\n\n  text\n'));
+  assert.ok(read(d, 'a.md').endsWith('# [T] B\nNew\n\ntext\n\n# [T] C\n'));
   await m.apply({ op: 'update', id: '[T] A', body: ['First'] });
   assert.deepEqual(m.db.tasks['[T] A'].body, ['First', { links: ['Subtask'] }, '', { links: ['Blocks'] }, 'Tail\ntwo'], 'missing trailing gaps are kept');
   await assert.rejects(m.apply({ op: 'update', id: '[T] A', body: ['a', 'b', 'c', 'd'] }), /lists changed/);
@@ -290,41 +297,31 @@ test('tree: subfolders, stem merges and placement of new groups and tasks', asyn
   await assert.rejects(m.apply({ op: 'update', id: '[T] Next', title: 'Taken' }), /Cannot rename H\/Next: H\/Taken already exists/);
 });
 
-test('move: task blocks keep their content, reshape between bullets and headings, and never land inside themselves', async () => {
+test('move: heading blocks keep their content, shift levels, and never land inside themselves', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   w('plandown-format.md', '# [T] t\n');
-  w('a.md', '# [T] A\n\n- [T] B\n  ```yaml\n  effort: 2\n  ```\n  # not a heading\n  - [T] B1\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n# [T] E\n- [T] Ref\n');
+  w('a.md', '# [T] A\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n# [T] E\n- [T] Ref\n\n# [T] C\n\n# [T] Ref\n\n###### [T] Deep\n');
   const m = await Plandown.open(d), move = (o: object) => m.apply({ op: 'move', ...o } as never);
 
-  // Bullet under a heading parent: re-indented into its Subtask list, subtasks and props along
-  await move({ id: '[T] B', parent: '[T] D' });
-  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n- [T] B\n  ```yaml\n  effort: 2\n  ```\n  # not a heading\n  - [T] B1\n\n# [T] E\n- [T] Ref\n');
-  assert.deepEqual(links(m, '[T] D'), ['Subtask [T] B']);
-  assert.deepEqual(links(m, '[T] B'), ['Subtask [T] B1']);
-  assert.equal(m.db.tasks['[T] B'].props.effort, 2);
+  // Next to a heading sibling: same level, sub-chapters shifted along
+  await move({ id: '[T] D', near: 'a', sibling: '[T] A' });
+  assert.equal(read(d, 'a.md'), '# [T] D\nAbout D.\n\n## Notes\nN\n\n# [T] A\n- [T] C\n\n# [T] E\n- [T] Ref\n\n# [T] C\n\n# [T] Ref\n\n###### [T] Deep\n');
 
-  // Bullet to a file: becomes a level-1 heading, a `#` description line escaped; the emptied list leaves one blank line
-  await move({ id: '[T] B', near: '' });
-  assert.ok(read(d, 'a.md').includes('N\n\n# [T] E'));
-  assert.ok(read(d, 'B.md') === '# [T] B\n```yaml\neffort: 2\n```\n\\# not a heading\n- [T] B1\n');
-  assert.equal(findNode(m.db.tree, 'B')?.task, '[T] B');
-
-  // Heading under a heading: nested one level deeper, sub-chapters shifted along
+  // Under a heading parent: its last sub-heading
   await move({ id: '[T] D', parent: '[T] E' });
-  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n\n# [T] E\n- [T] Ref\n\n## [T] D\nAbout D.\n\n### Notes\nN\n');
+  assert.equal(read(d, 'a.md'), '# [T] A\n- [T] C\n\n# [T] E\n- [T] Ref\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n# [T] C\n\n# [T] Ref\n\n###### [T] Deep\n');
   assert.deepEqual(links(m, '[T] E'), ['Subtask [T] D', 'Subtask [T] Ref']);
 
-  // Heading under a bullet parent: level-1 heading at the end of the file, referenced from the parent's list
-  await move({ id: '[T] D', parent: '[T] C' });
-  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n  - [T] D\n\n# [T] E\n- [T] Ref\n\n# [T] D\nAbout D.\n\n## Notes\nN\n');
-  assert.deepEqual(m.db.diagnostics, []);
-  assert.deepEqual(links(m, '[T] C'), ['Subtask [T] D']);
+  // Next to a sibling's reference bullet: a reference takes the slot, the block becomes a level-1 heading at the end of the file
+  await move({ id: '[T] D', parent: '[T] A', sibling: '[T] C', after: true });
+  assert.equal(read(d, 'a.md'), '# [T] A\n- [T] C\n- [T] D\n\n# [T] E\n- [T] Ref\n\n# [T] C\n\n# [T] Ref\n\n###### [T] Deep\n\n# [T] D\nAbout D.\n\n## Notes\nN\n');
+  assert.deepEqual(links(m, '[T] A'), ['Subtask [T] C', 'Subtask [T] D']);
 
-  // Sibling slots: before a heading (bullet converted), after a bullet in the same list
-  await move({ id: '[T] Ref', near: 'a', sibling: '[T] A' });
-  assert.ok(read(d, 'a.md').startsWith('# [T] Ref\n\n# [T] A\n'));
-  await move({ id: '[T] B1', parent: '[T] A', sibling: '[T] C', after: false });
-  assert.ok(read(d, 'a.md').includes('# [T] A\n\n- [T] B1\n- [T] C\n  - [T] D\n'));
+  // Past level 6: a level-1 heading at the end of the file, referenced from the parent's list
+  await move({ id: '[T] C', parent: '[T] Deep' });
+  assert.equal(read(d, 'a.md'), '# [T] A\n- [T] C\n- [T] D\n\n# [T] E\n- [T] Ref\n\n# [T] Ref\n\n###### [T] Deep\n\n- [T] C\n\n# [T] D\nAbout D.\n\n## Notes\nN\n\n# [T] C\n');
+  assert.deepEqual(links(m, '[T] Deep'), ['Subtask [T] C']);
+  assert.deepEqual(m.db.diagnostics, []);
 
   await assert.rejects(move({ id: '[T] A', parent: '[T] C' }), /under itself/);
   await assert.rejects(move({ id: '[T] A', parent: '[T] A' }), /under itself/);

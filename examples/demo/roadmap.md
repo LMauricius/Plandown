@@ -13,16 +13,6 @@ The first public release of Pantry, a recipe app that keeps working in the kitch
 
 Recipes, shopping lists and edits keep working without a network and sync when it returns.
 
-- [Task] Design the sync protocol
-  ```yaml
-  effort: 4
-  spent: 2
-  ```
-  Last-write-wins or per-field merges? This **needs** a short write-up.
-
-- [Task] Local recipe cache
-- [Task] Conflict resolution
-
 Blocked by:
 - [Task] Account system
 
@@ -32,16 +22,26 @@ Sync starts only after sign-in, so offline data always belongs to an account.
 - Should photos be cached, or only the text?
 - How long are deleted recipes kept?
 
+### [Task] Design the sync protocol
+    effort: 4
+    spent: 2
+
+Last-write-wins or per-field merges? This **needs** a short write-up.
+
+### [Task] Local recipe cache
+
+### [Task] Conflict resolution
+
 ## [Task] Account system
 Sign-in with an email address or a single sign-on provider.
 
-- [Task] Choose an auth provider
-  ```yaml
-  effort: 6
-  done: true
-  ```
-  The hosted provider with passkeys and a free tier won.
-- [Task] Password reset flow
+### [Task] Choose an auth provider
+    effort: 6
+    done: true
+
+The hosted provider with passkeys and a free tier won.
+
+### [Task] Password reset flow
 
 ## [Task] Onboarding screens
     Priority: 2

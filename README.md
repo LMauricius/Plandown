@@ -1,6 +1,6 @@
 <h1><img src="media/logo.svg" alt="Plandown" height="96"></h1>
 
-Plandown is a task manager whose database is a folder of plain Markdown files. Headings and bullets that start with `[<Task type>]` become tasks, YAML blocks hold their properties, and labeled lists link them together. A GUI edits tasks, shows the link graph and tracks effort and time, while the files stay readable and diff-friendly.
+Plandown is a task manager whose database is a folder of plain Markdown files. Headings that start with `[<Task type>]` become tasks, YAML blocks hold their properties, and lists of `[<Task type>] Title` bullets link them together. A GUI edits tasks, shows the link graph and tracks effort and time, while the files stay readable and diff-friendly.
 
 - [Database.md](Database.md) describes the file format.
 - [Usage.md](Usage.md) describes the GUI.

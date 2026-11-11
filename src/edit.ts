@@ -4,7 +4,7 @@
  * Edits only touch the lines an operation concerns; everything else in the files stays byte-identical.
  */
 import { Document, parseDocument, isMap, isScalar } from 'yaml';
-import { bodyTexts, BULLET, closesFence, DOC_END, fenceRun, gaps, indentOf, rangeText, sameMarker, type Node, type ParsedFile } from './markdown.js';
+import { BULLET, DOC_END, gaps, indentOf, rangeText, sameMarker, type Node, type ParsedFile } from './markdown.js';
 import { FORMAT_FILE, PARENT, SUBTASK } from './format.js';
 import { taskId, type Db, type Occ, type Task } from './db.js';
 import { baseName, fileStem, findNode, namesTask } from './tree.js';
@@ -90,39 +90,31 @@ function placeTask(ctx: Ctx, near: unknown, title: string): { file: string; rmdi
   return { file: `${n.path}/${stemOf(title)}.md` };
 }
 
-const hasBody = (pf: ParsedFile, n: Node) => !!n.props || n.lists.length > 0 || bodyTexts(pf, n).some(Boolean);
-
-/**
- * Appends an item to the occurrence's list with `label` (null: Subtask), creating the list if needed. `item` renders the
- * item's lines for the list's marker (`  - `), so a moved block can be re-indented to it.
- */
-function addItem({ pf, node }: Occ, label: string | null, item: (bullet: string) => string[]): Edit {
+/** Appends a `[type] title` reference to the heading occurrence's list with `label` (null: Subtask), creating the list if needed. */
+function addItem({ pf, node }: Occ, label: string | null, type: string, title: string): Edit {
   const list = node.lists.find(l => (l.label ?? SUBTASK) === (label ?? SUBTASK));
-  if (list) return { file: pf.file, start: list.end, end: list.end, lines: item(list.bullet) };
+  if (list) return { file: pf.file, start: list.end, end: list.end, lines: [`${list.bullet}[${type}] ${title}`] };
 
   // New list at the end of the occurrence's own content, separated by a blank line. An unlabeled list would continue a
   // `-` list ending there (CommonMark), so it is labeled explicitly then
   let at = node.own.end;
   while (at > node.own.start && !pf.lines[at - 1].trim()) at--;
-  if (label === null && endsList(pf, node.own.start, at, node.indent.length)) label = SUBTASK;
-  const lines = [...(node.kind === 'heading' || at > node.own.start ? [''] : []), ...(label ? [node.indent + label + ':'] : []), ...item(node.indent + '- ')];
-  if (node.kind === 'heading' && at < pf.lines.length && pf.lines[at].trim()) lines.push('');
+  if (label === null && endsList(pf, node.own.start, at)) label = SUBTASK;
+  const lines = ['', ...(label ? [label + ':'] : []), `- [${type}] ${title}`];
+  if (at < pf.lines.length && pf.lines[at].trim()) lines.push('');
   return { file: pf.file, start: at, end: at, lines };
 }
 
-/** Whether the content in [from, at) ends with a `-` list at column `col`: a `- ` list appended after it would join it. */
-function endsList(pf: ParsedFile, from: number, at: number, col: number): boolean {
+/** Whether the content in [from, at) ends with a top-level `-` list: a `- ` list appended after it would join it. */
+function endsList(pf: ParsedFile, from: number, at: number): boolean {
   for (let k = at - 1; k >= from; k--) {
     const l = pf.lines[k];
-    if (!l.trim() || indentOf(l) > col) continue;
+    if (!l.trim() || indentOf(l) > 0) continue;
     const b = BULLET.exec(l);
-    return !!b && b[1].length === col && sameMarker(b[2], '-');
+    return !!b && sameMarker(b[2], '-');
   }
   return false;
 }
-
-/** Item renderer for `addItem`: a plain `[type] title` reference. */
-const ref = (type: string, title: string) => (bullet: string) => [`${bullet}[${type}] ${title}`];
 
 /**
  * Removes a bullet occurrence, and its `<Link type>:` label when it was the list's only item. In a loose list the blank
@@ -145,8 +137,8 @@ function removeItem(pf: ParsedFile, node: Node): Edit {
 }
 
 /**
- * Rewrites the property block in the current style (a heading's as an indented block, a bullet's as a ```yaml fence;
- * legacy `---` blocks convert), preserving comments, order and formatting of untouched keys.
+ * Rewrites a heading's property block as an indented block (fenced and legacy `---` blocks convert), preserving comments,
+ * order and formatting of untouched keys.
  */
 function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | null {
   if (!props || typeof props !== 'object' || Array.isArray(props)) throw new Error('Properties must be an object');
@@ -164,23 +156,19 @@ function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | nu
     }
   for (const [k, v] of keep) if (JSON.stringify(old[k]) !== JSON.stringify(v)) doc.set(k, v);
 
-  // Indented block: blank YAML lines stay inside it (CommonMark), and it ends at the first non-blank line indented less
-  // Fence: longer than any backtick run starting a YAML line, so a multi-line value cannot close it
-  const ind = node.indent, yaml = doc.toString().trimEnd().split('\n');
-  const fence = '`'.repeat(Math.max(3, ...yaml.map(l => /^\s*(`*)/.exec(l)![1].length + 1)));
-  // A heading's `---`/`...` closing line is kept as written, with the blank lines before it
+  // Blank YAML lines stay inside the indented block (CommonMark), and it ends at the first non-blank line indented less
+  const yaml = doc.toString().trimEnd().split('\n');
+  // A `---`/`...` closing line is kept as written, with the blank lines before it
   let term: string[] = [];
   if (node.props?.style === 'indent' && DOC_END.test(pf.lines[node.props.end - 1])) {
     let k = node.props.end - 1;
     while (k > node.props.start && !pf.lines[k - 1].trim()) k--;
     term = pf.lines.slice(k, node.props.end);
   }
-  const lines = node.kind === 'heading' ? [...yaml.map(l => l ? '    ' + l : l), ...term]
-    : [ind + fence + 'yaml', ...yaml.map(l => l ? ind + l : l), ind + fence];
-  // A heading's block gets a blank line before whatever follows it (readability only; the parser does not need it). Not for
-  // bullets: a blank line inside an item would make its whole list loose
+  const lines = [...yaml.map(l => l ? '    ' + l : l), ...term];
+  // A blank line before whatever follows the block (readability only; the parser does not need it)
   const start = node.props?.start ?? node.line + 1, end = node.props?.end ?? start;
-  if (node.kind === 'heading' && pf.lines[end]?.trim()) lines.push('');
+  if (pf.lines[end]?.trim()) lines.push('');
   return { file: pf.file, start, end, lines };
 }
 
@@ -195,11 +183,11 @@ function bodyEdits({ pf, node }: Occ, texts: unknown): Edit[] {
   if (texts.length > gs.length) throw new Error("The task's lists changed meanwhile; revert and edit again");
   return texts.flatMap((text, i) => {
     const r = gs[i], body = text.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
-    if (body === rangeText(pf, node, r)) return [];
-    const lines = body ? body.split('\n').map(l => l.trim() ? node.indent + l : '') : [];
-    const prev = i > 0, next = i < node.spans.length || (node.kind === 'heading' && r.end < pf.lines.length);
+    if (body === rangeText(pf, r)) return [];
+    const lines = body ? body.split('\n').map(l => l.trim() ? l : '') : [];
+    const prev = i > 0, next = i < node.spans.length || r.end < pf.lines.length;
     if (prev && lines.length) lines.unshift('');
-    if (next && (lines.length || prev || node.kind === 'heading')) lines.push('');
+    if (next) lines.push('');
     return [{ file: pf.file, start: r.start, end: r.end, lines }];
   });
 }
@@ -241,7 +229,10 @@ function create(ctx: Ctx, op: Extract<Op, { op: 'create' }>): Plan {
   checkName(ctx, op.type, title);
   const id = taskId(op.type, title);
   if (ctx.db.tasks[id]) throw new Error(`Task ${id} already exists`);
-  if (op.parent !== undefined) return { edits: [addItem(home(ctx, need(ctx, op.parent)), null, ref(op.type, title))], id };
+  if (op.parent !== undefined) {
+    const edits: Edit[] = [], slot = subSlot(ctx, home(ctx, need(ctx, op.parent)), 0, op.type, title, edits);
+    return { edits: [...edits, insert(ctx, slot, [`${'#'.repeat(slot.level)} [${op.type}] ${title}`], [])], id };
+  }
 
   // Top-level task: a new level-1 heading at the end of the file
   const at = op.near !== undefined ? placeTask(ctx, op.near, title) : { file: op.file ?? ctx.db.files[0] ?? 'tasks.md' };
@@ -263,18 +254,18 @@ function group(ctx: Ctx, op: Extract<Op, { op: 'group' }>): Plan {
 
 function remove(ctx: Ctx, op: Extract<Op, { op: 'delete' }>): Plan {
   const t = need(ctx, op.id);
-  const edits = ctx.occ.get(t.id)!.map(({ pf, node }) => node.kind === 'bullet' ? removeItem(pf, node) : { file: pf.file, start: node.block.start, end: node.block.end, lines: [] });
+  const edits = ctx.occ.get(t.id)!.map(o => o.node.kind === 'bullet' ? removeItem(o.pf, o.node) : cutOut(o));
   // An occurrence nested inside another occurrence of the same task is already removed with it
   return { edits: edits.filter(e => !edits.some(o => o !== e && o.file === e.file && o.start <= e.start && e.end <= o.end && (o.start < e.start || e.end < o.end))) };
 }
 
 // ---- Move ----
 
-/** Form a moved block takes: a bullet with list marker `bullet` (`  - `), or a heading of `level`. */
-type Form = { bullet: string } | { level: number };
+/** Where a heading block lands: before line `line` of `file`, as a heading of `level`. */
+type HeadSlot = { file: string; line: number; level: number };
 
-/** Where a moved block lands: before line `line` of `file`, in a form. */
-type Slot = { file: string; line: number } & Form;
+/** Where a moved item lands: a heading slot, or a reference bullet with list marker `bullet` (`  - `). */
+type Slot = HeadSlot | { file: string; line: number; bullet: string };
 
 /** Heading level of a heading occurrence (its `#` count). */
 const levelOf = (n: Node) => /^#*/.exec(n.prefix)![0].length;
@@ -296,6 +287,21 @@ const beside = ({ pf, node }: Occ, after: boolean): Slot => ({
   ...node.kind === 'heading' ? { level: levelOf(node) } : { bullet: node.list!.bullet },
 });
 
+/** Level-1 heading slot at the end of `file`. */
+const eof = (ctx: Ctx, file: string): HeadSlot => ({ file, line: ctx.files.get(file)?.lines.length ?? 0, level: 1 });
+
+/**
+ * Slot that makes a heading block with sub-headings `depth` levels below its title a subtask of `parent`: the parent's
+ * last sub-heading. Past level 6, a level-1 heading at the end of the parent's file instead, with a reference to
+ * `[type] title` pushed to `edits` for the parent's Subtask list.
+ */
+function subSlot(ctx: Ctx, parent: Occ, depth: number, type: string, title: string, edits: Edit[]): HeadSlot {
+  const level = levelOf(parent.node) + 1;
+  if (level + depth <= 6) return { file: parent.pf.file, line: parent.node.block.end, level };
+  edits.push(addItem(parent, null, type, title));
+  return eof(ctx, parent.pf.file);
+}
+
 /**
  * Inserts `lines` at `slot`; a heading gets blank lines against non-blank neighbours, a bullet none (a blank line ends a
  * list). Neighbours are looked up past `gone`, the ranges removed by the same plan.
@@ -312,8 +318,8 @@ function insert(ctx: Ctx, slot: Slot, lines: string[], gone: Edit[]): Edit {
   return { file: slot.file, start: slot.line, end: slot.line, lines };
 }
 
-/** Removal of an occurrence's whole block: a heading's section, or a bullet item (with its label when it was the list's only item). */
-const cutOut = ({ pf, node }: Occ): Edit => node.kind === 'heading' ? { file: pf.file, start: node.block.start, end: node.block.end, lines: [] } : removeItem(pf, node);
+/** Removal of a heading occurrence's whole section. */
+const cutOut = ({ pf, node }: Occ): Edit => ({ file: pf.file, start: node.block.start, end: node.block.end, lines: [] });
 
 /**
  * Removals of one file merged where they touch (so `applyEdits` never sees them overlap). Blank lines a removal leaves on
@@ -341,105 +347,78 @@ function subOcc(ctx: Ctx, parent: string, sib: Task): Occ | undefined {
   return e && ctx.occ.get(sib.id)!.find(s => [e.at, e.back].some(l => l?.file === s.pf.file && l.line === s.node.line));
 }
 
-/** Removes the plain list items declaring `parent`'s Subtask link to `id` (either side); items with content stay. */
+/** Removes the list items declaring `parent`'s Subtask link to `id` (either side). */
 function unref(ctx: Ctx, parent: string, id: string): Edit[] {
   const e = ctx.db.edges.find(e => e.type === SUBTASK && e.from === parent && e.to === id);
   if (!e || e.heading) return [];
   return [...ctx.occ.get(parent)!, ...ctx.occ.get(id)!]
-    .filter(o => o.node.kind === 'bullet' && !hasBody(o.pf, o.node) && [e.at, e.back].some(l => l?.file === o.pf.file && l.line === o.node.line))
+    .filter(o => [e.at, e.back].some(l => l?.file === o.pf.file && l.line === o.node.line))
     .map(o => removeItem(o.pf, o.node));
 }
 
 /**
- * Lines of occurrence `o`'s block reshaped to `form`, title line first, trailing blank lines dropped.
- * - heading → heading: every heading of the block (`pf.heads`, so fences and YAML comments are skipped) shifts by the same delta
- * - bullet → bullet: the title gets the new marker, the body is re-indented from the old content column to the new one
- * - bullet → heading: the body is de-indented; description lines starting with `#` are escaped, else they would become headings
- * A heading never becomes a bullet (its sub-headings could not follow); callers put it at a heading slot instead.
+ * Lines of heading occurrence `o`'s block as a heading of `level`, title line first, trailing blank lines dropped: every
+ * heading of the block (`pf.heads`, so fences and YAML comments are skipped) shifts by the same delta.
  */
-function reshape({ pf, node }: Occ, form: Form): string[] {
+function reshape({ pf, node }: Occ, level: number): string[] {
   let end = node.block.end;
   while (end > node.line + 1 && !pf.lines[end - 1].trim()) end--;
-  const lines = pf.lines.slice(node.line, end).map(l => l.trim() ? l : '');
-  if (node.kind === 'heading') {
-    if (!('level' in form)) throw new Error('Internal error: a heading cannot become a bullet');
-    const d = form.level - levelOf(node);
-    for (const h of pf.heads) if (h.line >= node.line && h.line < end) lines[h.line - node.line] = '#'.repeat(h.level + d) + lines[h.line - node.line].slice(h.level);
-    return lines;
-  }
-  // Every non-blank line of a bullet's block is indented at least to its content column (`indent`), see the parser's `itemEnd`
-  const cut = node.indent.length, body = node.own.start - node.line, pad = 'bullet' in form ? ' '.repeat(form.bullet.length) : '';
-  let fence: string | null = null;
-  return lines.map((l, i) => {
-    if (i === 0) return ('bullet' in form ? form.bullet : '#'.repeat(form.level) + ' ') + l.slice(cut);
-    if (!l) return l;
-    l = l.slice(cut);
-    if ('level' in form && i >= body) {
-      if (fence) { if (closesFence(l, fence)) fence = null; }
-      else if ((fence = fenceRun(l)) === null && /^#{1,6}([ \t]|$)/.test(l)) l = '\\' + l;
-    }
-    return pad + l;
-  });
+  const lines = pf.lines.slice(node.line, end).map(l => l.trim() ? l : ''), d = level - levelOf(node);
+  for (const h of pf.heads) if (h.line >= node.line && h.line < end) lines[h.line - node.line] = '#'.repeat(h.level + d) + lines[h.line - node.line].slice(h.level);
+  return lines;
 }
 
 /**
- * Moves a task's home block (properties, description, lists and nested subtasks go with it); references in other lists stay.
- * A task merged with a tree node moves as that node instead (`moveNode`).
+ * Moves a task's home heading block (properties, description, lists and nested subtasks go with it); references in other
+ * lists stay. A task merged with a tree node moves as that node instead (`moveNode`).
  * Targets:
  * - `parent` (refused if it is the task or one of its descendants), with `sibling`: next to the sibling's occurrence that
- *   makes it `parent`'s subtask, in its form; without (or no such occurrence): appended. A bullet joins `parent`'s
- *   Subtask list; a heading nests as the last sub-heading of a heading `parent` if levels stay within 6
+ *   makes it `parent`'s subtask; without (or no such occurrence): the parent's last sub-heading (`subSlot`)
  * - `near` (a tree node, '' the root), with `sibling` (a top-level task there): next to the sibling's home; without: a
  *   level-1 heading at the end of the file `placeTask` picks
- * A heading meeting a bullet slot becomes a level-1 heading at the end of that file, and (under a parent) a reference
- * takes the slot. The rest of the subtree homed at the top level of the old file follows into the new file (see below).
+ * Next to a sibling's reference bullet, a reference takes the slot and the block becomes a level-1 heading at the end of
+ * that file. All headings of the block shift by the same delta (refused past level 6). The rest of the subtree homed at
+ * the top level of the old file follows into the new file (see below).
  * Edits: insertions in text order, then the removals, so `applyEdits` keeps an insertion at a removal's start in front
  * of it; an insertion strictly inside a removed block (moving into itself) is refused.
  */
 function moveTask(ctx: Ctx, op: Extract<Op, { op: 'move' }>): Plan {
   const x = need(ctx, op.id);
   if (nodeOf(ctx, x.id)) return moveNode(ctx, op);
-  const o = home(ctx, x), heading = o.node.kind === 'heading', sub = subtree(ctx, x.id);
+  const o = home(ctx, x), sub = subtree(ctx, x.id), depth = deepest(o) - levelOf(o.node);
   const sib = op.sibling !== undefined ? need(ctx, op.sibling) : undefined, edits: Edit[] = [];
-  let slot: Slot | undefined, parent: Occ | undefined, rmdir: string | undefined;
-  const eof = (file: string): Slot => ({ file, line: ctx.files.get(file)?.lines.length ?? 0, level: 1 });
+  let slot: Slot, rmdir: string | undefined;
 
-  // Target slot (or, for an appended bullet, the list edit itself)
+  // Target slot (a past-level-6 parent adds its reference to `edits`)
   if (op.parent !== undefined) {
     const p = need(ctx, op.parent);
     if (sub.has(p.id)) throw new Error(`Cannot move ${x.id} under itself`);
-    parent = home(ctx, p);
     const so = sib && subOcc(ctx, p.id, sib);
-    if (so) slot = beside(so, !!op.after);
-    else if (!heading) edits.push(addItem(parent, null, b => reshape(o, { bullet: b })));
-    else if (parent.node.kind === 'heading' && deepest(o) - levelOf(o.node) + levelOf(parent.node) + 1 <= 6)
-      slot = { file: parent.pf.file, line: parent.node.block.end, level: levelOf(parent.node) + 1 };
-    else { edits.push(addItem(parent, null, ref(x.type, x.title))); slot = eof(parent.pf.file); }
+    slot = so ? beside(so, !!op.after) : subSlot(ctx, home(ctx, p), depth, x.type, x.title, edits);
   } else if (sib) slot = beside(home(ctx, sib), !!op.after);
   else {
     const at = placeTask(ctx, op.near, x.title);
-    slot = eof(checkPath(at.file, true));
+    slot = eof(ctx, checkPath(at.file, true));
     rmdir = at.rmdir;
   }
 
-  // The block itself, reshaped for the slot (a heading meeting a bullet slot leaves a reference there)
+  // The block itself; a reference bullet slot takes a reference, and the block goes to the end of that file
   const adds: { slot: Slot; lines: string[] }[] = [];
-  if (slot) {
-    if (heading && 'bullet' in slot) {
-      if (parent) adds.push({ slot, lines: ref(x.type, x.title)(slot.bullet) });
-      slot = eof(slot.file);
-    }
-    if (heading && 'level' in slot && deepest(o) - levelOf(o.node) + slot.level > 6) throw new Error(`${x.id} would need headings deeper than level 6`);
-    adds.push({ slot, lines: reshape(o, slot) });
+  if ('bullet' in slot) {
+    adds.push({ slot, lines: [`${slot.bullet}[${x.type}] ${x.title}`] });
+    slot = eof(ctx, slot.file);
   }
+  if (depth + slot.level > 6) throw new Error(`${x.id} would need headings deeper than level 6`);
+  adds.push({ slot, lines: reshape(o, slot.level) });
 
   // The rest of the subtree in the old file: descendants homed at its top level are shown only under the task (their parent
   // is in the same file); left behind in another file, they would turn into top-level tasks. They follow as level-1 headings
-  const pf = o.pf, dest = slot?.file ?? parent!.pf.file, rms = [cutOut(o)];
+  const pf = o.pf, dest = slot.file, rms = [cutOut(o)];
   if (dest !== pf.file) for (const node of pf.roots) {
+    if (node.kind !== 'heading' || node === o.node) continue;
     const t = ctx.db.tasks[taskId(node.type, node.title)];
-    if (node === o.node || !sub.has(t.id) || t.home.file !== pf.file || t.home.line !== node.line) continue;
-    adds.push({ slot: eof(dest), lines: reshape({ pf, node }, { level: 1 }) });
+    if (!sub.has(t.id) || t.home.file !== pf.file || t.home.line !== node.line) continue;
+    adds.push({ slot: eof(ctx, dest), lines: reshape({ pf, node }, 1) });
     rms.push(cutOut({ pf, node }));
   }
 
@@ -480,9 +459,9 @@ function moveNode(ctx: Ctx, op: Extract<Op, { op: 'move' }>): Plan {
         const so = op.sibling !== undefined ? subOcc(ctx, neu, need(ctx, op.sibling)) : undefined;
         if (so?.node.kind === 'bullet') {
           const at = op.after ? so.node.block.end : so.node.block.start;
-          edits.push({ file: so.pf.file, start: at, end: at, lines: ref(x.type, x.title)(so.node.list!.bullet) });
+          edits.push({ file: so.pf.file, start: at, end: at, lines: [`${so.node.list!.bullet}[${x.type}] ${x.title}`] });
         }
-        else edits.push(addItem(home(ctx, ctx.db.tasks[neu]), null, ref(x.type, x.title)));
+        else edits.push(addItem(home(ctx, ctx.db.tasks[neu]), null, x.type, x.title));
       }
       if (old) edits.push(...unref(ctx, old, x.id));
     }
@@ -506,7 +485,7 @@ function link(ctx: Ctx, op: Extract<Op, { op: 'link' }>): Plan {
     throw new Error(`Link "${type}" of [${a.type}] cannot target [${b.type}]`);
   if (ctx.db.edges.some(e => (e.from === a.id && e.to === b.id && e.type === type) || (e.from === b.id && e.to === a.id && e.reverse === type)))
     throw new Error('These tasks are already linked that way');
-  return { edits: [addItem(home(ctx, a), type === SUBTASK ? null : type, ref(b.type, b.title))], id: a.id };
+  return { edits: [addItem(home(ctx, a), type === SUBTASK ? null : type, b.type, b.title)], id: a.id };
 }
 
 function unlink(ctx: Ctx, op: Extract<Op, { op: 'unlink' }>): Plan {
@@ -516,7 +495,6 @@ function unlink(ctx: Ctx, op: Extract<Op, { op: 'unlink' }>): Plan {
   // `op.from`'s own declaration: `at` when it is the edge's `from`, else `back`; without one, the other side's (`at`)
   const at = e.from !== op.from && e.back || e.at;
   const o = [...ctx.occ.get(e.from)!, ...ctx.occ.get(e.to)!].find(o => o.pf.file === at.file && o.node.line === at.line)!;
-  if (hasBody(o.pf, o.node)) throw new Error(`${at.file}:${at.line + 1} defines this task's content; delete the task or edit the file instead`);
   return { edits: [removeItem(o.pf, o.node)], id: op.from };
 }
 

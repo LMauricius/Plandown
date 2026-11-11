@@ -1,6 +1,6 @@
 ---
 name: plandown-tasks
-description: Write and edit tasks in Plandown Markdown files (`[Type] Title` headings and bullets, YAML property blocks, subtask lists, labeled link lists) so they stay valid against `plandown-format.md`. Use whenever creating, editing, moving, linking or deleting tasks in any `.md` file of a folder whose root holds `plandown-format.md`.
+description: Write and edit tasks in Plandown Markdown files (`[Type] Title` headings, YAML property blocks, subtask and labeled link lists of references) so they stay valid against `plandown-format.md`. Use whenever creating, editing, moving, linking or deleting tasks in any `.md` file of a folder whose root holds `plandown-format.md`.
 ---
 
 # Writing Plandown task files
@@ -11,12 +11,14 @@ A Plandown folder is a task database: every `.md` file under it (except hidden o
 
 ## Tasks and identity
 
-A heading or bullet whose text starts with `[<Type>]` is a task; the rest of the line is its title.
+A heading whose text starts with `[<Type>]` is a task; the rest of the line is its title. **Every task needs its own heading.** A bullet starting with `[<Type>]` is only a reference to a task (used in subtask and link lists); a bullet naming a task without a heading anywhere is an error and its link is dropped.
 
 ```markdown
 # [Task] Pantry 1.0
-- [Bug] Imported recipes lose their photos
-1. [Task] Numbered items work too
+## [Bug] Imported recipes lose their photos
+
+- [Task] A reference
+1. [Task] Numbered references work too
 - [x] [Task] A checkbox before the type is allowed
 ```
 
@@ -27,15 +29,15 @@ A heading or bullet whose text starts with `[<Type>]` is a task; the rest of the
 
 ## Home occurrence
 
-Each place a task appears is an *occurrence*. The first one (in natural file order, then line order) that has properties or a description is its **home**. Properties and description live **only there**. Other occurrences are bare references that may add links.
+Each place a task appears (heading or reference bullet) is an *occurrence*. The first heading (in natural file order, then line order) that has properties or a description is its **home**, else its first heading. Properties and description live **only there**. Other occurrences may add links.
 
 - To change a task's properties or description, find and edit its home.
-- Never add a property block to a second occurrence (it is ignored and warned about).
-- To mention an existing task elsewhere, write just its `[Type] Title` line.
+- Never add a property block to a second heading (it is ignored and warned about).
+- To mention an existing task in a list, write just its `[Type] Title` bullet. Never nest properties, description or task bullets under a reference bullet: they are ignored (with a warning).
 
 ## Properties
 
-Under a heading, a YAML block indented by four spaces, directly below the title:
+A YAML block indented by four spaces, directly below the heading:
 
 ```markdown
 ## [Task] Offline mode
@@ -46,20 +48,10 @@ Under a heading, a YAML block indented by four spaces, directly below the title:
 Description text starts here, at the left margin.
 ```
 
-Under a bullet task, a fenced `yaml` block indented to the bullet's text column (never plain indented lines; they merge into the title):
-
-````markdown
-- [Task] Choose an auth provider
-  ```yaml
-  effort: 6
-  done: true
-  ```
-````
-
 Rules:
 
 - A heading's block ends at the first line indented by less than four spaces, or at a `---` / `...` line (indented or not), which belongs to the block. Keep nested YAML indented relative to those four spaces. Leave a blank line between the block and the description (optional, but the default style).
-- Always close a bullet's fence. `~~~` and `yml` are accepted too, and a heading accepts a fence as well, but write the styles above.
+- A fenced ```` ```yaml ```` block (or `~~~`, `yml`) is accepted too, but write the indented style; always close a fence.
 - The first block of a task's section is always its properties: never start a description with a code block when the task has no property block.
 - Blocks delimited by `---` lines are the old style: convert them to the current style when you edit them.
 - Use only properties declared for the task's type (plus built-ins), with values of the declared type: `date` as `YYYY-MM-DD`, `datetime` as ISO 8601, `number` unquoted, `boolean` as `true`/`false`, `enum` values exactly as listed.
@@ -69,27 +61,23 @@ Rules:
 
 ## Description
 
-Free text after the title (and property block).
-
-- Heading task: runs until the next task heading or the next heading of the same or higher level. Ordinary sub-headings (`### Notes`) stay part of the description.
-- Bullet task: the indented text below the bullet.
-- Lists of task bullets inside it are not description; they are subtasks or links.
+Free text after the heading (and property block). It runs until the next task heading or the next heading of the same or higher level. Ordinary sub-headings (`### Notes`) stay part of the description. Lists of task references inside it are not description; they are subtasks or links.
 
 ## Subtasks
 
 Two ways, both equivalent:
 
-1. **Sub-heading:** a task heading nested under a task heading (ordinary headings in between are fine).
-2. **Unlabeled list:** a list of task bullets with no `<Link type>:` line above it.
+1. **Sub-heading:** a task heading nested under a task heading (ordinary headings in between are fine). This is how a new subtask is defined.
+2. **Unlabeled list:** a list of references with no `<Link type>:` line above it, for subtasks defined by headings elsewhere (e.g. in their own files).
 
 ```markdown
 # [Task] Pantry 1.0
 
 ## [Task] Offline mode
 
-- [Task] Design the sync protocol
-- [Task] Local recipe cache
-  - [Task] Nested subtasks work too
+- [Task] Account system
+
+### [Task] Design the sync protocol
 ```
 
 A list labeled `Parent:` declares parents explicitly. Write subtask lists unlabeled, except right after another list with the same marker: label those `Subtask:`, or they continue the list above.
@@ -98,7 +86,7 @@ A list labeled `Parent:` declares parents explicitly. Write subtask lists unlabe
 
 ## Links
 
-Put a `<Link type>:` line above the list (directly above is the default style; a blank line between is allowed):
+Put a `<Link type>:` paragraph line above the list (directly above is the default style; a blank line between is allowed). Never use a heading as the label (`### Blocked by:` makes the list a subtask list, with a warning):
 
 ```markdown
 ## [Task] Offline mode
@@ -109,7 +97,7 @@ Blocked by:
 ```
 
 - The link name must be declared by the **source** task's type, and must allow the **target**'s type. Check the format file each time.
-- An entry is a normal occurrence: if the target exists elsewhere this references it; if not, this line **defines** it. Verify exact titles so you reference rather than create.
+- An entry only references its target, which must have its own heading. Verify exact titles; to link a new task, add its heading too.
 - Write each relation once. `Blocked by: [Task] B` under A equals `Blocks: [Task] A` under B; do not write both.
 - A task must not link to itself.
 - Lists follow CommonMark: blank lines between items do not end a list. A list ends at the next non-list line (such as another label) or at a bullet with a different marker (`-`, `*`, `+`).
@@ -124,15 +112,15 @@ Make surgical edits; leave all unrelated lines byte for byte unchanged.
 | Rename / retype | Change the `[Type] Title` line in **every** occurrence across all files. Check that the new identity does not already exist. If the type changes, check its properties and links are valid for the new type. |
 | Edit properties / description | Edit the home occurrence only. |
 | Add link | Append to the matching labeled list in the home occurrence; create the `<Link>:` list if missing. |
-| Remove link | Delete the list entry declaring it (it may be on either side, under either name). Do not delete an entry that carries the task's properties, description or nested lists; move that content first. |
-| Change parent | Move the heading/bullet, or edit the `Parent:` / subtask list entry. |
-| Delete task | Remove every occurrence, including what is nested inside each. Ask before deleting nested tasks. |
+| Remove link | Delete the list entry declaring it (it may be on either side, under either name). |
+| Change parent | Move the heading, or edit the `Parent:` / subtask list entry. |
+| Delete task | Remove every occurrence: heading sections (with what is nested inside) and references. Ask before deleting nested tasks. |
 | Mark done | Set `done: true` in the home's property block (create the block if missing). |
 
 ## Checklist before finishing
 
 1. Every type, property, value and link is allowed by `plandown-format.md`.
-2. No accidental new tasks from misspelled titles; no accidental merges from reused titles.
+2. Every referenced task has its own heading; no accidental merges from reused titles.
 3. Properties exist only at the home occurrence; every block is closed.
 4. Every link list has its label above it, and no list accidentally continues another one.
 5. If the `plandown` CLI is available, run `plandown check <folder>`; fix every error it reports for lines you touched (`file:line` diagnostics, non-zero exit on errors).

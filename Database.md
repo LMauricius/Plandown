@@ -2,7 +2,7 @@
 
 Plandown keeps all of its data in a folder of plain Markdown files. There is no hidden index and no cache: the files *are* the database. You can edit them in any text editor, keep them in version control, and Plandown picks up the changes immediately.
 
-This document explains how Plandown reads that folder: which lines become tasks, how properties and links are written, and how the special `plandown-format.md` file defines what is allowed.
+This document explains how Plandown reads that folder: which headings become tasks, how properties and links are written, and how the special `plandown-format.md` file defines what is allowed.
 
 ## The folder
 
@@ -25,16 +25,24 @@ flowchart LR
 
 ## Tasks
 
-Every heading or bullet point whose text starts with `[<Task type>]` is a task. The rest of the line is the task's title.
+Every heading whose text starts with `[<Task type>]` is a task. The rest of the line is the task's title.
 
 ```markdown
 # [Task] Pantry 1.0
-- [Bug] Imported recipes lose their photos
+## [Bug] Imported recipes lose their photos
+```
+
+A bullet point that starts with `[<Task type>]` does not define a task. It *refers* to one, and it is how lists link tasks together (see [Subtasks and links](#subtasks-and-links)):
+
+```markdown
+- [Task] Offline mode
 1. [Task] Numbered items work too
 - [x] [Task] A checkbox in front of the type is allowed
 ```
 
-Lines that do not start with a task type are ordinary Markdown and are left alone. A checkbox on its own (`- [x] Buy milk`) is not a task, and neither is a link (`- [docs](https://example.com)`) or anything inside a fenced code block.
+Every task therefore needs a heading of its own somewhere in the folder. A bullet that names a task without one is reported as an error, and its link is ignored.
+
+Lines that do not start with a task type are ordinary Markdown and are left alone. A checkbox on its own (`- [x] Buy milk`) is not a reference, and neither is a link (`- [docs](https://example.com)`) or anything inside a fenced code block.
 
 ### Identity and interwoven files
 
@@ -44,12 +52,13 @@ A task is identified by its type and title together: `[Task] Offline mode`. Wher
 # Notes for November
 
 ## [Task] Offline mode
-- [Task] Sync status indicator
+
+### [Task] Sync status indicator
 ```
 
 Because of this, titles must be unique within a task type. Two different tasks named `[Task] Cleanup` would be merged into one.
 
-Each place a task appears is called an *occurrence*. The first occurrence that has properties or a description is the task's **home**; that is where its properties and description are read from and where the GUI writes them back. The other occurrences only contribute links. If properties are written in more than one occurrence, Plandown uses the home's and reports a warning for the others.
+Each place a task appears (as a heading or as a bullet) is called an *occurrence*. The first heading that has properties or a description is the task's **home**, or the first heading if none has; that is where its properties and description are read from and where the GUI writes them back. The other occurrences only contribute links. If properties are written in more than one occurrence, Plandown uses the home's and reports a warning for the others.
 
 ### Top-level tasks
 
@@ -57,7 +66,7 @@ Tasks that are not nested under another task are top-level tasks. Usually these 
 
 ## Properties
 
-A YAML block right after a task's title holds its properties. Under a heading, indent the block by four spaces:
+A YAML block right after a task's heading holds its properties. Indent the block by four spaces:
 
 ```markdown
 ## [Task] Offline mode
@@ -71,21 +80,21 @@ Recipes, shopping lists and edits keep working without a network and sync when i
 
 The block ends at the first line indented by less than four spaces, so the description continues at the left margin. It may also be closed explicitly by a `---` or `...` line (the YAML document markers), indented or not; that line belongs to the block, so a description cannot start with a `---` horizontal rule. A blank line after the block is customary but optional, and blank lines may also separate the block from the title or appear inside it. Markdown viewers render the block as an ordinary code block.
 
-Under a bullet task, put the properties in a fenced `yaml` code block indented to the bullet's text instead:
+A fenced `yaml` code block works as well. Both fence styles are accepted (```` ``` ```` and `~~~`), and the language may be written as `yaml` or `yml`:
 
 ````markdown
-- [Task] Choose an auth provider
-  ```yaml
-  effort: 6
-  done: true
-  ```
+## [Task] Choose an auth provider
+```yaml
+effort: 6
+done: true
+```
 ````
 
-Indented lines below a bullet would merge with its title in Markdown viewers and formatters, which is why bullets need the fence. Both fence styles work (```` ``` ```` and `~~~`), and the language may be written as `yaml` or `yml`. A heading accepts a fence as well. A missing closing fence is reported as an error; the search stops at the next task heading (or, for a bullet task, at the end of its item), so an unclosed block never swallows other tasks.
+A missing closing fence is reported as an error; the search stops at the next task heading, so an unclosed block never swallows other tasks.
 
 Note that the first block of a task's section is always read as its properties. To start a description with a code block, put the properties (or an empty fenced `yaml` block) above it.
 
-YAML comments are allowed and are preserved when the GUI edits the block. A heading's block is written back indented and followed by a blank line, and a bullet's block is written back as a fence.
+YAML comments are allowed and are preserved when the GUI edits the block. The block is always written back indented and followed by a blank line, so editing the properties converts a fenced block.
 
 Earlier versions delimited the block with two `---` lines directly below the title. That style is still read, but `plandown check` reports it as a warning, and the next edit of the task's properties rewrites it in the current style. It was replaced because most Markdown renderers (and formatters such as Prettier) turn the YAML above a closing `---` into a heading.
 
@@ -102,7 +111,7 @@ Undeclared properties are kept but reported as warnings; values of the wrong typ
 
 ## Description
 
-The description is the text after the title (and its property block). For a heading task, it runs up to the next task heading or the next heading of the same or a higher level, so ordinary sub-headings such as `### Notes` are sub-chapters of the description. For a bullet task, it is the indented text below the bullet.
+The description is the text after the heading (and its property block). It runs up to the next task heading or the next heading of the same or a higher level, so ordinary sub-headings such as `### Notes` are sub-chapters of the description.
 
 Lists that contain tasks are not part of the description text; they declare subtasks and links, as described below. The description may continue after them, and the GUI shows each list's links at the place where the list stands.
 
@@ -115,24 +124,25 @@ Tasks are connected by *links*. Every link has a type, and every link type has a
 There are two ways to make a subtask:
 
 1. **Sub-headings.** A task heading nested under another task heading is its subtask, even with ordinary headings in between.
-2. **Unlabeled lists.** A list of task bullets that has no `<Link type>:` line above it contains subtasks of the task it belongs to.
+2. **Unlabeled lists.** A list of task references that has no `<Link type>:` line above it lists subtasks of the task it belongs to. The subtasks are defined by headings elsewhere, for example in a file of their own.
 
 ```markdown
 # [Task] Pantry 1.0
 
 ## [Task] Offline mode
 
-- [Task] Design the sync protocol
-- [Task] Local recipe cache
+- [Task] Account system
+
+### [Task] Design the sync protocol
 ```
 
-Here `Offline mode` is a subtask of `Pantry 1.0`, and both bullets are subtasks of `Offline mode`. Each subtask in turn has its parent linked as `Parent`. A list labeled `Parent:` declares parents explicitly, and a list may also be labeled `Subtask:` (useful when it follows another list, see below).
+Here `Offline mode` is a subtask of `Pantry 1.0`, and both `Account system` (defined by a heading elsewhere) and `Design the sync protocol` are subtasks of `Offline mode`. Each subtask in turn has its parent linked as `Parent`. A list labeled `Parent:` declares parents explicitly, and a list may also be labeled `Subtask:` (useful when it follows another list, see below).
 
-Bullet tasks can have their own nested lists, so subtasks can be nested as deep as you like.
+A bullet is only a reference, so whatever is nested under it is plain Markdown. Plandown reports a warning when a reference carries a `yaml` block or nested task bullets, because those would otherwise be lost silently; give the task its own heading instead.
 
 ### Other link types
 
-To use any other link type, put a line of the form `<Link type>:` above the list (blank lines between them are fine):
+To use any other link type, write a paragraph line of the form `<Link type>:` above the list (blank lines between them are fine):
 
 ```markdown
 ## [Task] Offline mode
@@ -141,7 +151,9 @@ Blocked by:
 - [Task] Account system
 ```
 
-The entries are ordinary task occurrences. If `[Task] Account system` is defined elsewhere, this is a reference to it; if not, this line defines it.
+The label must be ordinary paragraph text. A heading such as `### Blocked by:` does not label the list below it: that list is read as a subtask list, and Plandown reports a warning.
+
+Every entry refers to a task by its type and title, so `[Task] Account system` must have a heading somewhere in the folder.
 
 Lists follow the CommonMark rules, so formatters such as Prettier can reformat them safely. Blank lines between items do not end a list, and items may span several paragraphs. A list ends at a line that is not part of it (such as the next label) or at a bullet with a different marker: `-`, `*` and `+` each start their own list, as do `1.` and `1)`. To put a subtask list right after another list, label it `Subtask:`; an unlabeled list after a blank line would simply continue the list above it. Plandown adds this label itself when the GUI appends such a list.
 
@@ -232,17 +244,18 @@ flowchart LR
 Plandown never refuses to load a folder. Instead it reports diagnostics (with file and line) for anything that does not match the format:
 
 - In `plandown-format.md`: duplicate types, invalid property schemas, unlabeled lists, unknown target types, and reverse declarations that contradict each other.
-- In task files: unknown task types, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, property blocks in the old `---` style, undeclared properties and values that do not match their schema.
+- In task files: unknown task types, references to tasks that have no heading, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, property blocks in the old `---` style, properties or tasks nested under a reference bullet, headings used as list labels, undeclared properties and values that do not match their schema.
 
 Run `plandown check <folder>` to print them; it exits with a non-zero status when there are errors, so it can guard a commit hook or a CI job.
 
 ## How edits are written
 
-When a task is changed through the GUI or the library, Plandown rewrites only the lines involved: a title line, a property block, a description, or a single list item. Everything else in the file, including your formatting and comments, stays byte for byte the same. Before writing, Plandown checks that the file has not changed on disk since it was last read; if it has, the edit is refused and the folder is reloaded, so nothing written by someone else is overwritten.
+When a task is changed through the GUI or the library, Plandown rewrites only the lines involved: a heading, a property block, a description, or a single list item. Everything else in the file, including your formatting and comments, stays byte for byte the same. Before writing, Plandown checks that the file has not changed on disk since it was last read; if it has, the edit is refused and the folder is reloaded, so nothing written by someone else is overwritten.
 
 Some changes are made where they are declared:
 
 - **Renaming** a task (or changing its type) rewrites its title in every occurrence, in every file.
+- **Creating a subtask** adds a sub-heading at the end of the parent's section. If that heading would have to be deeper than level 6, the subtask becomes a level-1 heading at the end of the file instead, and a reference to it is added to the parent's subtask list.
 - **Adding a link** appends an entry to the matching list of the task's home occurrence, creating the `<Link type>:` list if needed.
-- **Removing a link** deletes the list entry that declares it. When both tasks declare the same link, removing it from one task deletes only that task's entry; the other declaration remains. An entry that also defines the task's content (properties, description or nested lists) is not removed; links that come from heading nesting are changed by moving the heading.
-- **Deleting a task** removes every occurrence, including everything nested inside it.
+- **Removing a link** deletes the list entry that declares it. When both tasks declare the same link, removing it from one task deletes only that task's entry; the other declaration remains. Links that come from heading nesting are changed by moving the heading.
+- **Deleting a task** removes every occurrence: its heading sections, with everything nested inside them, and every reference to it.

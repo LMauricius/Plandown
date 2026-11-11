@@ -93,8 +93,8 @@ A task merged with its file always moves as that file, together with its same-na
 
 Moving any other task moves the text where its properties and description live, together with everything nested in it. Subtasks written as separate top-level sections of the same file (listed by the task, so shown only under it) follow it into the new file as level-1 headings, so the whole subtree moves. Any other list that mentions the task keeps mentioning it. The text adapts to its new place:
 
-- A bulleted task stays a bullet when it joins a list, and is re-indented to match it. Next to a heading, or into a file, it becomes a heading; lines of its description that start with `#` are escaped with `\`, so they stay text.
-- A heading task stays a heading. Moved under another heading task, it becomes that task's last sub-heading, and all headings inside it shift by the same number of levels. Where a heading cannot go (under a bulleted task, or deeper than level 6), it becomes a level-1 heading at the end of that file, and a `- [Type] Title` reference takes its place in the parent's list.
+- Moved under another task, the heading becomes that task's last sub-heading, and all headings inside it shift by the same number of levels.
+- Dropped next to a sibling that the parent lists as a reference bullet, a `- [Type] Title` reference takes that place in the list, and the heading becomes a level-1 heading at the end of that file. The same happens when the heading would have to be deeper than level 6.
 
 A task cannot move under itself or any of its subtasks. A file left empty by a move (nothing but blank lines) is deleted. After a move, the moved task opens and its new row is selected.
 
@@ -126,7 +126,7 @@ The rest of the editor acts immediately:
 
   Subtask and parent links have no removal button; change them in the files.
 - **Link.** Choose a link type, then pick the target task. The suggestions only offer tasks whose type the chosen link type allows. Only link types declared by this task's type can be created here; incoming one-directional links (and parents) are created on the other task's page.
-- **Add subtask.** Creates a new task as a bullet in the task's subtask list.
+- **Add subtask.** Creates a new task as the last sub-heading of the task's section.
 - **Stored in.** Every file and line where the task occurs. The occurrence marked *properties and description* is the one the editor writes to.
 - **Delete.** Click twice. Deleting removes every occurrence of the task, including everything nested inside them.
 

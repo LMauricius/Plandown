@@ -1,6 +1,6 @@
 /**
- * Markdown structure parser. Finds `[Type] Title` headings and bullets, their YAML property blocks,
- * descriptions and (labeled) task lists, and records line ranges so edits can rewrite files surgically.
+ * Markdown structure parser. Finds `[Type] Title` headings (tasks) with their YAML property blocks, descriptions and
+ * (labeled) lists of `[Type] Title` bullets (references), and records line ranges so edits can rewrite files surgically.
  * Knows nothing about task types; `format.ts` and `db.ts` interpret the result.
  */
 import { parse as parseYaml } from 'yaml';
@@ -9,15 +9,15 @@ import { parse as parseYaml } from 'yaml';
 export interface Range { start: number; end: number }
 
 /**
- * Property block; `style`: `indent` (lines indented 4+ columns below a heading), `fence` (a ```yaml fence) or `dash`
- * (legacy `---` lines, rewritten in the current style on edit).
+ * Property block below a heading; `style`: `indent` (lines indented 4+ columns), `fence` (a ```yaml fence) or `dash`
+ * (legacy `---` lines). Edits rewrite it as `indent`.
  */
 export interface Props extends Range { raw: string; data: Record<string, unknown>; style: 'indent' | 'fence' | 'dash' }
 
 /** Top-level block of an occurrence's body holding task lists (label line included); `labels` of every list inside it. */
 export interface Span extends Range { labels: (string | null)[] }
 
-/** A run of contiguous bullets owned by a task; `label` is the `<Link type>:` line above it (null: Subtask). */
+/** A run of contiguous bullets owned by a task; `label` is the `<Link type>:` paragraph line above it (null: Subtask). */
 export interface List {
   label: string | null;
   labelLine: number;   // -1 when unlabeled; blank lines may separate it from the list
@@ -27,14 +27,16 @@ export interface List {
   end: number;         // line after the last bullet item (append position); blank lines between items stay inside (loose list)
 }
 
-/** One occurrence of a task in one file. The same task may occur in several places. */
+/**
+ * One occurrence of a task in one file. The same task may occur in several places. A heading defines the task; a bullet
+ * only refers to it, so its body fields stay empty (content nested under a bullet is plain text).
+ */
 export interface Node {
   type: string;
   title: string;
   line: number;              // title line
   kind: 'heading' | 'bullet';
   prefix: string;            // title line text before `[Type]` (`## `, `  - [x] `)
-  indent: string;            // indentation of content lines ('' for headings)
   props?: Props;             // YAML block including its opening and closing lines
   own: Range;                // body: content after the props up to the next task heading; where new lists are appended
   spans: Span[];             // task-list blocks in `own`; the text between them is the description
@@ -63,7 +65,7 @@ export const BULLET = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
 const YAML_FENCE = /^[ \t]*(`{3,}|~{3,})[ \t]*ya?ml[ \t]*$/i;
 // YAML document end or start marker: may close a heading's indented property block
 export const DOC_END = /^[ \t]*(?:---|\.\.\.)[ \t]*$/;
-const LEGACY = 'Property block uses the "---" style, which was supported before and has been replaced by indented blocks (headings) and ```yaml blocks (bullets); editing the properties converts it';
+const LEGACY = 'Property block uses the "---" style, which was supported before and has been replaced by indented blocks; editing the properties converts it';
 // optional checkbox, then `[Type] Title`; `](` (a link) does not match because whitespace must follow `]`
 const TASK = /^(\[[ xX]\][ \t]+)?\[([^\[\]\r\n]+)\][ \t]+(\S.*?)[ \t]*$/;
 
@@ -116,14 +118,10 @@ export function gaps(node: Node): Range[] {
 }
 
 /** Description texts of an occurrence, one per gap. */
-export const bodyTexts = (pf: ParsedFile, node: Node) => gaps(node).map(r => rangeText(pf, node, r));
+export const bodyTexts = (pf: ParsedFile, node: Node) => gaps(node).map(r => rangeText(pf, r));
 
-/** Text of a body range, de-indented and trimmed of surrounding blank lines. */
-export function rangeText(pf: ParsedFile, node: Node, r: Range): string {
-  return pf.lines.slice(r.start, r.end)
-    .map(l => l.slice(Math.min(node.indent.length, indentOf(l))))
-    .join('\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
-}
+/** Text of a body range, trimmed of surrounding blank lines. */
+export const rangeText = (pf: ParsedFile, r: Range) => pf.lines.slice(r.start, r.end).join('\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
 
 export function parseMarkdown(file: string, text: string): ParsedFile {
   const lines = text.split(/\r?\n/);
@@ -132,23 +130,20 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
   const n = lines.length;
   const diag = (line: number, severity: Diagnostic['severity'], message: string) => pf.diagnostics.push({ file, line, severity, message });
   const isTaskHeading = (i: number) => { const h = HEADING.exec(lines[i]); return !!h && !!matchTask(h[2]); };
-  const isTitle = (i: number) => { const b = BULLET.exec(lines[i]); return isTaskHeading(i) || (!!b && !!matchTask(b[4])); };
 
   /**
-   * Property block of the task titled at line `t`: its first line, last line (-1: an unclosed fence) and style; null if
-   * none. Blank lines may come first (formatters put one between a heading and a code block, and inside loose list
-   * items). Below a heading: an indented block (CommonMark indented code: lines indented 4+ columns, up to the first less
-   * indented non-blank line) or a fence. Below a bullet: only a fence, indented to the item's content column (formatters
-   * merge indented lines into the title). Legacy `---` blocks must start directly under the title. A fence closes CommonMark-style (same character, at
-   * least as long, nothing else on the line); the search stops at the next task heading or a line indented less than the
-   * opening (the end of a bullet item), so an unclosed block cannot swallow later tasks.
+   * Property block of the task heading at line `t`: its first line, last line (-1: an unclosed fence) and style; null if
+   * none. Blank lines may come first (formatters put one between a heading and a code block). Either an indented block
+   * (CommonMark indented code: lines indented 4+ columns, up to the first less indented non-blank line) or a fence; legacy
+   * `---` blocks must start directly under the title. A fence closes CommonMark-style (same character, at least as long,
+   * nothing else on the line); the search stops at the next task heading or a line indented less than the opening, so an
+   * unclosed block cannot swallow later tasks.
    */
   function propsAt(t: number, end: number): { start: number; close: number; style: Props['style']; term: boolean } | null {
-    const heading = isTaskHeading(t), b = heading ? null : BULLET.exec(lines[t]);
     let o = t + 1;
     while (o < end && !lines[o].trim()) o++;
-    if (o >= end || (b && indentOf(lines[o]) < b[1].length + b[2].length + b[3].length)) return null;
-    if (heading && columnOf(lines[o]) >= 4) {
+    if (o >= end) return null;
+    if (columnOf(lines[o]) >= 4) {
       // A `---` or `...` line (indented or not, blank lines may precede it) closes the block and belongs to it
       let last = o, k = o + 1;
       for (; k < end && !DOC_END.test(lines[k]) && (!lines[k].trim() || columnOf(lines[k]) >= 4); k++) if (lines[k].trim()) last = k;
@@ -166,18 +161,19 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
   }
 
   // Pass 1: headings. Fenced code and property blocks are marked `skip` (a YAML `# comment` is not a heading, `- x` no bullet).
-  const skip = new Array<boolean>(n).fill(false);
+  // `opens`: fence opening lines, so a ```yaml fence under a bullet (an old property block) can be reported
+  const skip = new Array<boolean>(n).fill(false), opens = new Set<number>();
   const heads: { line: number; level: number; text: string }[] = [];
   pf.heads = heads;
   let fence: string | null = null;
   for (let i = 0; i < n; i++) {
     if (fence) { skip[i] = true; if (closesFence(lines[i], fence)) fence = null; continue; }
     const f = fenceRun(lines[i]);
-    if (f) { fence = f; skip[i] = true; continue; }
+    if (f) { fence = f; skip[i] = true; opens.add(i); continue; }
     const h = HEADING.exec(lines[i]);
     if (h) heads.push({ line: i, level: h[1].length, text: h[2] });
-    // Property block below a task title: bounded by `propsAt`; an unclosed fence skips only its opening line (an open fence would skip the rest of the file)
-    const p = isTitle(i) ? propsAt(i, n) : null;
+    // Property block below a task heading: bounded by `propsAt`; an unclosed fence skips only its opening line (an open fence would skip the rest of the file)
+    const p = h && matchTask(h[2]) ? propsAt(i, n) : null;
     if (p) { const e = p.close < 0 ? p.start : p.close; skip.fill(true, p.start, e + 1); i = e; }
   }
 
@@ -192,7 +188,7 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
     return last + 1;
   }
 
-  /** Reads the property block below a title line; returns the first content line. */
+  /** Reads the property block below a task heading; returns the first content line. */
   function readProps(node: Node, end: number): number {
     const p = propsAt(node.line, end);
     if (!p) return node.line + 1;
@@ -200,7 +196,7 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
     if (c < 0) { diag(o, 'error', `Unclosed property block (missing closing ${p.style === 'dash' ? '"---"' : 'fence'})`); return node.line + 1; }
     if (p.style === 'dash') diag(o, 'warning', LEGACY);
     const raw = (p.style === 'indent' ? lines.slice(o, p.term ? c : c + 1).map(l => stripCols(l, 4))
-      : lines.slice(o + 1, c).map(l => l.slice(Math.min(node.indent.length, indentOf(l))))).join('\n');
+      : lines.slice(o + 1, c)).join('\n');
     let data: Record<string, unknown> = {};
     try {
       const v = parseYaml(raw);
@@ -213,15 +209,24 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
     return c + 1;
   }
 
-  function mk(kind: Node['kind'], line: number, prefix: string, indent: string, t: { type: string; title: string }, blockEnd: number): Node {
+  function mk(kind: Node['kind'], line: number, prefix: string, t: { type: string; title: string }, blockEnd: number): Node {
     const r = { start: line + 1, end: line + 1 };
-    const node: Node = { type: t.type, title: t.title, line, kind, prefix, indent, own: r, spans: [], block: { start: line, end: blockEnd }, lists: [], children: [], list: null };
+    const node: Node = { type: t.type, title: t.title, line, kind, prefix, own: r, spans: [], block: { start: line, end: blockEnd }, lists: [], children: [], list: null };
     pf.nodes.push(node);
     return node;
   }
 
+  /** Whether [from, to) holds task content: a ```yaml fence or a task bullet. Nested under a bullet, it is ignored. */
+  const hasTaskContent = (from: number, to: number) => {
+    for (let k = from; k < to; k++) {
+      const b = skip[k] ? null : BULLET.exec(lines[k]);
+      if ((opens.has(k) && YAML_FENCE.test(lines[k])) || (b && matchTask(b[4]))) return true;
+    }
+    return false;
+  };
+
   /**
-   * Scans [start, end) for lists. Task bullets become occurrences in `owner.lists` (or roots).
+   * Scans [start, end) for lists. Task bullets become reference occurrences in `owner.lists` (or roots).
    * With `top`, each top-level list containing a task (even nested under non-task bullets) becomes a span of the owner.
    * Returns whether any task was found.
    */
@@ -231,12 +236,14 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
       const b = skip[i] ? null : BULLET.exec(lines[i]);
       if (!b) { i++; continue; }
 
-      // Label: the nearest non-blank line above (formatters insert a blank line), if it is `<Link type>:` text; otherwise Subtask
+      // Label: the nearest non-blank line above (formatters insert a blank line), if it is `<Link type>:` paragraph text
+      // (not a heading or bullet); otherwise Subtask
       const col = b[1].length;
       let p = i - 1;
       while (p >= start && !lines[p].trim()) p--;
       const prev = p >= start && !skip[p] ? lines[p] : '';
-      const label = prev.trim().endsWith(':') && !BULLET.test(prev) ? prev.trim().slice(0, -1).trim() : null;
+      const colon = prev.trim().endsWith(':') && !BULLET.test(prev), head = HEADING.test(prev);
+      const label = colon && !head ? prev.trim().slice(0, -1).trim() : null;
       const list: List = { label, labelLine: label === null ? -1 : p, start: i, bullet: b[1] + b[2] + ' ', items: [], end: i };
       let hasTask = false, j = i;
       const before = owner?.lists.length ?? 0;
@@ -247,12 +254,10 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
         if (!bb || bb[1].length !== col || !sameMarker(bb[2], b[2])) break;
         const contentCol = col + bb[2].length + bb[3].length, e = itemEnd(j, contentCol, end), t = matchTask(bb[4]);
         if (t) {
-          const node = mk('bullet', j, bb[1] + bb[2] + bb[3] + t.pre, ' '.repeat(contentCol), t, e);
+          const node = mk('bullet', j, bb[1] + bb[2] + bb[3] + t.pre, t, e);
           node.list = list;
           list.items.push(node);
-          const body = readProps(node, e);
-          node.own = { start: body, end: e };
-          parseBody(body, e, node, true);
+          if (hasTaskContent(j + 1, e)) diag(j, 'warning', `A bullet only refers to [${t.type}] ${t.title}; the properties and tasks nested under it are ignored (a task needs its own heading)`);
           hasTask = true;
         } else if (parseBody(j + 1, e, owner, false)) hasTask = true;
         list.end = j = e;
@@ -271,7 +276,8 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
       }
       if (hasTask) {
         found = true;
-        if (top && owner) owner.spans.push({ start: label === null ? i : i - 1, end: j, labels: owner.lists.slice(before).map(l => l.label) });
+        if (colon && head && owner) diag(p, 'warning', 'A heading cannot label a list; write "<Link type>:" as a paragraph line (this list is read as subtasks)');
+        if (top && owner) owner.spans.push({ start: label === null ? i : p, end: j, labels: owner.lists.slice(before).map(l => l.label) });
       }
       i = j;
     }
@@ -288,7 +294,8 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
     const owner = stack.findLast(s => s.node)?.node ?? null, t = matchTask(h.text);
     if (!t) {
       stack.push({ level: h.level, node: null });
-      if (h.line >= covered) parseBody(h.line + 1, heads[k + 1]?.line ?? n, owner, false);
+      // From the heading line itself, so a heading misused as a list label is seen (and reported)
+      if (h.line >= covered) parseBody(h.line, heads[k + 1]?.line ?? n, owner, false);
       return;
     }
     let o = k + 1;
@@ -297,7 +304,7 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
     let b = k + 1;
     while (b < heads.length && heads[b].level > h.level) b++;
     const line = lines[h.line];
-    const node = mk('heading', h.line, line.slice(0, line.indexOf(h.text)) + t.pre, '', t, heads[b]?.line ?? n);
+    const node = mk('heading', h.line, line.slice(0, line.indexOf(h.text)) + t.pre, t, heads[b]?.line ?? n);
     (owner ? owner.children : pf.roots).push(node);
     const body = readProps(node, end);
     node.own = { start: body, end };

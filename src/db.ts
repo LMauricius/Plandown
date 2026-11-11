@@ -105,18 +105,24 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
   for (const pf of files) {
     diagnostics.push(...pf.diagnostics);
     for (const node of pf.nodes) {
-      const list = occ.get(id(node)) ?? occ.set(id(node), []).get(id(node))!;
-      list.push({ pf, node });
+      (occ.get(id(node)) ?? occ.set(id(node), []).get(id(node))!).push({ pf, node });
       if (!format.types[node.type]) diag({ file: pf.file, line: node.line }, 'error', `Unknown task type [${node.type}]`);
-      for (const c of node.children) addEdge(pf, node, SUBTASK, c, c, true);
-      for (const l of node.lists) for (const item of l.items) addEdge(pf, node, l.label ?? SUBTASK, item, item, false);
     }
   }
+  // A task exists only where it has a heading; bullets merely refer to tasks
+  for (const [tid, list] of occ) if (!list.some(o => o.node.kind === 'heading')) {
+    for (const o of list) diag({ file: o.pf.file, line: o.node.line }, 'error', `No task ${tid}: a task needs its own heading`);
+    occ.delete(tid);
+  }
+  for (const pf of files) for (const node of pf.nodes) {
+    for (const c of node.children) addEdge(pf, node, SUBTASK, c, c, true);
+    for (const l of node.lists) for (const item of l.items) if (occ.has(id(item))) addEdge(pf, node, l.label ?? SUBTASK, item, item, false);
+  }
 
-  // Tasks: the first occurrence with content is home; its properties are validated against the schema
+  // Tasks: the first heading with content is home (bullets have none), else the first heading; its properties are validated against the schema
   const tasks: Record<string, Task> = {}, anchors = new Set<string>();
   for (const [tid, list] of occ) {
-    const home = list.find(o => o.node.props || bodyTexts(o.pf, o.node).some(Boolean)) ?? list.find(o => o.node.kind === 'heading') ?? list[0];
+    const home = list.find(o => o.node.props || bodyTexts(o.pf, o.node).some(Boolean)) ?? list.find(o => o.node.kind === 'heading')!;
     const loc = (o: Occ): Loc => ({ file: o.pf.file, line: o.node.line });
     for (const o of list) if (o !== home && o.node.props) diag(loc(o), 'warning', `Properties of ${tid} are already defined at ${home.pf.file}:${home.node.line + 1}; these are ignored`);
     const props = home.node.props?.data ?? {}, type = format.types[home.node.type];
