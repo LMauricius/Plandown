@@ -26,6 +26,24 @@ test('format: flips may be omitted (one-directional) but not contradicted', () =
   assert.deepEqual(meta.diagnostics.map(d => d.message), ['Unknown type setting "$meta.icon"', '"$meta" must be a map of type settings']);
 });
 
+test('format: [*] properties go to every type; folders without a format file use the built-in one', async () => {
+  const f = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n    P: string\n    Q: date\n\n# [*] all\n    Q: number\n\nX:\n- [A] Y\n\n# [B] b\n\nZ:\n- [*] W\n'));
+  assert.deepEqual(Object.keys(f.format.types), ['A', 'B']);
+  assert.deepEqual(Object.keys(f.format.types.A.props), ['Q', 'P']);
+  assert.equal(f.format.types.B.props.Q.type, 'number');
+  assert.deepEqual(f.diagnostics.map(d => d.message), [
+    '[*] declares properties only, not links',
+    'Property "Q" is declared by [*] for every type and cannot be redeclared',
+    'Link "Z" of [B] targets unknown task type [*]',
+  ]);
+  const d = mkdtempSync(join(tmpdir(), 'plandown-'));
+  writeFileSync(join(d, 'a.md'), '# [Task] A\n    effort: 2\n    done: true\n');
+  const m = await Plandown.open(d);
+  assert.deepEqual(m.db.diagnostics, []);
+  assert.deepEqual(Object.keys(m.db.format.types), ['Task']);
+  assert.deepEqual(Object.keys(m.db.format.types.Task.props), ['done', 'effort', 'spent', 'started']);
+});
+
 test('parser: checkboxes, links and code are not tasks; a new marker starts a new list', () => {
   const pf = parseMarkdown('a.md', '# [T] A\n- [x] done item\n- [link](x) text\n\n```\n# [T] Code\n```\nBlocked by:\n- [x] [T] B\n\n* [T] C\n');
   assert.deepEqual(pf.nodes.map(n => n.title), ['A', 'B', 'C']);
@@ -165,7 +183,7 @@ test('edits: property edits write the current style, converting a legacy block a
 
 test('lists as formatters leave them: blank lines after labels and between items; fences close CommonMark-style', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-'));
-  writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n\nBlocks:\n\n- [T] Blocked by\n\nBlocked by:\n\n- [T] Blocks\n');
+  writeFileSync(join(d, 'plandown-format.md'), '# [*] all\n    effort: number\n\n# [T] t\n\nBlocks:\n\n- [T] Blocked by\n\nBlocked by:\n\n- [T] Blocks\n');
   writeFileSync(join(d, 'a.md'), [
     '# [T] A', '', '    effort: 1', '', '...', '', 'Blocks:', '', '- [T] B', '', '- [T] C', '', '- [T] D',
     '', '````', '```js', '- [T] Code', '````', '',

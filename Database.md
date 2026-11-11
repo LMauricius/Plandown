@@ -8,7 +8,7 @@ This document explains how Plandown reads that folder: which headings become tas
 
 Every `.md` file inside the folder and its subfolders is read. Hidden files and folders (names starting with `.`) are skipped, and symbolic links are not followed. One file has a special role:
 
-- **`plandown-format.md`** at the top of the folder declares the task types, their properties and the link types between them. A file with that name inside a subfolder is ignored.
+- **`plandown-format.md`** at the top of the folder declares the task types, their properties and the link types between them. A file with that name inside a subfolder is ignored. A folder without one uses the built-in format, shown in [The format file](#the-format-file).
 - **Every other `.md` file** holds tasks. Files are read in natural name order (`2.md` before `10.md`), and together they form one database. Subfolders only organize the files; a task's identity does not depend on where it is stored.
 
 A task file may also end in `.plandown.md`. It is read like any other `.md` file, but editors can recognize it as a Plandown file by its name alone. Both suffixes count as the file's extension, so `roadmap.plandown.md` is named `roadmap` everywhere (and merges with a `roadmap/` folder). If `roadmap.md` and `roadmap.plandown.md` both exist, `roadmap.md` stands for the name in the navigation tree.
@@ -98,7 +98,7 @@ YAML comments are allowed and are preserved when the GUI edits the block. The bl
 
 Earlier versions delimited the block with two `---` lines directly below the title. That style is still read, but `plandown check` reports it as a warning, and the next edit of the task's properties rewrites it in the current style. It was replaced because most Markdown renderers (and formatters such as Prettier) turn the YAML above a closing `---` into a heading.
 
-Which properties a task may have is declared by its type in `plandown-format.md`. In addition, every type has these built-in properties:
+Which properties a task may have is declared by its type in `plandown-format.md`. Plandown itself uses four of them, which the built-in format gives to every type:
 
 | Property | Type | Meaning |
 |---|---|---|
@@ -106,6 +106,8 @@ Which properties a task may have is declared by its type in `plandown-format.md`
 | `effort` | number | Estimated effort in hours. |
 | `spent` | number | Time spent in hours. |
 | `started` | datetime | Start of the running timer. Managed by the timer; stopping it (or logging the elapsed time) adds that time to `spent`. |
+
+A folder with its own format file should declare them too (see [Properties of every type](#properties-of-every-type)); otherwise the GUI's checkboxes, effort fields and timer still write them, but each use is reported as an undeclared property.
 
 Undeclared properties are kept but reported as warnings; values of the wrong type are reported as errors.
 
@@ -197,7 +199,29 @@ Each property is declared either by its type name alone (`Due-date: date`) or as
 | `enum` | A list of allowed values. The GUI shows them as a drop-down. |
 | `description` | Help text shown as a tooltip in the GUI. |
 
-The built-in properties (`done`, `effort`, `spent`, `started`) cannot be redeclared.
+### Properties of every type
+
+The `[*]` heading is not a task type. Its property block declares properties that every type has, ahead of the type's own ones, and a type cannot redeclare them. It declares no links, and links cannot target it.
+
+Plandown's built-in format, used by folders without a `plandown-format.md`, is shown below. A folder's own format file replaces it completely, so copy its `[*]` section to keep the properties Plandown relies on:
+
+```markdown
+# [*] Properties every task type has
+    done:
+      type: boolean
+      description: The task is finished
+    effort:
+      type: number
+      description: Estimated effort in hours
+    spent:
+      type: number
+      description: Logged time in hours
+    started:
+      type: datetime
+      description: Start of the running timer
+
+# [Task] A unit of planned work
+```
 
 ### Type settings
 
@@ -243,7 +267,7 @@ flowchart LR
 
 Plandown never refuses to load a folder. Instead it reports diagnostics (with file and line) for anything that does not match the format:
 
-- In `plandown-format.md`: duplicate types, invalid property schemas, unlabeled lists, unknown target types, and reverse declarations that contradict each other.
+- In `plandown-format.md`: duplicate types, invalid property schemas, redeclared `[*]` properties, links under `[*]`, unlabeled lists, unknown target types, and reverse declarations that contradict each other.
 - In task files: unknown task types, references to tasks that have no heading, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, property blocks in the old `---` style, properties or tasks nested under a reference bullet, headings used as list labels, undeclared properties and values that do not match their schema.
 
 Run `plandown check <folder>` to print them; it exits with a non-zero status when there are errors, so it can guard a commit hook or a CI job.

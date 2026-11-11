@@ -7,7 +7,7 @@ description: Write and edit tasks in Plandown Markdown files (`[Type] Title` hea
 
 A Plandown folder is a task database: every `.md` file under it (except hidden ones and the root `plandown-format.md`) holds tasks, and all files together form one database. The files are the only source of truth; there is no index to update.
 
-**First, read `plandown-format.md`** (see the `plandown-format` skill). Use only the task types, properties and link types it declares, plus the built-ins (`done`, `effort`, `spent`, `started`; `Subtask` / `Parent`).
+**First, read `plandown-format.md`** (see the `plandown-format` skill). Use only the task types, properties and link types it declares, plus the built-in `Subtask` / `Parent` links. Properties under the format's `[*]` heading belong to every type.
 
 ## Tasks and identity
 
@@ -54,7 +54,7 @@ Rules:
 - A fenced ```` ```yaml ```` block (or `~~~`, `yml`) is accepted too, but write the indented style; always close a fence.
 - The first block of a task's section is always its properties: never start a description with a code block when the task has no property block.
 - Blocks delimited by `---` lines are the old style: convert them to the current style when you edit them.
-- Use only properties declared for the task's type (plus built-ins), with values of the declared type: `date` as `YYYY-MM-DD`, `datetime` as ISO 8601, `number` unquoted, `boolean` as `true`/`false`, `enum` values exactly as listed.
+- Use only properties declared for the task's type (including the `[*]` ones), with values of the declared type: `date` as `YYYY-MM-DD`, `datetime` as ISO 8601, `number` unquoted, `boolean` as `true`/`false`, `enum` values exactly as listed.
 - Do not write or edit `started` by hand (the timer manages it).
 - Omit the block entirely when there are no properties.
 - Keep existing YAML comments and key order.

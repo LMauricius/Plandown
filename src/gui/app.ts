@@ -308,6 +308,11 @@ function titleSpan(s: string): HTMLElement {
 }
 
 /** Sets one property merged onto the latest state, so concurrent file edits survive; undefined removes it. */
+/** Properties of `type` shown as plain fields: `done` and `started` have their own controls (checkbox, timer). */
+function fieldSchema(type: string): Record<string, PropSchema> {
+  const { done, started, ...rest } = db.format.types[type]?.props ?? {};
+  return rest;
+}
 const setProp = (id: string, k: string, v: unknown) => run({ op: 'update', id, props: { ...db.tasks[id].props, [k]: v } });
 
 // A webview has no browser tabs: inside VSCode a middle click on a task link asks for a pinned tab (not a preview one)
@@ -776,11 +781,7 @@ function taskForm(t: Task): Form {
     dirty = true;
     show(save, true); show(revert, true);
   };
-  const schema: Record<string, PropSchema> = {
-    effort: { type: 'number', description: 'Estimated effort in hours' },
-    spent: { type: 'number', description: 'Logged time in hours' },
-    ...db.format.types[t.type]?.props,
-  };
+  const schema = fieldSchema(t.type);
 
   // Title's type bubble follows the unsaved Type choice
   let typeBadge = badge(t.type);
@@ -834,11 +835,7 @@ function taskForm(t: Task): Form {
 
 /** Compact, label-less prop values short enough for the collapsed sidebar; long values are dropped rather than truncated into noise. */
 function compactProps(t: Task): HTMLElement[] {
-  const schema: Record<string, PropSchema> = {
-    effort: { type: 'number', description: 'Estimated effort in hours' },
-    spent: { type: 'number', description: 'Logged time in hours' },
-    ...db.format.types[t.type]?.props,
-  };
+  const schema = fieldSchema(t.type);
   const vals = [
     { k: 'Type', v: t.type },
     { k: 'Done', v: t.props.done === true ? '✓' : '' },

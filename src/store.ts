@@ -10,6 +10,9 @@ import { FORMAT_FILE, parseFormat } from './format.js';
 import { buildDb, type Db, type Occ } from './db.js';
 import { applyEdits, plan, type Edit, type Op } from './edit.js';
 
+/** Format of folders without their own `plandown-format.md`; shipped next to this module. */
+const BUILTIN_FORMAT = new URL('./plandown-format.md', import.meta.url);
+
 const byName = new Intl.Collator(undefined, { numeric: true }).compare;
 const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
 
@@ -70,8 +73,8 @@ export class Plandown {
       const text = await readOrNull(join(this.dir, f));
       return text === null ? null : parseMarkdown(f, text);
     }))).filter(p => p !== null);
-    const fmt = parsed.find(p => p.file === FORMAT_FILE) ?? null, files = parsed.filter(p => p !== fmt);
-    const { format, diagnostics } = parseFormat(fmt);
+    const own = parsed.find(p => p.file === FORMAT_FILE), files = parsed.filter(p => p !== own);
+    const { format, diagnostics } = parseFormat(own ?? parseMarkdown(FORMAT_FILE, await readFile(BUILTIN_FORMAT, 'utf8')));
     const { db, occ } = buildDb(format, diagnostics, files, folders.sort(byName));
     this.files = new Map(files.map(p => [p.file, p]));
     this.db = db;

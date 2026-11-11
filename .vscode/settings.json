@@ -1,9 +1,15 @@
 {
     "files.associations": {
-        "**/MaDo/examples/demo/**/*.md": "plandown"
+        "**/MaDo/dist/**/*.md": "plandown",
+        "**/MaDo/examples/demo/**/*.md": "plandown",
+        "**/MaDo/src/**/*.md": "plandown"
     },
     "workbench.editorAssociations": {
+        "**/MaDo/dist/**/*.md": "plandown.file",
+        "**/MaDo/dist/plandown-format.md": "default",
         "**/MaDo/examples/demo/**/*.md": "plandown.file",
-        "**/MaDo/examples/demo/plandown-format.md": "default"
+        "**/MaDo/examples/demo/plandown-format.md": "default",
+        "**/MaDo/src/**/*.md": "plandown.file",
+        "**/MaDo/src/plandown-format.md": "default"
     }
 }

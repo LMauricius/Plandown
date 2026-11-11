@@ -4,7 +4,7 @@
  * `Db` is plain JSON (sent to GUIs); `occ` keeps the parser nodes needed for editing.
  */
 import { bodyTexts, type Diagnostic, type Node, type ParsedFile } from './markdown.js';
-import { BUILTIN_PROPS, linkReverse, PARENT, SUBTASK, type Format, type PropSchema } from './format.js';
+import { linkReverse, PARENT, SUBTASK, type Format, type PropSchema } from './format.js';
 import { buildTree, slug, type TreeNode } from './tree.js';
 
 export interface Loc { file: string; line: number }
@@ -126,10 +126,10 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
     const loc = (o: Occ): Loc => ({ file: o.pf.file, line: o.node.line });
     for (const o of list) if (o !== home && o.node.props) diag(loc(o), 'warning', `Properties of ${tid} are already defined at ${home.pf.file}:${home.node.line + 1}; these are ignored`);
     const props = home.node.props?.data ?? {}, type = format.types[home.node.type];
-    const schema = { ...BUILTIN_PROPS, ...type?.props };
+    const schema = type?.props ?? {};
     for (const [k, v] of Object.entries(props)) {
       const at = { file: home.pf.file, line: home.node.props!.start };
-      if (!schema[k]) { if (type) diag(at, 'warning', `[${type.name}] does not declare property "${k}"`); }
+      if (!Object.hasOwn(schema, k)) { if (type) diag(at, 'warning', `[${type.name}] does not declare property "${k}"`); }
       else if (!valid(schema[k], v)) diag(at, 'error', `Property "${k}" of ${tid} must be ${schema[k].enum ? `one of ${schema[k].enum!.join(', ')}` : `a ${schema[k].type}`}`);
     }
     tasks[tid] = { id: tid, type: home.node.type, title: home.node.title, props, body: bodyTexts(home.pf, home.node).flatMap((t, i) => {

@@ -7,7 +7,7 @@ description: Read and interpret a Plandown `plandown-format.md` file (task types
 
 A Plandown folder is a task database made of plain Markdown files. The file `plandown-format.md` at the **root** of the folder is its schema. A file with that name in a subfolder is ignored and treated as nothing special.
 
-Always read the format file before writing tasks. Nothing outside it is allowed, apart from the built-ins listed below.
+Always read the format file before writing tasks. Nothing outside it is allowed, apart from the built-in `Subtask` / `Parent` links. A folder without the file uses the built-in format: the `[*]` section below plus a plain `[Task]` type.
 
 ## Structure
 
@@ -50,7 +50,7 @@ Each property is either `Name: <type>` or a mapping:
 | `enum` | List of allowed values. |
 | `description` | Help text (tooltip in the GUI). |
 
-Every type also has these **built-in** properties, which must not be redeclared:
+The `[*]` heading is **not a type**: its properties belong to every type and must not be redeclared by one. It has no links and is no link target. Plandown itself uses these four, so a format file should declare them under `[*]` (the built-in format does):
 
 | Property | Type | Meaning |
 |---|---|---|
@@ -83,7 +83,7 @@ So `[Bug] X` → `Blocked by` → `[Task] Y` requires `Blocked by:` with `- [Tas
 Before editing tasks, build this table from the format file (mentally or in your notes):
 
 - **Types:** every `# [<Type>]` heading.
-- **Properties per type:** declared ones plus `done`, `effort`, `spent`, `started`; their types and enums.
+- **Properties per type:** the `[*]` ones plus the type's own; their types and enums.
 - **Links per type:** for each declared `<Link>:`, the target types allowed. Plus `Subtask` and `Parent` to anything.
 
 If a needed type, property or link is missing, **do not invent it in a task file**. Tell the user, and offer to add it to the format file (only if they agree).
@@ -100,6 +100,6 @@ When adding or editing declarations:
 
 ## Validation
 
-Problems never block loading; they become diagnostics. Format file errors include: duplicate types, invalid property schemas, redeclared built-ins, unlabeled lists, unknown target types, and contradicting reverse declarations.
+Problems never block loading; they become diagnostics. Format file errors include: duplicate types, invalid property schemas, redeclared `[*]` properties, links under `[*]`, unlabeled lists, unknown target types, and contradicting reverse declarations.
 
 If the `plandown` CLI is available, run `plandown check <folder>` after any change. It prints `file:line` diagnostics and exits non-zero on errors. Without it, re-check the reverse rule by hand for every entry you touched.
