@@ -57,30 +57,32 @@ Tasks that are not nested under another task are top-level tasks. Usually these 
 
 ## Properties
 
-Right after a task's title line, a YAML block between two `---` lines holds its properties:
+Right after a task's title line, a fenced `yaml` code block holds its properties:
 
-```markdown
+````markdown
 ## [Task] Offline mode
----
+```yaml
 Due-date: 2026-12-01
 Priority: 1
 effort: 16
 spent: 3.5
----
-Recipes, shopping lists and edits keep working without a network and sync when it returns.
 ```
+Recipes, shopping lists and edits keep working without a network and sync when it returns.
+````
 
 For a bullet task, indent the block to the bullet's text:
 
-```markdown
+````markdown
 - [Task] Choose an auth provider
-  ---
+  ```yaml
   effort: 6
   done: true
-  ---
-```
+  ```
+````
 
-The block must start on the line directly below the title. A missing closing `---` is reported as an error (the search stops at the next task heading, so an unclosed block never swallows other tasks). YAML comments are allowed and are preserved when the GUI edits the block.
+The block must start on the line directly below the title. Both fence styles work (```` ``` ```` and `~~~`), and the language may be written as `yaml` or `yml`. Because it is an ordinary code block, every Markdown viewer renders it cleanly and formatters leave it alone. A missing closing fence is reported as an error; the search stops at the next task heading (or, for a bullet task, at the end of its item), so an unclosed block never swallows other tasks. YAML comments are allowed and are preserved when the GUI edits the block.
+
+Earlier versions delimited the block with two `---` lines. That style is still read, but `plandown check` reports it as a warning, and the next edit of the task's properties rewrites it as a `yaml` fence. It was replaced because most Markdown renderers turn the YAML above a closing `---` into a heading.
 
 Which properties a task may have is declared by its type in `plandown-format.md`. In addition, every type has these built-in properties:
 
@@ -148,14 +150,14 @@ The same relation only needs to be written once. Writing `Blocked by: [Task] Acc
 - The property block **declares the type's property schema**.
 - Each labeled list **declares a link type** that tasks of this type can use. Every entry `[<Target type>] <Reverse link>` allows linking to tasks of the target type and names the link type that the target sees in the opposite direction.
 
-```markdown
+````markdown
 # [Task] A unit of planned work
----
+```yaml
 Due-date: date
 Priority:
   type: number
   enum: [1, 2, 3]
----
+```
 
 Blocks:
 - [Task] Blocked by
@@ -168,7 +170,7 @@ Blocked by:
 Related:
 - [Task] Related
 - [Bug] Related
-```
+````
 
 ### Property schemas
 
@@ -186,14 +188,14 @@ The built-in properties (`done`, `effort`, `spent`, `started`) cannot be redecla
 
 The reserved `$meta` key in a type's property block holds settings of the type itself rather than a property:
 
-```markdown
+````markdown
 # [Bug] A defect to fix
----
+```yaml
 $meta:
   color: crimson
 Severity: string
----
 ```
+````
 
 | Key | Meaning |
 |---|---|
@@ -229,7 +231,7 @@ flowchart LR
 Plandown never refuses to load a folder. Instead it reports diagnostics (with file and line) for anything that does not match the format:
 
 - In `plandown-format.md`: duplicate types, invalid property schemas, unlabeled lists, unknown target types, and reverse declarations that contradict each other.
-- In task files: unknown task types, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, undeclared properties and values that do not match their schema.
+- In task files: unknown task types, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, property blocks in the old `---` style, undeclared properties and values that do not match their schema.
 
 Run `plandown check <folder>` to print them; it exits with a non-zero status when there are errors, so it can guard a commit hook or a CI job.
 

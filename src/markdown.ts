@@ -8,7 +8,8 @@ import { parse as parseYaml } from 'yaml';
 /** Line range, `end` exclusive. An empty range is an insertion point. */
 export interface Range { start: number; end: number }
 
-export interface Props extends Range { raw: string; data: Record<string, unknown> }
+/** Property block; `legacy`: delimited by `---` lines (the style replaced by YAML fences), rewritten as a fence on edit. */
+export interface Props extends Range { raw: string; data: Record<string, unknown>; legacy: boolean }
 
 /** Top-level block of an occurrence's body holding task lists (label line included); `labels` of every list inside it. */
 export interface Span extends Range { labels: (string | null)[] }
@@ -30,7 +31,7 @@ export interface Node {
   kind: 'heading' | 'bullet';
   prefix: string;            // title line text before `[Type]` (`## `, `  - [x] `)
   indent: string;            // indentation of content lines ('' for headings)
-  props?: Props;             // YAML block including both `---` fences
+  props?: Props;             // YAML block including its opening and closing lines
   own: Range;                // body: content after the props up to the next task heading; where new lists are appended
   spans: Span[];             // task-list blocks in `own`; the text between them is the description
   block: Range;              // everything the occurrence spans: what deletion removes
@@ -55,6 +56,9 @@ export interface ParsedFile {
 const HEADING = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 const BULLET = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
 export const FENCE = /^[ \t]*(```|~~~)/;
+// property block opening: a ```yaml / ~~~yml fence (any fence length)
+const YAML_FENCE = /^[ \t]*(`{3,}|~{3,})[ \t]*ya?ml[ \t]*$/i;
+const LEGACY = 'Property block uses the "---" style, which was supported before and has been replaced by the ```yaml block style; editing the properties converts it';
 // optional checkbox, then `[Type] Title`; `](` (a link) does not match because whitespace must follow `]`
 const TASK = /^(\[[ xX]\][ \t]+)?\[([^\[\]\r\n]+)\][ \t]+(\S.*?)[ \t]*$/;
 
@@ -91,8 +95,28 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
   const n = lines.length;
   const diag = (line: number, severity: Diagnostic['severity'], message: string) => pf.diagnostics.push({ file, line, severity, message });
   const isTaskHeading = (i: number) => { const h = HEADING.exec(lines[i]); return !!h && !!matchTask(h[2]); };
+  const isTitle = (i: number) => { const b = BULLET.exec(lines[i]); return isTaskHeading(i) || (!!b && !!matchTask(b[4])); };
 
-  // Pass 1: headings. Fenced code and heading property blocks are marked `skip` (a YAML `# comment` is not a heading).
+  /**
+   * Property block opening at line `o` (directly below a task title): its closing line (-1: unclosed) and style; null if
+   * `o` opens none. The search stops at the next task heading or a line indented less than the opening (the end of a
+   * bullet item), so an unclosed block cannot swallow later tasks. A fence closes CommonMark-style: same character, at
+   * least as long, nothing else on the line.
+   */
+  function propsAt(o: number, end: number): { close: number; legacy: boolean } | null {
+    if (o >= end) return null;
+    const f = YAML_FENCE.exec(lines[o]), legacy = !f && lines[o].trim() === '---';
+    if (!f && !legacy) return null;
+    const ind = indentOf(lines[o]);
+    const closes = (t: string) => f ? t.length >= f[1].length && t === f[1][0].repeat(t.length) : t === '---';
+    for (let k = o + 1; k < end; k++) {
+      if (isTaskHeading(k) || (lines[k].trim() && indentOf(lines[k]) < ind)) break;
+      if (closes(lines[k].trim())) return { close: k, legacy };
+    }
+    return { close: -1, legacy };
+  }
+
+  // Pass 1: headings. Fenced code and property blocks are marked `skip` (a YAML `# comment` is not a heading, `- x` no bullet).
   const skip = new Array<boolean>(n).fill(false);
   const heads: { line: number; level: number; text: string }[] = [];
   pf.heads = heads;
@@ -100,23 +124,12 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
   for (let i = 0; i < n; i++) {
     const f = FENCE.exec(lines[i]);
     if (fence) { skip[i] = true; if (f?.[1] === fence) fence = null; continue; }
+    // Property block below a task title: bounded by `propsAt`; an unclosed one skips only its opening line (an open fence would skip the rest of the file)
+    const p = i > 0 && !skip[i - 1] && isTitle(i - 1) ? propsAt(i, n) : null;
+    if (p) { const e = p.close < 0 ? i : p.close; skip.fill(true, i, e + 1); i = e; continue; }
     if (f) { fence = f[1]; skip[i] = true; continue; }
     const h = HEADING.exec(lines[i]);
-    if (!h) continue;
-    heads.push({ line: i, level: h[1].length, text: h[2] });
-    if (matchTask(h[2]) && lines[i + 1]?.trim() === '---') {
-      const close = findClose(i + 2, n);
-      if (close >= 0) { skip.fill(true, i + 1, close + 1); i = close; }
-    }
-  }
-
-  /** Closing `---` of a property block; stops at the next task heading so an unclosed block cannot swallow tasks. */
-  function findClose(from: number, end: number): number {
-    for (let k = from; k < end; k++) {
-      if (lines[k].trim() === '---') return k;
-      if (isTaskHeading(k)) return -1;
-    }
-    return -1;
+    if (h) heads.push({ line: i, level: h[1].length, text: h[2] });
   }
 
   /** Item end: last non-blank line indented at least to the content column, plus one. */
@@ -132,10 +145,11 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
 
   /** Reads the YAML block right after a title line; returns the first content line. */
   function readProps(node: Node, end: number): number {
-    const o = node.line + 1;
-    if (o >= end || lines[o].trim() !== '---') return o;
-    const c = findClose(o + 1, end);
-    if (c < 0) { diag(o, 'error', 'Unclosed property block (missing closing "---")'); return o; }
+    const o = node.line + 1, p = propsAt(o, end);
+    if (!p) return o;
+    if (p.close < 0) { diag(o, 'error', `Unclosed property block (missing closing ${p.legacy ? '"---"' : 'fence'})`); return o; }
+    if (p.legacy) diag(o, 'warning', LEGACY);
+    const c = p.close;
     const raw = lines.slice(o + 1, c).map(l => l.slice(Math.min(node.indent.length, indentOf(l)))).join('\n');
     let data: Record<string, unknown> = {};
     try {
@@ -145,7 +159,7 @@ export function parseMarkdown(file: string, text: string): ParsedFile {
     } catch (e) {
       diag(o, 'error', `Invalid YAML: ${(e as Error).message.split('\n')[0]}`);
     }
-    node.props = { start: o, end: c + 1, raw, data };
+    node.props = { start: o, end: c + 1, raw, data, legacy: p.legacy };
     return c + 1;
   }
 

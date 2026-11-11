@@ -23,6 +23,7 @@ flowchart LR
 - Lists end at blank lines (no loose lists) so appended lists never merge into a labeled one.
 - Non-colon text directly above a task list still yields Subtask (lenient).
 - Undeclared `[X]` prefixes are tasks with an error, not ignored.
+- Property blocks are ```` ```yaml ```` / `~~~yml` fences (user choice, 2026-11-11), after Slidev's "block frontmatter": a `---` closer turns the YAML above into a setext H2 in GFM, which Prettier then rewrites as ATX. Legacy `---` blocks are still read with a warning and become fences on the next props edit. One `propsAt` serves pass 1 and `readProps`; it is bounded by task headings and item indentation, so an unclosed block skips only its opening line. Top-of-file frontmatter as props of the file's task was discussed and postponed (open questions: which task it attaches to, fence vs frontmatter precedence, move/delete must carry it since it lies outside `block`).
 - Timer state stored in md (`started`), not in GUI memory.
 - Built-ins: `done`, `effort`, `spent`, `started` (hours).
 - Recursive folders (hidden ones skipped, symlinks not followed); natural sort on relative paths. Nested `plandown-format.md` ignored (reserved for sub-formats).

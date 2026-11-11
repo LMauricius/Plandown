@@ -35,31 +35,32 @@ Each place a task appears is an *occurrence*. The first one (in natural file ord
 
 ## Properties
 
-A YAML block directly under the title line (no blank line between):
+A fenced `yaml` block directly under the title line (no blank line between):
 
-```markdown
+````markdown
 ## [Task] Offline mode
----
+```yaml
 Due-date: 2026-12-01
 Priority: 1
 effort: 16
----
-Description text starts here.
 ```
+Description text starts here.
+````
 
 For a bullet task, indent the block to the bullet's text column:
 
-```markdown
+````markdown
 - [Task] Choose an auth provider
-  ---
+  ```yaml
   effort: 6
   done: true
-  ---
-```
+  ```
+````
 
 Rules:
 
-- Always close the block with `---`.
+- Always close the fence. Write new blocks as ```` ```yaml ````; `~~~` and `yml` are accepted too.
+- Blocks delimited by `---` lines are the old style: convert them to a `yaml` fence when you edit them.
 - Use only properties declared for the task's type (plus built-ins), with values of the declared type: `date` as `YYYY-MM-DD`, `datetime` as ISO 8601, `number` unquoted, `boolean` as `true`/`false`, `enum` values exactly as listed.
 - Do not write or edit `started` by hand (the timer manages it).
 - Omit the block entirely when there are no properties.

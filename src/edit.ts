@@ -118,7 +118,7 @@ function removeItem(pf: ParsedFile, node: Node): Edit {
   return { file: pf.file, start, end: node.block.end, lines: [] };
 }
 
-/** Rewrites the YAML block, preserving comments, order and formatting of untouched keys. */
+/** Rewrites the YAML block as a ```yaml fence (converting a legacy `---` block), preserving comments, order and formatting of untouched keys. */
 function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | null {
   if (!props || typeof props !== 'object' || Array.isArray(props)) throw new Error('Properties must be an object');
   const parsed = parseDocument(node.props?.raw ?? '');
@@ -135,8 +135,10 @@ function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | nu
     }
   for (const [k, v] of keep) if (JSON.stringify(old[k]) !== JSON.stringify(v)) doc.set(k, v);
 
-  const ind = node.indent;
-  const lines = [ind + '---', ...doc.toString().trimEnd().split('\n').map(l => l ? ind + l : l), ind + '---'];
+  // Fence longer than any backtick run starting a YAML line, so a multi-line value cannot close it
+  const ind = node.indent, yaml = doc.toString().trimEnd().split('\n');
+  const fence = '`'.repeat(Math.max(3, ...yaml.map(l => /^\s*(`*)/.exec(l)![1].length + 1)));
+  const lines = [ind + fence + 'yaml', ...yaml.map(l => l ? ind + l : l), ind + fence];
   return node.props ? { file: pf.file, start: node.props.start, end: node.props.end, lines } : { file: pf.file, start: node.line + 1, end: node.line + 1, lines };
 }
 

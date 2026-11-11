@@ -1,5 +1,5 @@
 # [Task] A unit of planned work
----
+```yaml
 $meta:
   color: '#2f6fbf'
 Due-date:
@@ -8,7 +8,7 @@ Due-date:
 Priority:
   type: number
   enum: [1, 2, 3]
----
+```
 
 Blocks:
 - [Task] Blocked by
@@ -26,7 +26,7 @@ Revealed:
 - [Bug] Discovered during
 
 # [Bug] A defect to fix
----
+```yaml
 $meta:
   color: crimson
 Severity:
@@ -35,7 +35,7 @@ Severity:
 Fix-in-release:
   type: string
   description: Version that must ship the fix.
----
+```
 
 Blocks:
 - [Task] Blocked by

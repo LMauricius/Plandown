@@ -20,7 +20,7 @@ test('format: flips may be omitted (one-directional) but not contradicted', () =
   assert.deepEqual(good.diagnostics, []);
   assert.equal(good.format.types.Bug.links['Discovered during'].Task, 'Revealed');
   assert.deepEqual(good.format.types.Task.props.Priority, { type: 'number', enum: [1, 2, 3] });
-  const meta = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n---\n$meta:\n  color: teal\n  icon: x\nP: string\n---\n\n# [B] b\n---\n$meta: red\n---\n'));
+  const meta = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n```yaml\n$meta:\n  color: teal\n  icon: x\nP: string\n```\n\n# [B] b\n```yaml\n$meta: red\n```\n'));
   assert.equal(meta.format.types.A.color, 'teal');
   assert.deepEqual(Object.keys(meta.format.types.A.props), ['P']);
   assert.deepEqual(meta.diagnostics.map(d => d.message), ['Unknown type setting "$meta.icon"', '"$meta" must be a map of type settings']);
@@ -60,7 +60,7 @@ test('db: anchors follow GitHub heading slugs and stay unique', () => {
 
 test('db: invalid links and properties are reported', async () => {
   const d = copy();
-  writeFileSync(join(d, 'bad.md'), '# [Bug] X\n---\nSeverity: huge\nFoo: 1\n---\n\nBlocks:\n- [Nope] Y\n\nRevealed:\n- [Task] Z\n');
+  writeFileSync(join(d, 'bad.md'), '# [Bug] X\n```yaml\nSeverity: huge\nFoo: 1\n```\n\nBlocks:\n- [Nope] Y\n\nRevealed:\n- [Task] Z\n');
   const m = await Plandown.open(d);
   assert.deepEqual(m.db.diagnostics.map(d => d.message).sort(), [
     'Link "Blocks" of [Bug] cannot target [Nope]',
@@ -110,6 +110,32 @@ test('edits: update, create, link, unlink, timer and delete rewrite only their l
   await m.apply({ op: 'update', id: '[Task] Accounts', title: 'Account system', props: {}, body: ['Sign-in with an email address or a single sign-on provider.'] });
   assert.equal(read(d, 'roadmap.md'), before, 'round trip restores the file byte for byte');
   assert.deepEqual(m.db.diagnostics, []);
+});
+
+test('parser: YAML fences and legacy "---" property blocks; unclosed ones never swallow tasks', () => {
+  const pf = parseMarkdown('a.md', [
+    '# [T] A', '~~~~yml', '# comment', 'a: |', '  ~~~', '  ```', '~~~~',                // shorter or different closers do not close
+    '- [T] B', '  ```YAML', '  b: 2', '  ```', '  - [T] B1',
+    '- [T] C', '  ```yaml', '  c: 3', '- [T] D',                                         // unclosed: ends at the less indented line
+    '# [T] E', '---', 'e: 5', '---',
+    '# [T] F', '```yaml', 'f: 6', '# [T] G', '```yaml', 'g: 7', '```',                 // unclosed: ends at the next task heading
+  ].join('\n') + '\n');
+  const props = Object.fromEntries(pf.nodes.map(n => [n.title, n.props?.data]));
+  assert.deepEqual(props, { A: { a: '~~~\n```\n' }, B: { b: 2 }, B1: undefined, C: undefined, D: undefined, E: { e: 5 }, F: undefined, G: { g: 7 } });
+  assert.deepEqual(pf.diagnostics.map(d => [d.line, d.severity, d.message.slice(0, 30)]), [
+    [13, 'error', 'Unclosed property block (missi'], [17, 'warning', 'Property block uses the "---" '], [21, 'error', 'Unclosed property block (missi'],
+  ]);
+});
+
+test('edits: property edits write a fence, converting a legacy block and keeping its comments', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-'));
+  writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n');
+  writeFileSync(join(d, 'a.md'), '# [T] A\n---\n# keep\neffort: 1\n---\nText\n- [T] B\n  more\n');
+  const m = await Plandown.open(d);
+  await m.apply({ op: 'update', id: '[T] A', props: { effort: 2 } });
+  await m.apply({ op: 'update', id: '[T] B', props: { note: 'x\n```\ny' } });
+  assert.equal(read(d, 'a.md'), '# [T] A\n```yaml\n# keep\neffort: 2\n```\nText\n- [T] B\n  ````yaml\n  note: |-\n    x\n    ```\n    y\n  ````\n  more\n');
+  assert.equal(m.db.tasks['[T] B'].props.note, 'x\n```\ny');
 });
 
 test('edits: refuse to write over files changed on disk', async () => {
@@ -169,8 +195,8 @@ test('tree: a node is done when every task below it is, and it has at least one'
   const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   for (const f of ['a/b', 'a/empty']) mkdirSync(join(d, f), { recursive: true });
   w('plandown-format.md', '# [T] t\n');
-  w('a/b/x.md', '# [T] X\n---\ndone: true\n---\n# [T] Y\n---\ndone: true\n---\n');
-  w('a/c.md', '# [T] C\n## [T] D\n---\ndone: true\n---\n');
+  w('a/b/x.md', '# [T] X\n```yaml\ndone: true\n```\n# [T] Y\n```yaml\ndone: true\n```\n');
+  w('a/c.md', '# [T] C\n## [T] D\n```yaml\ndone: true\n```\n');
   const m = await Plandown.open(d), node = (p: string) => findNode(m.db.tree, p)!;
   assert.deepEqual(['a', 'a/b', 'a/b/x', 'a/c', 'a/empty'].map(p => node(p).done), [false, true, true, false, false]);
 });
@@ -221,12 +247,12 @@ test('tree: subfolders, stem merges and placement of new groups and tasks', asyn
 test('move: task blocks keep their content, reshape between bullets and headings, and never land inside themselves', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   w('plandown-format.md', '# [T] t\n');
-  w('a.md', '# [T] A\n\n- [T] B\n  ---\n  effort: 2\n  ---\n  # not a heading\n  - [T] B1\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n# [T] E\n- [T] Ref\n');
+  w('a.md', '# [T] A\n\n- [T] B\n  ```yaml\n  effort: 2\n  ```\n  # not a heading\n  - [T] B1\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n# [T] E\n- [T] Ref\n');
   const m = await Plandown.open(d), move = (o: object) => m.apply({ op: 'move', ...o } as never);
 
   // Bullet under a heading parent: re-indented into its Subtask list, subtasks and props along
   await move({ id: '[T] B', parent: '[T] D' });
-  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n- [T] B\n  ---\n  effort: 2\n  ---\n  # not a heading\n  - [T] B1\n\n# [T] E\n- [T] Ref\n');
+  assert.equal(read(d, 'a.md'), '# [T] A\n\n- [T] C\n\n## [T] D\nAbout D.\n\n### Notes\nN\n\n- [T] B\n  ```yaml\n  effort: 2\n  ```\n  # not a heading\n  - [T] B1\n\n# [T] E\n- [T] Ref\n');
   assert.deepEqual(links(m, '[T] D'), ['Subtask [T] B']);
   assert.deepEqual(links(m, '[T] B'), ['Subtask [T] B1']);
   assert.equal(m.db.tasks['[T] B'].props.effort, 2);
@@ -234,7 +260,7 @@ test('move: task blocks keep their content, reshape between bullets and headings
   // Bullet to a file: becomes a level-1 heading, a `#` description line escaped; the emptied list leaves one blank line
   await move({ id: '[T] B', near: '' });
   assert.ok(read(d, 'a.md').includes('N\n\n# [T] E'));
-  assert.ok(read(d, 'B.md') === '# [T] B\n---\neffort: 2\n---\n\\# not a heading\n- [T] B1\n');
+  assert.ok(read(d, 'B.md') === '# [T] B\n```yaml\neffort: 2\n```\n\\# not a heading\n- [T] B1\n');
   assert.equal(findNode(m.db.tree, 'B')?.task, '[T] B');
 
   // Heading under a heading: nested one level deeper, sub-chapters shifted along
