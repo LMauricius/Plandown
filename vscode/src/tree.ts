@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { basename } from 'node:path';
 import type { Op, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
+import type { Page } from './panels.js';
 
 const SUBTASK = 'Subtask';
 /** What a drop moves: a task (and the parent its link leaves) or a tree node without a task. */
@@ -94,6 +95,21 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
   refresh(): void { this.change.fire(); }
 
   getParent(item: Item): Item | undefined { return item.kind === 'root' ? undefined : item.parent; }
+
+  /** Whether the row shows the page: its task's row (a merged node's too), or the node row of a node page. */
+  hits(item: Item, root: Root, page: Page): boolean {
+    if (item.root !== root || item.kind === 'root') return false;
+    const id = item.kind === 'task' ? item.id : item.node.task;
+    return page.kind === 'task' ? id === page.id : item.kind === 'node' && !id && item.node.path === page.path;
+  }
+
+  /** Shallowest row showing the page (breadth first over `getChildren`, so its `parent` chain serves `reveal`). */
+  find(root: Root, page: Page): Item | undefined {
+    for (let level = this.getChildren(); level.length; level = level.flatMap(i => i.root === root ? this.getChildren(i) : [])) {
+      const hit = level.find(i => this.hits(i, root, page));
+      if (hit) return hit;
+    }
+  }
 
   getChildren(item?: Item): Item[] {
     const parent = item;

@@ -23,7 +23,7 @@ type Msg = { t: 'state'; rid: number } | { t: 'op'; rid: number; op: Op } | { t:
 
 /** What a tab shows; `task` tabs follow their task across renames, `node` tabs (a tree node's page) stay on their path. */
 type View = { kind: 'task'; id: string } | { kind: 'node'; path: string } | { kind: 'graph' } | { kind: 'time' };
-type Page = Extract<View, { kind: 'task' | 'node' }>;
+export type Page = Extract<View, { kind: 'task' | 'node' }>;
 
 /** `uri`: the URI of a custom editor tab (virtual for `plandown.task`, else the file); `panel.viewType` is its editor. */
 interface Tab { panel: vscode.WebviewPanel; root: Root; view: View; key: string; uri?: vscode.Uri }
@@ -101,7 +101,8 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   private tabs = new Map<string, Tab>();
 
   /** `gui`: the library's `dist/gui` folder, the webviews' only local resource root. `roots` resolves once loading is done. */
-  constructor(private gui: vscode.Uri, private roots: () => Promise<Root[]>, private apply: Apply) {}
+  /** `shown`: called when a task or node tab becomes the active editor (the tree reveals its row). */
+  constructor(private gui: vscode.Uri, private roots: () => Promise<Root[]>, private apply: Apply, private shown: (root: Root, page: Page) => void) {}
 
   /** The focused Plandown tab, if any. */
   active(): Tab | undefined { return [...this.tabs.values()].find(t => t.panel.active); }
@@ -187,9 +188,11 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
     const focus = () => vscode.commands.executeCommand('setContext', 'plandown.active', [...this.tabs.values()].some(t => t.panel.active));
     panel.webview.options = { enableScripts: true, localResourceRoots: [this.gui] };
     panel.webview.html = html(panel.webview, this.gui, root, view);
-    panel.onDidChangeViewState(focus);
+    const shown = () => { if (panel.active && (view.kind === 'task' || view.kind === 'node')) this.shown(root, view); };
+    panel.onDidChangeViewState(() => { focus(); shown(); });
     panel.onDidDispose(() => { if (this.tabs.get(tab.key) === tab) this.tabs.delete(tab.key); focus(); });
     focus();
+    shown();   // a new tab opens active without a view state change
     this.icon(tab);
 
     panel.webview.onDidReceiveMessage(async (m: Msg) => {

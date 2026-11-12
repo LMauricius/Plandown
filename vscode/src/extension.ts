@@ -135,7 +135,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const tree = new TaskTree(() => roots, apply);
   const view = vscode.window.createTreeView('plandown.tree', { treeDataProvider: tree, dragAndDropController: tree });
   // `require.resolve` finds the installed copy of the library (refreshed by `npm run build`), whose `dist/gui` the webviews load
-  const panels = new Panels(vscode.Uri.file(join(dirname(require.resolve('plandown')), 'gui')), () => loading.then(() => roots), apply);
+  const panels = new Panels(vscode.Uri.file(join(dirname(require.resolve('plandown')), 'gui')), () => loading.then(() => roots), apply, (r, page) => {
+    // Expands the tree down to the active tab's row, as the Explorer's auto reveal. `reveal` would open a hidden view, and a
+    // selected row already showing the page (the clicked occurrence of a task listed twice) stays
+    const sel = view.selection[0];
+    if (!view.visible || (sel && tree.hits(sel, r, page))) return;
+    const item = tree.find(r, page);
+    if (item) view.reveal(item, { select: true, focus: false }).then(undefined, () => {});
+  });
   ctx.subscriptions.push(view, vscode.window.registerFileDecorationProvider(typeDecorations),
     vscode.window.registerCustomEditorProvider('plandown.file', panels, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerCustomEditorProvider('plandown.own', panels, { webviewOptions: { retainContextWhenHidden: true } }),
