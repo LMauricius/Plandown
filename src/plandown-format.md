@@ -1,4 +1,10 @@
 # [*] Properties every task type has
+    $meta:
+      roles:
+        done: done
+        effort: effort
+        spent: spent
+        timer: started
     done:
       type: boolean
       description: The task is finished

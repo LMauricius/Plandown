@@ -109,7 +109,7 @@ The page of a folder or file lists everything inside it as an outline: tasks wit
 The upper part of the editor holds the task's editable fields:
 
 - **Title** (at the top) and **Type.** Changing either renames the task in every file it appears in.
-- **Done**, **effort (h)** and **spent (h).** The built-in properties.
+- **Done**, **effort (h)** and **spent (h).** The properties playing the `done`, `effort` and `spent` roles (see the format description in Database.md); a type without them shows no such fields.
 - **One field per property** declared for the task's type in `plandown-format.md`. Dates get a date picker; properties with an `enum` and booleans get a drop-down, where `(none)` removes the property. Hover over a field's name to see its description.
 - **Description.** Markdown text. Lists of linked tasks in it are shown below the description, as the interactive link lists described below. A list followed by more text leaves a marker at its place in the text; click the marker to scroll to the list. The description stretches to fill the page, so the link lists sit at the bottom.
 

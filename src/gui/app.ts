@@ -4,7 +4,7 @@
  */
 import type { Db, Edge, Task } from '../db.js';
 import type { Op } from '../edit.js';
-import type { PropSchema } from '../format.js';
+import type { PropSchema, Role } from '../format.js';
 import type { TreeNode } from '../tree.js';
 import { mdEditor } from './mdedit.js';
 import { appear, show, still } from './motion.js';
@@ -109,8 +109,15 @@ const findNode = (list: TreeNode[], path: string): TreeNode | undefined => {
 const stem = (file: string) => file.replace(/(\.plandown)?\.md$/, '');
 const hours = (v: number) => String(Math.round(v * 100) / 100);
 const clock = (ms: number) => { const t = Math.floor(ms / 1000); return [t / 3600, (t / 60) % 60, t % 60].map(x => String(Math.floor(x)).padStart(2, '0')).join(':'); };
-/** Start of `t`'s running timer in ms, NaN when none runs (or `started` is malformed, which the timer ops treat alike). */
-const startedAt = (t: Task) => Date.parse(String(t.props.started ?? ''));
+/** Property of `t`'s type playing `role`; undefined when the type lacks the role, which hides its controls. */
+const roleKey = (t: Task, role: Role) => db.format.types[t.type]?.roles[role];
+/** Value of `t`'s `role` property (format.ts `roleValue`, which the GUI cannot import: it imports types only). */
+const roleVal = (t: Task, role: Role) => { const k = roleKey(t, role); return k === undefined ? undefined : t.props[k]; };
+const isDone = (t: Task) => roleVal(t, 'done') === true;
+/** The timer ops need both roles: the timer property and the spent one its time goes to. */
+const hasTimer = (t: Task) => !!roleKey(t, 'timer') && !!roleKey(t, 'spent');
+/** Start of `t`'s running timer in ms, NaN when none runs (or its value is malformed, which the timer ops treat alike). */
+const startedAt = (t: Task) => Date.parse(String(roleVal(t, 'timer') ?? ''));
 const trunc = (t: string, n: number) => t.length > n ? t.slice(0, n - 1) + '…' : t;
 /** Color per link type: golden-angle hues over the format's link types keep colors distinct and stable. */
 const hue = (t: string) => {
@@ -296,7 +303,7 @@ const taskLink = (id: string, props: Record<string, unknown>, ...kids: (Node | s
  */
 const taskRef = (id: string, ...extra: (Node | string | null)[]) => {
   const t = db.tasks[id];
-  return typed(taskLink(id, { className: `ref${t?.props.done === true ? ' done' : ''}`, title: id },
+  return typed(taskLink(id, { className: `ref${t && isDone(t) ? ' done' : ''}`, title: id },
     badge(t?.type ?? ''), titleSpan(t?.title ?? id), ...extra), t?.type ?? '');
 };
 
@@ -308,12 +315,19 @@ function titleSpan(s: string): HTMLElement {
 }
 
 /** Sets one property merged onto the latest state, so concurrent file edits survive; undefined removes it. */
-/** Properties of `type` shown as plain fields: `done` and `started` have their own controls (checkbox, timer). */
+/** Properties of `type` shown as plain fields: the done and timer roles have their own controls (checkbox, timer). */
 function fieldSchema(type: string): Record<string, PropSchema> {
-  const { done, started, ...rest } = db.format.types[type]?.props ?? {};
-  return rest;
+  const { props = {}, roles = {} } = db.format.types[type] ?? {};
+  return Object.fromEntries(Object.entries(props).filter(([k]) => k !== roles.done && k !== roles.timer));
 }
 const setProp = (id: string, k: string, v: unknown) => run({ op: 'update', id, props: { ...db.tasks[id].props, [k]: v } });
+/** Done checkbox committing on change; null when `t`'s type has no done role. */
+const doneBox = (t: Task, attrs: Record<string, unknown> = {}) => {
+  const k = roleKey(t, 'done');
+  if (!k) return null;
+  const cb: HTMLInputElement = h('input', { type: 'checkbox', checked: isDone(t), title: 'Done', onchange: () => setProp(t.id, k, cb.checked || undefined), ...attrs });
+  return cb;
+};
 
 // A webview has no browser tabs: inside VSCode a middle click on a task link asks for a pinned tab (not a preview one)
 if (embed) document.addEventListener('auxclick', e => {
@@ -473,8 +487,8 @@ if (embed) {
 function header() {
   const tabIcon = { Tasks: 'list', Graph: 'graph', Time: 'clock' } as const;
   $('tabs').replaceChildren(...(['Tasks', 'Graph', 'Time'] as const).map(n => h('button', { className: n === tab ? 'on' : '', onclick: () => { tab = n; go(); } }, icon(tabIcon[n]), n)));
-  $('timers').replaceChildren(...Object.values(db.tasks).filter(t => t.props.started).map(t => {
-    const st = Date.parse(String(t.props.started));
+  $('timers').replaceChildren(...Object.values(db.tasks).filter(t => !isNaN(startedAt(t))).map(t => {
+    const st = startedAt(t);
     return taskRef(t.id, icon('clock'), h('span', { 'data-started': st }, clock(Date.now() - st)));
   }));
   const errors = db.diagnostics.filter(d => d.severity === 'error').length, warnings = db.diagnostics.length - errors;
@@ -656,12 +670,8 @@ function twisty(open: boolean, kids: boolean, set: (open: boolean) => void): HTM
 
 /** Task row under tree node `near`; `merged` is the node the task is merged with (shown with its icon). Clicking runs `click` (expansion) and opens the task. */
 function row(t: Task, depth: number, near: string, merged?: TreeNode, tw: HTMLElement | null = null, click = () => {}): HTMLElement {
-  const done = t.props.done === true, tot = db.totals[t.id], key = `${near}\0${t.id}`;
-  const cb = h('input', {
-    type: 'checkbox', checked: done, title: 'Done',
-    onclick: (e: Event) => e.stopPropagation(),
-    onchange: () => setProp(t.id, 'done', cb.checked || undefined),
-  });
+  const done = isDone(t), tot = db.totals[t.id], key = `${near}\0${t.id}`;
+  const cb = doneBox(t, { onclick: (e: Event) => e.stopPropagation() });
   const r = taskLink(t.id, {
     className: `row${done ? ' done' : ''}${pick?.key === key ? ' sel' : ''}${t.id === sel ? ' cur' : ''}`, title: merged?.file ? `${t.id}\n${merged.file}` : t.id, 'data-key': key,
     onclick: inApp(() => { pick = { key, near }; click(); if (!select(t.id)) fillTree(); }),
@@ -787,7 +797,8 @@ function taskForm(t: Task): Form {
   let typeBadge = badge(t.type);
   const type = h('select', { value: t.type, onchange: () => { mark('type')(); const b = badge(type.value); typeBadge.replaceWith(b); typeBadge = b; appear(b); } }, ...[...new Set([t.type, ...Object.keys(db.format.types)])].map(n => h('option', {}, n)));
   const title = mdEditor({ mode: 'line', parts: [t.title], multiline: false, label: 'Title', className: 'task-title', onInput: mark('title') });
-  const done = h('input', { type: 'checkbox', checked: t.props.done === true, onchange: mark('p:done') });
+  const doneKey = roleKey(t, 'done'), { effort: effortKey, spent: spentKey } = db.format.types[t.type]?.roles ?? {};
+  const done = h('input', { type: 'checkbox', checked: isDone(t), onchange: mark('p:done') });
   const fields = Object.entries(schema).map(([k, s]) => ({ k, s, el: field(s, t.props[k], mark('p:' + k)) }));
   // Description: each link list keeps its place in the text as a placeholder (refilled by `live`) pointing to the
   // lists below the description; trailing ones (only whitespace after them) need none, so they hide
@@ -802,7 +813,7 @@ function taskForm(t: Task): Form {
   };
   const desc = mdEditor({ mode: 'block', parts: t.body.map(x => typeof x === 'string' ? x : slots[n++].el), label: 'Description', placeholder: 'Description', onInput: () => { mark('body')(); trail(true); } });
   trail(false);
-  const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== 'done' && k !== 'started');
+  const extra = Object.keys(t.props).filter(k => !(k in schema) && k !== doneKey && k !== roleKey(t, 'timer'));
   const save = h('button', { className: 'good', hidden: true, title: 'Ctrl+S', onclick: () => submit() }, icon('check'), 'Save');
   const revert = h('button', { hidden: true, onclick: () => { dirty = false; transition(render); } }, icon('undo'), 'Revert');
 
@@ -814,7 +825,7 @@ function taskForm(t: Task): Form {
     if (touched.has('title')) op.title = title.texts()[0];
     if (touched.has('body')) op.body = desc.texts();
     const props = { ...cur.props };
-    if (touched.has('p:done')) props.done = done.checked || undefined;
+    if (touched.has('p:done') && doneKey) props[doneKey] = done.checked || undefined;
     for (const { k, s, el } of fields) if (touched.has('p:' + k)) props[k] = read(el.value(), s);
     if ([...touched].some(k => k.startsWith('p:'))) op.props = props;
     run(op, true);
@@ -827,8 +838,8 @@ function taskForm(t: Task): Form {
 
   const props = h('div', { className: 'props-sidebar' },
     h('div', { className: 'prop' }, h('label', {}, 'Type'), type),
-    h('div', { className: 'prop' }, h('label', {}, 'Done'), done),
-    ...fields.map(({ k, s, el }) => h('div', { className: 'prop' }, h('label', { title: s.description ?? '' }, k === 'effort' || k === 'spent' ? `${k} (h)` : k), k === 'spent' && logAdd(t), el.el)),
+    doneKey && h('div', { className: 'prop' }, h('label', {}, 'Done'), done),
+    ...fields.map(({ k, s, el }) => h('div', { className: 'prop' }, h('label', { title: s.description ?? '' }, k === effortKey || k === spentKey ? `${k} (h)` : k), k === spentKey && logAdd(t), el.el)),
     ...extra.map(k => h('div', { className: 'prop' }, h('label', { className: 'muted' }, k), h('span', { className: 'muted' }, `${JSON.stringify(t.props[k])} (not in the schema; edit it in the file)`))));
   return { form: f, props, slots };
 }
@@ -838,7 +849,7 @@ function compactProps(t: Task): HTMLElement[] {
   const schema = fieldSchema(t.type);
   const vals = [
     { k: 'Type', v: t.type },
-    { k: 'Done', v: t.props.done === true ? '✓' : '' },
+    { k: 'Done', v: isDone(t) ? '✓' : '' },
     ...Object.keys(schema).map(k => ({ k, v: t.props[k] == null ? '' : String(t.props[k]) })),
   ];
   return vals.filter(({ v }) => v && v.length <= 6).map(({ k, v }) => h('div', { className: 'prop-compact', title: `${k}: ${v}` }, v));
@@ -848,23 +859,26 @@ function compactProps(t: Task): HTMLElement[] {
  * Start/stop button for `t`'s timer, shared by the editor, the Time tab and task widgets; a running one ticks through
  * `data-started`. `iconOnly` drops the label and the clock (the title still names the action).
  */
-function timerButton(t: Task, iconOnly = false): HTMLButtonElement {
+function timerButton(t: Task, iconOnly = false): HTMLButtonElement | null {
   const started = startedAt(t);
-  return isNaN(started)
+  return !hasTimer(t) ? null : isNaN(started)
     ? h('button', { title: 'Start timer', onclick: () => run({ op: 'start', id: t.id }) }, icon('play'), !iconOnly && 'Start timer')
     : h('button', { className: 'warn', title: 'Stop timer', onclick: () => run({ op: 'stop', id: t.id }) }, icon('stop'), !iconOnly && 'Stop timer ', !iconOnly && h('span', { 'data-started': started }, clock(Date.now() - started)));
 }
 
 /**
- * `t`'s built-in properties, editable in place without opening the task: done, effort and spent (each committing on
+ * `t`'s role properties, editable in place without opening the task: done, effort and spent (each committing on
  * change, i.e. blur or Enter), a "+h" button opening a spinbox of hours to add to spent, and the timer.
- * Shared by link lists and any view listing tasks.
+ * Roles the type lacks leave their controls out. Shared by link lists and any view listing tasks.
  */
 function taskControls(t: Task): HTMLElement {
-  const done = h('input', { type: 'checkbox', checked: t.props.done === true, title: 'Done', 'data-col': 'done', onchange: () => setProp(t.id, 'done', done.checked || undefined) });
+  const done = doneBox(t, { 'data-col': 'done' });
   // A stored value that is no number stays visible as text; an emptied field removes the property.
   // A span, not a label: a label would forward clicks on its text to the "+h" button, its first labelable element
-  const hoursIn = (k: 'effort' | 'spent', pre?: HTMLElement) => {
+  // Column and label: the role, so lists align across types naming the property differently
+  const hoursIn = (role: 'effort' | 'spent', pre?: HTMLElement | null) => {
+    const k = roleKey(t, role);
+    if (!k) return null;
     const v = t.props[k];
     const el = h('input', {
       type: v == null || typeof v === 'number' ? 'number' : 'text', step: 'any', value: v == null ? '' : String(v), placeholder: '-', ariaLabel: `${k} (hours)`,
@@ -874,10 +888,10 @@ function taskControls(t: Task): HTMLElement {
       },
     });
     // The name shows as a hover bubble (CSS, from data-label); the unit sits inside the box
-    return h('span', { className: 'hours', 'data-label': k, 'data-col': k }, pre, el, h('span', { className: 'unit' }, 'h'));
+    return h('span', { className: 'hours', 'data-label': k, 'data-col': role }, pre, el, h('span', { className: 'unit' }, 'h'));
   };
   const timer = timerButton(t, true);
-  timer.dataset.col = 'timer';
+  if (timer) timer.dataset.col = 'timer';
   // Each control names its column (`data-col`): `columns` aligns equal ones across a list
   return h('div', { className: 'controls' }, done, hoursIn('effort'), hoursIn('spent', logAdd(t)), timer);
 }
@@ -902,7 +916,8 @@ const taskRefControls = (t: Task) => typed(h('span', { className: 'ref-box' }, t
  * "+h" button toggling a popup bubble under it, with a spinbox of hours to add to `t`'s spent (negative ones correct it).
  * Enter or Add logs them; Escape, or focus moving to another control, closes it. Shared by the props pane and `taskControls`.
  */
-function logAdd(t: Task): HTMLElement {
+function logAdd(t: Task): HTMLElement | null {
+  if (!roleKey(t, 'spent')) return null;
   const input = h('input', { type: 'number', step: 'any', placeholder: 'Hours to add' });
   const pop = h('form', {
     className: 'log-pop', hidden: true,
@@ -1088,7 +1103,7 @@ function graph(): HTMLElement {
   for (const v of ids) {
     const t = db.tasks[v];
     const a = s('a', { href: viewUrl(t), 'data-id': v, transform: `translate(${x(v)},${y(v)})` },
-      s('rect', { width: W, height: H, rx: 6, class: t.props.done === true ? 'done' : '' }),
+      s('rect', { width: W, height: H, rx: 6, class: isDone(t) ? 'done' : '' }),
       s('text', { x: 8, y: H / 2 + 4 }, trunc(v, 30)), s('title', {}, v));
     a.addEventListener('click', inApp(() => select(v)));
     svg.append(a);
@@ -1107,9 +1122,9 @@ function graph(): HTMLElement {
 function time(): HTMLElement {
   const n = (v: number) => h('td', { className: 'n' }, v ? hours(v) : '');
   // A task's own value: a missing property shows a gray "-", so it stands apart from an explicit 0
-  const own = (t: Task, k: 'effort' | 'spent') => t.props[k] == null
+  const own = (t: Task, k: 'effort' | 'spent') => roleVal(t, k) == null
     ? h('td', { className: 'n unset', title: `No ${k} property` }, '-')
-    : h('td', { className: 'n' }, hours(Number(t.props[k]) || 0));
+    : h('td', { className: 'n' }, hours(Number(roleVal(t, k)) || 0));
   const rows: HTMLElement[] = [], byType = new Map<string, { count: number; done: number; effort: number; spent: number }>();
   walk((t, d) => {
     const tot = db.totals[t.id];
@@ -1123,9 +1138,9 @@ function time(): HTMLElement {
   for (const t of Object.values(db.tasks)) {
     const b = byType.get(t.type) ?? { count: 0, done: 0, effort: 0, spent: 0 };
     b.count++;
-    b.done += t.props.done === true ? 1 : 0;
-    b.effort += Number(t.props.effort) || 0;
-    b.spent += Number(t.props.spent) || 0;
+    b.done += isDone(t) ? 1 : 0;
+    b.effort += Number(roleVal(t, 'effort')) || 0;
+    b.spent += Number(roleVal(t, 'spent')) || 0;
     byType.set(t.type, b);
   }
   const th = (t: string, num = false) => h('th', { className: num ? 'n' : '' }, t);

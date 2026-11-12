@@ -499,25 +499,30 @@ function unlink(ctx: Ctx, op: Extract<Op, { op: 'unlink' }>): Plan {
 }
 
 /**
- * Timer: `started` holds the running timer, so it survives restarts and is shared by every front end. `stop` adds the
- * elapsed time to `spent`; `lap` adds it too but restarts the timer at `now`; `log` adds `hours` with or without a timer.
+ * Timer: the `timer` role's property holds the running timer, so it survives restarts and is shared by every front end.
+ * `stop` adds the elapsed time to the `spent` role's property; `lap` adds it too but restarts the timer at `now`; `log`
+ * adds `hours` with or without a timer. A type lacking a role the op touches refuses it.
  */
 function timer(ctx: Ctx, op: Extract<Op, { op: 'start' | 'stop' | 'lap' | 'log' }>, now: Date): Plan {
-  const t = need(ctx, op.id), props = { ...t.props }, started = Date.parse(String(props.started ?? ''));
+  const t = need(ctx, op.id), props = { ...t.props }, roles = ctx.db.format.types[t.type]?.roles ?? {};
+  const { timer: tk, spent: sk } = roles;
+  if (op.op !== 'log' && !tk) throw new Error(`[${t.type}] has no property with the "timer" role`);
+  if (op.op !== 'start' && !sk) throw new Error(`[${t.type}] has no property with the "spent" role`);
+  const started = tk ? Date.parse(String(props[tk] ?? '')) : NaN;
   if (op.op === 'start') {
     if (!isNaN(started)) throw new Error('Timer is already running');
-    props.started = now.toISOString();
+    props[tk!] = now.toISOString();
   } else {
     if (op.op !== 'log' && isNaN(started)) throw new Error('No running timer');
     // `hours` arrives from untrusted clients; a negative one corrects earlier entries
     if (op.op === 'log' && !(typeof op.hours === 'number' && Number.isFinite(op.hours))) throw new Error('Hours must be a number');
-    const spent = typeof props.spent === 'number' && Number.isFinite(props.spent) ? props.spent : 0;
+    const spent = typeof props[sk!] === 'number' && Number.isFinite(props[sk!]) ? props[sk!] as number : 0;
     const add = op.op === 'log' ? op.hours : Math.max(0, now.getTime() - started) / 36e5;
     const total = Math.round((spent + add) * 100) / 100;
     if (total < 0) throw new Error('Spent time cannot become negative');
-    props.spent = total;
-    if (op.op === 'stop') delete props.started;
-    else if (op.op === 'lap') props.started = now.toISOString();
+    props[sk!] = total;
+    if (op.op === 'stop') delete props[tk!];
+    else if (op.op === 'lap') props[tk!] = now.toISOString();
   }
   return update(ctx, { op: 'update', id: t.id, props });
 }

@@ -4,7 +4,7 @@
  * `Db` is plain JSON (sent to GUIs); `occ` keeps the parser nodes needed for editing.
  */
 import { bodyTexts, type Diagnostic, type Node, type ParsedFile } from './markdown.js';
-import { linkReverse, PARENT, SUBTASK, type Format, type PropSchema } from './format.js';
+import { linkReverse, roleValue, PARENT, SUBTASK, type Format, type PropSchema } from './format.js';
 import { buildTree, slug, type TreeNode } from './tree.js';
 
 export interface Loc { file: string; line: number }
@@ -148,13 +148,13 @@ export function buildDb(format: Format, formatDiagnostics: Diagnostic[], files: 
       const v = stack.pop()!;
       if (seenT.has(v)) continue;
       seenT.add(v);
-      t.effort += num(tasks[v].props.effort);
-      t.spent += num(tasks[v].props.spent);
+      t.effort += num(roleValue(format, tasks[v], 'effort'));
+      t.spent += num(roleValue(format, tasks[v], 'spent'));
       stack.push(...kids.get(v) ?? []);
     }
     totals[tid] = t;
   }
 
   const names = files.map(f => f.file);
-  return { db: { format, files: names, folders, tree: buildTree(names, folders, tasks, edges), tasks, edges, totals, diagnostics }, occ };
+  return { db: { format, files: names, folders, tree: buildTree(format, names, folders, tasks, edges), tasks, edges, totals, diagnostics }, occ };
 }

@@ -155,7 +155,8 @@ export class Panels implements vscode.CustomReadonlyEditorProvider, vscode.Webvi
   /** A task tab's icon: the tree's type icon (a vanished task keeps its last one). */
   private icon({ panel, root, view }: Tab): void {
     const t = view.kind === 'task' ? root.pd.db.tasks[view.id] : undefined;
-    if (t) panel.iconPath = typeIcon(t.type, root.pd.db.format.types[t.type]?.color, t.props.done === true);
+    const type = t && root.pd.db.format.types[t.type];
+    if (t) panel.iconPath = typeIcon(t.type, type?.color, !!type?.roles.done && t.props[type.roles.done] === true);
   }
 
   /** Closes every tab of a root that is no longer loaded. */

@@ -98,16 +98,16 @@ YAML comments are allowed and are preserved when the GUI edits the block. The bl
 
 Earlier versions delimited the block with two `---` lines directly below the title. That style is still read, but `plandown check` reports it as a warning, and the next edit of the task's properties rewrites it in the current style. It was replaced because most Markdown renderers (and formatters such as Prettier) turn the YAML above a closing `---` into a heading.
 
-Which properties a task may have is declared by its type in `plandown-format.md`. Plandown itself uses four of them, which the built-in format gives to every type:
+Which properties a task may have is declared by its type in `plandown-format.md`. Some of them can play a *role*: Plandown gives them behavior, such as a checkbox or the timer. The built-in format gives every type these four:
 
-| Property | Type | Meaning |
-|---|---|---|
-| `done` | boolean | The task is finished. |
-| `effort` | number | Estimated effort in hours. |
-| `spent` | number | Time spent in hours. |
-| `started` | datetime | Start of the running timer. Managed by the timer; stopping it (or logging the elapsed time) adds that time to `spent`. |
+| Property | Type | Role | Meaning |
+|---|---|---|---|
+| `done` | boolean | `done` | The task is finished. |
+| `effort` | number | `effort` | Estimated effort in hours. |
+| `spent` | number | `spent` | Time spent in hours. |
+| `started` | datetime | `timer` | Start of the running timer. Managed by the timer; stopping it (or logging the elapsed time) adds that time to the `spent` property. |
 
-A folder with its own format file should declare them too (see [Properties of every type](#properties-of-every-type)); otherwise the GUI's checkboxes, effort fields and timer still write them, but each use is reported as an undeclared property.
+Roles are assigned in the format file (see [Roles](#roles)), so a type may name these properties differently or go without some of them.
 
 Undeclared properties are kept but reported as warnings; values of the wrong type are reported as errors.
 
@@ -201,12 +201,18 @@ Each property is declared either by its type name alone (`Due-date: date`) or as
 
 ### Properties of every type
 
-The `[*]` heading is not a task type. Its property block declares properties that every type has, ahead of the type's own ones, and a type cannot redeclare them. It declares no links, and links cannot target it.
+The `[*]` heading is not a task type. Its property block declares properties that every type has, ahead of the type's own ones, and a type cannot redeclare them. Its `$meta.roles` (see [Roles](#roles)) also apply to every type. It declares no links, and links cannot target it.
 
-Plandown's built-in format, used by folders without a `plandown-format.md`, is shown below. A folder's own format file replaces it completely, so copy its `[*]` section to keep the properties Plandown relies on:
+Plandown's built-in format, used by folders without a `plandown-format.md`, is shown below. A folder's own format file replaces it, with one exception described under [Roles](#roles):
 
 ```markdown
 # [*] Properties every task type has
+    $meta:
+      roles:
+        done: done
+        effort: effort
+        spent: spent
+        timer: started
     done:
       type: boolean
       description: The task is finished
@@ -237,6 +243,32 @@ The reserved `$meta` key in a type's property block holds settings of the type i
 | Key | Meaning |
 |---|---|
 | `color` | Any CSS color. The GUI uses it for the type's badges and its "Create" button. Values the browser does not recognize are ignored. |
+| `roles` | A map from roles to property names. See [Roles](#roles). |
+
+### Roles
+
+A role tells Plandown what a property is for. Each role names one property of the type, and that property must have the role's type:
+
+| Role | Property type | Behavior |
+|---|---|---|
+| `done` | boolean | The done checkbox. Done tasks are crossed out, and a folder or file counts as done when all its tasks that have this role are. |
+| `effort` | number | Estimated hours, summed over subtasks in the time view. |
+| `spent` | number | Logged hours, summed over subtasks. Logging hours and stopping the timer add to it. |
+| `timer` | datetime | Start of the running timer. The timer also needs the `spent` role. |
+
+```markdown
+# [Bug] A defect to fix
+    $meta:
+      roles:
+        done: Fixed
+    Fixed: boolean
+```
+
+Roles under `[*]` apply to every type; a type's own `roles` override them one by one. A property plays at most one role.
+
+A role that a type leaves unset falls back to the built-in format: if the type has a property with the name that the built-in `[*]` section assigns to the role (for example `done` for the `done` role), and that property has the role's type and plays no other role, it takes the role. A format file that simply declares `done`, `effort`, `spent` and `started` therefore keeps the usual behavior without any `roles` setting.
+
+A type with no property for a role goes without its feature: no done checkbox, no hours, or no timer.
 
 ### Link types and their reverses
 
@@ -267,7 +299,7 @@ flowchart LR
 
 Plandown never refuses to load a folder. Instead it reports diagnostics (with file and line) for anything that does not match the format:
 
-- In `plandown-format.md`: duplicate types, invalid property schemas, redeclared `[*]` properties, links under `[*]`, unlabeled lists, unknown target types, and reverse declarations that contradict each other.
+- In `plandown-format.md`: duplicate types, invalid property schemas, redeclared `[*]` properties, links under `[*]`, invalid roles, unlabeled lists, unknown target types, and reverse declarations that contradict each other.
 - In task files: unknown task types, references to tasks that have no heading, link types the task's type does not declare, links to types the link type does not allow, tasks linking to themselves, invalid YAML, unclosed property blocks, property blocks in the old `---` style, properties or tasks nested under a reference bullet, headings used as list labels, undeclared properties and values that do not match their schema.
 
 Run `plandown check <folder>` to print them; it exits with a non-zero status when there are errors, so it can guard a commit hook or a CI job.

@@ -112,13 +112,13 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   // ---- Status bar: running timers ----
 
-  /** One item per running timer (`started` set) of every root, as the GUI header lists them; click opens the task. */
+  /** One item per running timer (timer role property set) of every root, as the GUI header lists them; click opens the task. */
   let timers: { item: vscode.StatusBarItem; started: number; title: string }[] = [];
   const tick = () => timers.forEach(t => t.item.text = `$(clock) ${t.title} ${clock(Date.now() - t.started)}`);
   const showTimers = () => {
     timers.forEach(t => t.item.dispose());
     timers = roots.flatMap(r => Object.values(r.pd.db.tasks).flatMap(t => {
-      const started = Date.parse(String(t.props.started ?? ''));
+      const k = r.pd.db.format.types[t.type]?.roles.timer, started = k ? Date.parse(String(t.props[k] ?? '')) : NaN;
       if (isNaN(started)) return [];
       const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
       item.tooltip = `Running timer: ${t.id}`;

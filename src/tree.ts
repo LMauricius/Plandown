@@ -3,7 +3,7 @@
  * (`a/b/` and `a/b.md` or `a/b.plandown.md`) are one node; a file whose only top-level task is named like the file is
  * merged with that task. Pure, built with the database, so every front end shows the same tree.
  */
-import { SUBTASK } from './format.js';
+import { roleValue, SUBTASK, type Format } from './format.js';
 import type { Edge, Task } from './db.js';
 
 /** One node: a folder and/or a file sharing `path` (stem relative to the root, `/`-separated). */
@@ -14,7 +14,7 @@ export interface TreeNode {
   task: string | null;   // the file's single top-level task, merged into this node
   tasks: string[];       // task rows under the node: the file's top-level tasks in file order; if merged, `task`'s subtasks not shown by `kids`
   kids: TreeNode[];      // child folders and files, natural name order
-  done: boolean;         // every task homed in the node's file or below it is done, and there is at least one
+  done: boolean;         // every task homed in the node's file or below it whose type has the done role is done, and there is at least one
 }
 
 const byName = new Intl.Collator(undefined, { numeric: true }).compare;
@@ -49,7 +49,7 @@ export function findNode(tree: TreeNode[], path: string): TreeNode | undefined {
   }
 }
 
-export function buildTree(files: string[], folders: string[], tasks: Record<string, Task>, edges: Edge[]): TreeNode[] {
+export function buildTree(format: Format, files: string[], folders: string[], tasks: Record<string, Task>, edges: Edge[]): TreeNode[] {
   // Nodes by path; a node implies its parent folders
   const nodes = new Map<string, TreeNode>();
   const node = (path: string): TreeNode => {
@@ -95,11 +95,12 @@ export function buildTree(files: string[], folders: string[], tasks: Record<stri
     const shown = new Set(n.kids.flatMap(k => k.task ? [k.task] : k.tasks));
     n.tasks = (subs.get(n.task) ?? []).filter(id => !shown.has(id));
   }
-  // Done: task counts per home stem, summed bottom-up (every task has the built-in Done, so "no tasks" is the only exemption)
+  // Done: counts of tasks whose type has the done role, per home stem, summed bottom-up (no such tasks: not done)
   const count = new Map<string, { all: number; done: number }>();
   for (const id in tasks) {
+    if (!format.types[tasks[id].type]?.roles.done) continue;
     const c = count.get(fileStem(tasks[id].home.file)) ?? { all: 0, done: 0 };
-    c.all++; c.done += tasks[id].props.done === true ? 1 : 0;
+    c.all++; c.done += roleValue(format, tasks[id], 'done') === true ? 1 : 0;
     count.set(fileStem(tasks[id].home.file), c);
   }
   const sum = (n: TreeNode): { all: number; done: number } => {

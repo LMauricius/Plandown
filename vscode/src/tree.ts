@@ -144,12 +144,14 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
     const t = id ? db.tasks[id] : undefined;
     if (!t) return ti;
     const tot = db.totals[t.id];
-    const done = t.props.done === true;
+    const doneKey = db.format.types[t.type]?.roles.done, done = !!doneKey && t.props[doneKey] === true;
     ti.label = done ? strike(t.title) : t.title;
     if (done) ti.accessibilityInformation = { label: `${t.title}, done` };   // screen readers would spell the strokes
     ti.description = tot.effort || tot.spent ? `${t.type} · ${hours(tot.spent)}/${hours(tot.effort)} h` : t.type;
     ti.tooltip = `${t.id}\n${t.home.file}`;
-    if (done) ti.contextValue += ' done';   // picks the hover-only Done toggle (`plandown.done` / `plandown.undone`)
+    // Picks the hover-only Done toggle (`plandown.done` / `plandown.undone`); none when the type has no done role
+    if (!doneKey) ti.contextValue += ' nodone';
+    else if (done) ti.contextValue += ' done';
     ti.command = { command: 'plandown.open', title: 'Open', arguments: [root, t.id, item] };
     ti.iconPath = typeIcon(t.type, db.format.types[t.type]?.color, done);
     ti.resourceUri = vscode.Uri.from({ scheme: TYPE_SCHEME, path: '/' + t.type });
@@ -195,8 +197,9 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
 
   /** Done toggle (hover-only inline action): one update of the row's task, as the GUI's row checkbox. */
   async setDone(item: Item, done: boolean): Promise<void> {
-    const id = item.kind === 'node' ? item.node.task : item.kind === 'task' ? item.id : null, t = id ? item.root.pd.db.tasks[id] : undefined;
-    if (t) await this.apply(item.root, { op: 'update', id: t.id, props: { ...t.props, done: done || undefined } })
+    const db = item.root.pd.db, id = item.kind === 'node' ? item.node.task : item.kind === 'task' ? item.id : null, t = id ? db.tasks[id] : undefined;
+    const k = t && db.format.types[t.type]?.roles.done;
+    if (k) await this.apply(item.root, { op: 'update', id: t.id, props: { ...t.props, [k]: done || undefined } })
       .catch(err => vscode.window.showErrorMessage((err as Error).message));
   }
 }

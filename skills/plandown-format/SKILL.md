@@ -50,16 +50,18 @@ Each property is either `Name: <type>` or a mapping:
 | `enum` | List of allowed values. |
 | `description` | Help text (tooltip in the GUI). |
 
-The `[*]` heading is **not a type**: its properties belong to every type and must not be redeclared by one. It has no links and is no link target. Plandown itself uses these four, so a format file should declare them under `[*]` (the built-in format does):
+The `[*]` heading is **not a type**: its properties belong to every type and must not be redeclared by one. It has no links and is no link target. The reserved key `$meta` holds type settings, not a property. Its keys are `color` (any CSS color string; quote hex values so YAML does not read them as comments) and `roles`.
 
-| Property | Type | Meaning |
+`roles` maps the roles Plandown gives behavior to onto property names. Each named property must exist (a type sees `[*]` properties too) and have the role's type; a property plays at most one role. Roles under `[*]` apply to every type; a type's own override them one by one.
+
+| Role | Property type | Behavior |
 |---|---|---|
-| `done` | boolean | The task is finished. |
-| `effort` | number | Estimated effort in hours. |
-| `spent` | number | Hours spent. |
-| `started` | datetime | Start of the running timer. Managed by the GUI; do not write it by hand. |
+| `done` | boolean | Done checkbox. |
+| `effort` | number | Estimated hours, summed over subtasks. |
+| `spent` | number | Hours spent, summed over subtasks. |
+| `timer` | datetime | Start of the running timer (needs `spent` too). Managed by the GUI; do not write it by hand. |
 
-The reserved key `$meta` holds type settings, not a property. Its only key is `color` (any CSS color string; quote hex values so YAML does not read them as comments).
+A role a type leaves unset falls back to the built-in format, whose `[*]` section declares `done`, `effort`, `spent` and `started` with roles `done`, `effort`, `spent`, `timer`: a same-named property of the matching type takes the role. A type with no property for a role lacks that feature.
 
 ## Link types
 
@@ -83,7 +85,7 @@ So `[Bug] X` → `Blocked by` → `[Task] Y` requires `Blocked by:` with `- [Tas
 Before editing tasks, build this table from the format file (mentally or in your notes):
 
 - **Types:** every `# [<Type>]` heading.
-- **Properties per type:** the `[*]` ones plus the type's own; their types and enums.
+- **Properties per type:** the `[*]` ones plus the type's own; their types, enums and roles.
 - **Links per type:** for each declared `<Link>:`, the target types allowed. Plus `Subtask` and `Parent` to anything.
 
 If a needed type, property or link is missing, **do not invent it in a task file**. Tell the user, and offer to add it to the format file (only if they agree).
@@ -100,6 +102,6 @@ When adding or editing declarations:
 
 ## Validation
 
-Problems never block loading; they become diagnostics. Format file errors include: duplicate types, invalid property schemas, redeclared `[*]` properties, links under `[*]`, unlabeled lists, unknown target types, and contradicting reverse declarations.
+Problems never block loading; they become diagnostics. Format file errors include: duplicate types, invalid property schemas, redeclared `[*]` properties, links under `[*]`, invalid roles, unlabeled lists, unknown target types, and contradicting reverse declarations.
 
 If the `plandown` CLI is available, run `plandown check <folder>` after any change. It prints `file:line` diagnostics and exits non-zero on errors. Without it, re-check the reverse rule by hand for every entry you touched.

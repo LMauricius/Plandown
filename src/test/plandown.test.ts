@@ -44,6 +44,41 @@ test('format: [*] properties go to every type; folders without a format file use
   assert.deepEqual(Object.keys(m.db.format.types.Task.props), ['done', 'effort', 'spent', 'started']);
 });
 
+test('format: roles map behavior to properties; unset roles fall back to same-named properties', async () => {
+  const fb = { done: 'done', effort: 'effort', spent: 'spent', timer: 'started' } as const;
+  const f = parseFormat(parseMarkdown('plandown-format.md', [
+    '# [*] all', '    $meta:', '      roles: { spent: Hours, done: Hours }', '    Hours: number', '    done: boolean', '',
+    '# [A] own roles', '    $meta:', '      roles: { done: Closed, timer: Since, effort: Nope, size: Est }', '    Closed: boolean', '    Since: string', '    effort: number', '',
+    '# [B] fallback only', '    started: datetime', '    effort: string', '',
+  ].join('\n')), fb);
+  assert.deepEqual(f.format.roles, { spent: 'Hours' });
+  assert.deepEqual(f.format.types.A.roles, { spent: 'Hours', done: 'Closed', effort: 'effort' });
+  assert.deepEqual(f.format.types.B.roles, { spent: 'Hours', done: 'done', timer: 'started' });
+  assert.deepEqual(f.diagnostics.map(d => d.message), [
+    'Role "done" needs a boolean property; "Hours" is a number',
+    'Role "timer" needs a datetime property; "Since" is a string',
+    'Role "effort" must name a property of [A]',
+    'Unknown role "size"; roles are done, effort, spent, timer',
+  ]);
+  const dup = parseFormat(parseMarkdown('plandown-format.md', '# [A] a\n    $meta:\n      roles: { effort: E, spent: E }\n    E: number\n'));
+  assert.deepEqual(dup.format.types.A.roles, { effort: 'E' });
+  assert.deepEqual(dup.diagnostics.map(d => d.message), ['Property "E" of [A] plays both roles "effort" and "spent"']);
+
+  // Renamed roles drive the timer and rollups; a type without them refuses the timer
+  const d = mkdtempSync(join(tmpdir(), 'plandown-'));
+  writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n    $meta:\n      roles: { timer: Since, spent: Hours, effort: Est }\n    Since: datetime\n    Hours: number\n    Est: number\n\n# [U] u\n');
+  writeFileSync(join(d, 'a.md'), '# [T] A\n    Est: 3\n    Hours: 1\n\n## [T] B\n    Est: 2\n\n# [U] C\n');
+  const m = await Plandown.open(d);
+  assert.deepEqual(m.db.diagnostics, []);
+  assert.deepEqual(m.db.totals['[T] A'], { effort: 5, spent: 1 });
+  await m.apply({ op: 'start', id: '[T] B' });
+  assert.equal(typeof m.db.tasks['[T] B'].props.Since, 'string');
+  await m.apply({ op: 'stop', id: '[T] B' });
+  assert.deepEqual(Object.keys(m.db.tasks['[T] B'].props), ['Est', 'Hours']);
+  await assert.rejects(m.apply({ op: 'start', id: '[U] C' }), /no property with the "timer" role/);
+  await assert.rejects(m.apply({ op: 'log', id: '[U] C', hours: 1 }), /no property with the "spent" role/);
+});
+
 test('parser: checkboxes, links and code are not tasks; a new marker starts a new list', () => {
   const pf = parseMarkdown('a.md', '# [T] A\n- [x] done item\n- [link](x) text\n\n```\n# [T] Code\n```\nBlocked by:\n- [x] [T] B\n\n* [T] C\n');
   assert.deepEqual(pf.nodes.map(n => n.title), ['A', 'B', 'C']);
@@ -265,7 +300,8 @@ test('tree: a subtask in its own file merges with the file, not listed twice', a
 test('tree: a node is done when every task below it is, and it has at least one', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-')), w = (f: string, t: string) => writeFileSync(join(d, f), t);
   for (const f of ['a/b', 'a/empty']) mkdirSync(join(d, f), { recursive: true });
-  w('plandown-format.md', '# [T] t\n');
+  w('plandown-format.md', '# [T] t\n    done: boolean\n\n# [N] no done role\n');   // `done` gets its role from the built-in fallback
+  w('a/n.md', '# [N] Never done\n');
   w('a/b/x.md', '# [T] X\n```yaml\ndone: true\n```\n# [T] Y\n```yaml\ndone: true\n```\n');
   w('a/c.md', '# [T] C\n## [T] D\n```yaml\ndone: true\n```\n');
   const m = await Plandown.open(d), node = (p: string) => findNode(m.db.tree, p)!;
