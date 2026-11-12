@@ -28,7 +28,9 @@ The checklist icon in the activity bar opens the task tree. It holds what the GU
 - Click a folder or a file to open its page in the same way: the outline of everything inside it, as described in [Usage.md](../Usage.md#group-pages). Inside a page, clicking a nested folder or file opens its own page.
 - Clicking a row also expands it. Clicking the row of the page already shown in the editor collapses or expands it, as clicking a folder does in the Explorer.
 - Hover a task row and click **Mark Done** (or **Mark Not Done**) to change its state; subtasks keep their own state. A folder or file whose tasks are all done is crossed out and grayed, as are done tasks.
-- Drag a task, file or folder onto another row to move it there, as described in [Usage.md](../Usage.md#moving-tasks-files-and-folders). The tree only drops *into* rows; to place a task before or after another one, use the GUI.
+- Drag a task, file or folder onto another row to move it there, as described in [Usage.md](../Usage.md#moving-tasks-files-and-folders). The tree only drops *into* rows; to place a task before or after another one, drop it on a group page or in the GUI. Dropped onto the empty space below the rows, it moves to the top of its database.
+- Besides its own rows, the tree takes any link naming a task, folder or file of a database: Plandown tabs (dragged by their title), files from the Explorer, task links from Plandown tabs, `file:` links, and absolute or workspace-relative paths, with an optional `#anchor` naming a task inside the file.
+- A row dragged out of the tree carries its file's link (plus `#anchor` for a task inside a file). Dropped on the editor area, it opens that file; dropped on a group page or a link list, it moves or links the task there.
 - Each row shows the task type and, when set, `spent/effort` hours including subtasks.
 - **New Task** and **New Group** (in the panel title, or on a row) create next to the selected row, or at the top of the database when nothing is selected.
 - **Filter Tasks** lists every task whose title or description contains the text. **Clear Filter** restores the tree.
@@ -40,6 +42,8 @@ Each task opens in a tab of its own, showing the GUI's editor without its header
 **Alt+Left** and **Alt+Right** (**Cmd+[** and **Cmd+]** on macOS) go back and forward through the tabs you visited, preview tabs included, while a Plandown tab is focused. They run VSCode's own **Go Back** and **Go Forward**, so the history is shared with text editors.
 
 The **Stored in** entries open the Markdown file at that line in a text editor.
+
+Group pages and link lists take drops as in the GUI (see [Usage.md](../Usage.md#group-pages)). Drags inside one tab work as usual. To drop something coming from outside the tab (a tree row, an Explorer file, another tab), hold **Shift** while dropping: VSCode hands drops to a tab's page only then.
 
 Tabs are restored when the window reloads.
 

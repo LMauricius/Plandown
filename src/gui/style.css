@@ -242,11 +242,14 @@ main { flex: 1; display: flex; min-height: 0; }
 /* Toggle first, on the outer (left) edge, at the 8px inset it has when collapsed, so it stays put */
 .sidebar > .pane-head { flex-direction: row-reverse; justify-content: flex-end; gap: 10px; }
 .sidebar:not(.collapsed) > .pane-head { margin-left: -4px; }
-#tree { flex: 1; overflow: auto; border-radius: var(--radius); transition: box-shadow .15s; }
-/* Drop indicators while a link is dragged over the tree: a frame for "into" (the tree itself: the root), a line for before/after */
-#tree.drop-into, #tree .row.drop-into { box-shadow: inset 0 0 0 2px var(--accent); }
-#tree .row.drop-before { box-shadow: inset 0 2px var(--accent); }
-#tree .row.drop-after { box-shadow: inset 0 -2px var(--accent); }
+#tree { flex: 1; overflow: auto; }
+/* Room below the last row, always: a click there drops the selection, a drop there goes to the root (`dropZone` in app.ts) */
+#tree::after { content: ''; display: block; height: 3em; }
+/* Drop indicators while a link is dragged over a drop zone: a frame for "into" (the zone itself: its base), a line for before/after */
+.drop-zone, .drop-zone li { border-radius: var(--radius); transition: box-shadow .15s; }
+.drop-zone.drop-into, .drop-zone .drop-into { box-shadow: inset 0 0 0 2px var(--accent); }
+.drop-zone .drop-before { box-shadow: inset 0 2px var(--accent); }
+.drop-zone .drop-after { box-shadow: inset 0 -2px var(--accent); }
 .row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: var(--radius); cursor: pointer; white-space: nowrap; color: inherit; text-decoration: none; transition: box-shadow .15s; }
 .row:hover { background: var(--accent-soft); }
 .row.sel { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
@@ -397,6 +400,7 @@ li > button.bad { display: inline-grid; place-items: center; width: 20px; height
 /* Link and subtask inputs hold one task title: a title-sized width that grows with longer text up to the row's edge */
 .link-group form input[type=text] { flex: none; field-sizing: content; min-width: min(24em, 100%); max-width: 100%; }
 /* Group pages (`nodePage` in app.ts): link-list tables whose widgets are indented by `--depth`, the toggle left of each */
+.outline { padding-bottom: 2em; }
 .outline ul { padding-left: 22px; }
 .outline li::before { content: none; }
 .outline li { --ind: clamp(12px, 4cqi, 20px); }

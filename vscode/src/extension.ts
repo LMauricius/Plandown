@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { dirname, join, relative, sep } from 'node:path';
 import type { Op, Plandown } from 'plandown' with { 'resolution-mode': 'import' };
-import { TaskTree, typeDecorations, type Item } from './tree.js';
+import { basesOf, TaskTree, typeDecorations, type Item } from './tree.js';
 import { Panels, linkOf } from './panels.js';
 
 /** One loaded database: the folder holding a `plandown-format.md`. */
@@ -74,7 +74,7 @@ const isItem = (a: unknown): a is Item => typeof a === 'object' && a !== null &&
 // ---- Activation ----
 
 export async function activate(ctx: vscode.ExtensionContext) {
-  const { Plandown, serve, findNode, fileStem } = await import('plandown');
+  const { Plandown, serve, findNode, fileStem, resolveLink } = await import('plandown');
   let roots: Root[] = [], loading = Promise.resolve();
 
   // ---- Databases ----
@@ -134,7 +134,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
   // ---- Views ----
 
-  const tree = new TaskTree(() => roots, apply);
+  const tree = new TaskTree(() => roots, apply, resolveLink);
   const view = vscode.window.createTreeView('plandown.tree', { treeDataProvider: tree, dragAndDropController: tree });
   // `require.resolve` finds the installed copy of the library (refreshed by `npm run build`), whose `dist/gui` the webviews load
   const panels = new Panels(vscode.Uri.file(join(dirname(require.resolve('plandown')), 'gui')), () => loading.then(() => roots), apply, (r, page) => {
@@ -205,7 +205,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   reg('plandown.openBrowser', async (arg?: unknown) => {
     const r = isItem(arg) ? arg.root : await pickRoot();
     if (!r) return;
-    try { await vscode.env.openExternal(vscode.Uri.parse((await (r.server ??= serve(r.pd, 0))).url)); }
+    try { await vscode.env.openExternal(vscode.Uri.parse((await (r.server ??= serve(r.pd, 0, basesOf(r)))).url)); }
     catch (e) { r.server = undefined; vscode.window.showErrorMessage(`Plandown: cannot start the GUI server: ${(e as Error).message}`); }
   });
   // Opening the same page twice within 500 ms (a double click on a tree row) pins its tab, as the Explorer does for files.

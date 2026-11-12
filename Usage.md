@@ -81,13 +81,13 @@ New file names are the task title without the characters that file systems rejec
 
 #### Moving tasks, files and folders
 
-Drag a row and drop it on another one to move it. Any link to a task or to a group page works the same way, so you can also drag a task chip from a link list, a graph node or a header timer, or even a link from another browser tab of the GUI. The tree highlights where the item will land:
+Drag a row and drop it on another one to move it. Any link to a task or to a group page works the same way, so you can also drag a task chip from a link list, a graph node or a header timer, or even a link from another browser tab of the GUI. The items of a group page take drops just like tree rows (empty space there means the page's own folder or file). The tree highlights where the item will land:
 
 - **Onto the middle of a task row:** the item becomes the last subtask of that task.
 - **Onto the top or bottom edge of a task row:** the item lands just before or after that task, under the same parent.
 - **Onto a folder or file row:** a task becomes a top-level task there, placed as described in the table above. A file or folder moves inside it; if the target is only a file, its folder is created. Folders and files are always sorted by name, so the whole row means *into*.
 - **A folder or file onto a task row:** it moves into that task's file or folder (the one merged with the task, or else the node of the file the task lives in).
-- **Onto the empty space below the tree:** the item moves to the top of the database.
+- **Onto the empty space below the tree:** the item moves to the top of the database. The tree always keeps a little space below its last row for this.
 
 A task merged with its file always moves as that file, together with its same-named folder and everything in it. Its Subtask link moves too: the reference in its old parent (the task it was dragged from, or else the task merged with the folder it was in) is removed, and one is added to the new parent (the task it was dropped on, or the task merged with the target folder). Dropped before or after another subtask of the same parent, only the reference moves, which reorders it. In the filtered list, every drop goes into the row.
 
@@ -103,6 +103,8 @@ The sidebar and the editor's property panel are resized by dragging their inner 
 ### Group pages
 
 The page of a folder or file lists everything inside it as an outline: tasks with their subtasks, nested folders and files with their contents, each level indented below its parent. Every task appears as the same widget as in the link lists (see [Editor](#editor)), so you can tick it done, change its hours or run its timer without opening it; values of the same property line up in columns. The arrows collapse and expand branches, and the collapsed ones are remembered across page reloads in the same browser tab. Click a nested folder or file to open its page.
+
+Drop a task, file or folder onto the outline to move it, exactly as in the [sidebar](#moving-tasks-files-and-folders). Dropped onto the empty space below the outline, it moves into the page's own folder or file.
 
 ### Editor
 
@@ -125,6 +127,8 @@ The rest of the editor acts immediately:
   - **Unlink** (the broken chain) removes a link that only the linked task declares, by editing the linked task.
 
   Subtask and parent links have no removal button; change them in the files.
+
+  Drop a task onto a list to link it: the reference lands before or after the row under the pointer (the upper or lower half), or at the end of the list. Dropping a task the list already shows reorders it instead. A reference this task declares moves within its list, together with any text nested under it, and a subtask written as a sub-heading moves like a [sidebar drop](#moving-tasks-files-and-folders) next to its new sibling. A link only the other task declares keeps its place; reorder it on that task's page. Dropping onto a list never moves the task's own text; a Subtask list therefore only adds a reference.
 - **Link.** Choose a link type, then pick the target task. The suggestions only offer tasks whose type the chosen link type allows. Only link types declared by this task's type can be created here; incoming one-directional links (and parents) are created on the other task's page.
 - **Add subtask.** Creates a new task as the last sub-heading of the task's section.
 - **Stored in.** Every file and line where the task occurs. The occurrence marked *properties and description* is the one the editor writes to.
@@ -184,5 +188,14 @@ sequenceDiagram
 ```
 
 If a file changes on disk between the moment the GUI loaded it and the moment you save, the save is refused with a message, the GUI reloads, and you can simply save again. Nothing written by someone else is overwritten.
+
+#### Links you can drag and drop
+
+Every drop target accepts any link that names a task, a folder or a file of the open database:
+
+- links of the GUI itself (`/view/…` and `/group/…`), from this page, another tab or any address of the server;
+- file paths relative to the database folder, such as `tasks/login.md` or `tasks/login.md#task-fix-login` (the anchor names a task inside the file), which is what **Copy link** copies.
+
+When the GUI is opened from the VSCode extension, absolute paths, `file:` links and paths relative to the workspace folder work too.
 
 Errors such as an unknown task type or a link the format does not allow never block the GUI. They appear in the diagnostics list, and the affected tasks are still shown so you can fix them.

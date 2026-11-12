@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import { relative, sep } from 'node:path';
 import type { Op, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
-import { findIn, typeIcon } from './tree.js';
+import { basesOf, findIn, typeIcon } from './tree.js';
 
 /**
  * Webview → host: `state` and `op` carry a request id `rid` answered with `{ rid, db }` / `{ rid, id, db, error }`
@@ -76,7 +76,7 @@ const note = (text: string) => `<!doctype html><meta http-equiv="Content-Securit
 
 /**
  * Page for one view: the GUI's stylesheet and `app.js` as webview URIs, `<body data-view data-root data-task>` (read by
- * the GUI, and saved as its state for restoring the tab) and only `#main` and `#toast` (no header). CSP: nothing but
+ * the GUI, plus `data-root-uri` and `data-bases` for drag and drop, and saved as its state for restoring the tab) and only `#main` and `#toast` (no header). CSP: nothing but
  * the webview's own resources, plus inline `<style>` (Mermaid measures labels in a page-side copy of the SVG, styled by
  * its own `<style>`; with no outbound sources allowed, CSS cannot leak anything).
  */
@@ -85,7 +85,7 @@ function html(webview: vscode.Webview, gui: vscode.Uri, root: Root, view: View):
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; script-src ${webview.cspSource}">
 <link rel="stylesheet" href="${src('style.css')}"></head>
-<body data-view="${view.kind}" data-root="${esc(root.uri.fsPath)}"${view.kind === 'task' ? ` data-task="${esc(view.id)}"` : view.kind === 'node' ? ` data-node="${esc(view.path)}"` : ''}>
+<body data-view="${view.kind}" data-root="${esc(root.uri.fsPath)}" data-root-uri="${esc(root.uri.toString())}" data-bases="${esc(JSON.stringify(basesOf(root)))}"${view.kind === 'task' ? ` data-task="${esc(view.id)}"` : view.kind === 'node' ? ` data-node="${esc(view.path)}"` : ''}>
 <main id="main"></main><div id="toast" hidden></div>
 <script type="module" src="${src('app.js')}"></script></body></html>`;
 }

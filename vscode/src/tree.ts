@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type { Op, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
+import type { resolveLink, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
 import type { Page } from './panels.js';
 
@@ -36,6 +36,21 @@ const FONT = `'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif`;
 export const findIn = (tree: TreeNode[], hit: (n: TreeNode) => boolean): TreeNode | undefined => {
   for (const n of tree) { const r = hit(n) ? n : findIn(n.kids, hit); if (r) return r; }
 };
+
+/** Folders that dropped file paths may name or be relative to (`resolveLink`'s `bases`): the root, then its workspace folder. */
+export const basesOf = (root: Root) => [root.uri.fsPath, vscode.workspace.getWorkspaceFolder(root.uri)?.uri.fsPath].filter((p): p is string => !!p);
+
+/**
+ * URI a dragged row or page link carries, as the GUI's in a webview (its `diskLink` under the root's URI): a node's file or
+ * folder, a task merged with a file that file, any other task its home file plus `#<anchor>`. It names the database
+ * exactly, and a drop on the editor area opens the file.
+ */
+export function dragUri(root: Root, to: { id: string } | { path: string }): vscode.Uri | undefined {
+  const db = root.pd.db, n = findIn(db.tree, n => 'id' in to ? n.task === to.id : n.path === to.path);
+  if (n) return vscode.Uri.joinPath(root.uri, n.file ?? n.path);
+  const t = 'id' in to ? db.tasks[to.id] : undefined;
+  return t && vscode.Uri.joinPath(root.uri, t.home.file).with({ fragment: t.anchor });
+}
 
 /**
  * Icon of a task row: the GUI's `.badge` bubble (same colors, border, gloss, shade, font family) as a 16x16 square,
@@ -97,7 +112,8 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
   private change = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.change.event;
 
-  constructor(private roots: () => Root[], private apply: Apply) {}
+  /** `resolve`: the library's `resolveLink` (loaded with the library). */
+  constructor(private roots: () => Root[], private apply: Apply, private resolve: typeof resolveLink) {}
 
   /** Rebuilds the whole tree (after any reload; it is cheap). */
   refresh(): void { this.change.fire(); }
@@ -183,40 +199,42 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
     return ti;
   }
 
-  readonly dragMimeTypes = [];
+  readonly dragMimeTypes = ['text/uri-list'];
   readonly dropMimeTypes = [ITEMS, 'text/uri-list'];
 
-  handleDrag(items: readonly Item[], dt: vscode.DataTransfer): void { dt.set(ITEMS, new vscode.DataTransferItem(items)); }
+  /** Own items for drops in this tree; `dragUri`s for every other target (webview tabs, the editor area, text editors). */
+  handleDrag(items: readonly Item[], dt: vscode.DataTransfer): void {
+    dt.set(ITEMS, new vscode.DataTransferItem(items));
+    const uris = items.map(i => i.kind === 'root' ? i.root.uri : dragUri(i.root, i.kind === 'node' ? { path: i.node.path } : { id: i.id }));
+    dt.set('text/uri-list', new vscode.DataTransferItem(uris.filter(u => u).join('\r\n')));
+  }
 
   /**
    * Moves what is dropped into the target, as the GUI's drops into a row (VSCode trees have no drops between rows): under a
-   * task row's task (a merged node's too), else into the node (a root: the top). The library moves a task merged with a node
-   * as that node, and a node without a task into a target task's node. A dragged task row's parent row is the old parent its
-   * link leaves (`from`). Links from webview tabs (`…/view/<anchor>`, `…/group/<path>`) name a task or node of the
-   * target's root; items of another root are ignored (a move never crosses databases).
+   * task row's task (a merged node's too), else into the node (a root, or empty space: the top). The library moves a task
+   * merged with a node as that node, and a node without a task into a target task's node. A dragged task row's parent row
+   * is the old parent its link leaves (`from`). Other drags carry URIs (page tabs, files, webview links; see `resolveLink`),
+   * resolved in the target's root (empty space: the first root naming it). A move never crosses databases: own items of
+   * another root are ignored, and absolute paths must lie in the root.
    */
   async handleDrop(target: Item | undefined, dt: vscode.DataTransfer): Promise<void> {
-    const roots = this.roots(), root = target?.root ?? (roots.length === 1 ? roots[0] : undefined);
-    if (!root) return;
-    const db = root.pd.db, node = (n: TreeNode): Src => n.task ? { id: n.task } : { path: n.path };
+    const node = (n: TreeNode): Src => n.task ? { id: n.task } : { path: n.path };
     const items = (dt.get(ITEMS)?.value ?? []) as Item[];
-    const srcs = items.length
-      ? items.flatMap((i): Src[] => i.root !== root || i.kind === 'root' ? [] : i.kind === 'node' ? [node(i.node)]
-        : [{ id: i.id, from: i.parent?.kind === 'task' ? i.parent.id : i.parent?.kind === 'node' ? i.parent.node.task ?? undefined : undefined }])
-      : (await dt.get('text/uri-list')?.asString() ?? '').split(/\r?\n/).flatMap((l): Src[] => {
-        let p = '';
-        try { p = decodeURIComponent(new URL(l.trim()).pathname); } catch { return []; }
-        const v = /^\/view\/([^/]+)$/.exec(p)?.[1], g = /^\/group\/(.+)$/.exec(p)?.[1];
-        const t = v ? Object.values(db.tasks).find(t => t.anchor === v) : undefined, n = g ? findIn(db.tree, n => n.path === g) : undefined;
-        return t ? [{ id: t.id }] : n ? [node(n)] : [];
+    const roots = target ? [target.root] : this.roots();
+    const srcs: { root: Root; src: Src }[] = items.length
+      ? items.flatMap(i => !roots.includes(i.root) || i.kind === 'root' ? [] : [{ root: i.root, src: i.kind === 'node' ? node(i.node)
+        : { id: i.id, from: i.parent?.kind === 'task' ? i.parent.id : i.parent?.kind === 'node' ? i.parent.node.task ?? undefined : undefined } }])
+      : (await dt.get('text/uri-list')?.asString() ?? '').split(/\r?\n/).filter(l => l.trim() && !l.startsWith('#')).flatMap(l => {
+        for (const root of roots) { const src = this.resolve(root.pd.db, l, basesOf(root)); if (src) return [{ root, src }]; }
+        return [];
       });
+    if (!items.length && !srcs.length) vscode.window.showWarningMessage('Plandown: the dropped link names no task or group of this database');
 
     const tid = target?.kind === 'task' ? target.id : target?.kind === 'node' ? target.node.task ?? undefined : undefined;
     const where = tid ? { parent: tid } : { near: target?.kind === 'node' ? target.node.path : '' };
-    for (const s of srcs) {
-      const op: Op = { op: 'move', ...s, ...where };
-      if (s.id === tid || (s.path !== undefined && s.path === where.near)) continue;
-      await this.apply(root, op).catch(err => vscode.window.showErrorMessage((err as Error).message));
+    for (const { root, src } of srcs) {
+      if ('id' in src ? src.id === tid : src.path === where.near) continue;
+      await this.apply(root, { op: 'move', ...src, ...where }).catch(err => vscode.window.showErrorMessage((err as Error).message));
     }
   }
 

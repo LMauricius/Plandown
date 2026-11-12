@@ -13,6 +13,7 @@ const STATIC: Record<string, [string, string]> = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/mdedit.js': ['mdedit.js', 'text/javascript; charset=utf-8'],
+  '/links.js': ['links.js', 'text/javascript; charset=utf-8'],
   '/motion.js': ['motion.js', 'text/javascript; charset=utf-8'],
   '/mermaid.min.js': ['mermaid.min.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
@@ -36,7 +37,11 @@ function body(req: IncomingMessage, limit = 1 << 20): Promise<string> {
   });
 }
 
-export function serve(plandown: Plandown, port = 4848): Promise<{ url: string; close(): void }> {
+/**
+ * Serves `plandown` on 127.0.0.1. `bases`: absolute folders that dropped file paths may name or be relative to (see
+ * `resolveLink`), given to the page by `/api/bases`; none by default, so the page learns no local paths.
+ */
+export function serve(plandown: Plandown, port = 4848, bases: string[] = []): Promise<{ url: string; close(): void }> {
   const clients = new Set<ServerResponse>();
   const unwatch = plandown.watch(() => { for (const c of clients) c.write('data: changed\n\n'); });
 
@@ -52,6 +57,7 @@ export function serve(plandown: Plandown, port = 4848): Promise<{ url: string; c
       const file = STATIC[path] ?? (/^\/(view\/[^/]+|group\/.+|graph|time)$/.test(path) ? STATIC['/'] : undefined);
       if (req.method === 'GET' && file) return send(res, 200, file[1], await readFile(GUI + file[0]));
       if (req.method === 'GET' && path === '/api/state') return json(200, plandown.db);
+      if (req.method === 'GET' && path === '/api/bases') return json(200, bases);
       if (req.method === 'GET' && path === '/api/events') {
         res.writeHead(200, { ...HEADERS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
         clients.add(res);

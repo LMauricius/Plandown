@@ -6,6 +6,7 @@ import type { Db, Edge, Task } from '../db.js';
 import type { Op } from '../edit.js';
 import type { PropSchema, Role } from '../format.js';
 import type { TreeNode } from '../tree.js';
+import { resolveLink, type Target } from './links.js';
 import { mdEditor } from './mdedit.js';
 import { appear, show, still } from './motion.js';
 
@@ -36,10 +37,12 @@ if (vs) addEventListener('message', (e: MessageEvent) => {
 /** Transport: HTTP for the standalone server, postMessage to the extension host inside VSCode (same replies). */
 const api = vs ? {
   state: async (): Promise<Db> => (await ask({ t: 'state' })).db,
+  bases: async (): Promise<string[]> => JSON.parse(document.body.dataset.bases ?? '[]'),
   op: (op: Op): Promise<{ id?: string; db: Db; error?: string }> => ask({ t: 'op', op }),
   subscribe(cb: () => void) { onChanged = cb; },
 } : {
   state: async (): Promise<Db> => (await fetch('api/state')).json(),
+  bases: async (): Promise<string[]> => { try { return await (await fetch('api/bases')).json(); } catch { return []; } },
   async op(op: Op): Promise<{ id?: string; db: Db; error?: string }> {
     const r = await fetch('api/op', { method: 'POST', headers: { 'content-type': 'application/json', 'x-plandown': '1' }, body: JSON.stringify(op) });
     return r.json();
@@ -508,26 +511,8 @@ function sidebar(): HTMLElement {
   // Clicking empty tree space drops the tree selection (new items then go to the root); navigation stays
   const tree = h('div', {
     id: 'tree', onclick: (e: Event) => { if (e.target === tree) { pick = null; fillTree(tree); } }, onscroll: () => { navScroll = [tree.scrollTop, tree.scrollLeft]; },
-    // Any dragged link may be dropped: its URL names the task or node (see `dragged`)
-    ondragover: (e: DragEvent) => {
-      if (!e.dataTransfer?.types.some(t => t === 'text/uri-list' || t === 'text/plain')) return;
-      e.preventDefault();
-      const d = dropAt(e, tree);
-      markDrop(d.mark, d.cls);
-    },
-    ondragleave: (e: DragEvent) => { if (!tree.contains(e.relatedTarget as Node | null)) markDrop(null); },
-    ondrop: (e: DragEvent) => {
-      e.preventDefault();
-      markDrop(null);
-      const src = dragged(e.dataTransfer!), op = src && moveOp(src, dropAt(e, tree).to);
-      if (op) run(op);
-    },
-    ondragstart: (e: DragEvent) => {
-      const r = (e.target as Element).closest<HTMLAnchorElement>('a.row');
-      dragFrom = r && { url: r.href, parent: drops.get(r)?.up?.t?.id };
-    },
-    ondragend: () => { dragFrom = null; },
   });
+  dropZone(tree, e => dropAt(e, tree, null), moveOp);
   const search = h('input', { type: 'search', placeholder: 'Filter tasks', value: filter, oninput: () => { filter = search.value; fillTree(tree); } });
   fillTree(tree);
   const aside = h('aside', { className: 'sidebar' }, handle, head, search, tree, createSection());
@@ -591,28 +576,51 @@ function fillTree(tree = $('tree')) {
   tree.replaceChildren(...rows);
 }
 
-// ---- Tasks tab: moving by drag and drop ----
+// ---- Drag and drop ----
 
-/** Outline entry of each sidebar row and its parent entry (the context of drops before and after it); `flat`: a filter match, which only takes drops into it. */
+/** Folders that dropped file paths may name or be relative to, the database folder first (see `resolveLink`); none: only page links resolve. */
+let bases: string[] = [];
+
+/** Outline entry of each row (sidebar rows, group page items) and its parent entry, the context of drops before and after it (none: the root); `flat`: a filter match, which only takes drops into it. */
 const drops = new WeakMap<Element, { e: Entry; up?: Entry; flat?: boolean }>();
 
-/** Where a drop goes: into an entry (null: the root), or next to a task row under its parent entry `up`. */
-type Drop = { into: Entry | null } | { sibling: Entry; up?: Entry; after: boolean };
+/** Task shown by each link list item (drops go before or after it). */
+const linkItems = new WeakMap<Element, string>();
+
+/** Element of `map` holding the drag event's target, up to `zone` (some engines target drag events at text nodes, which have no `closest`). */
+function rowAt<T>(map: WeakMap<Element, T>, target: EventTarget | null, zone?: Element): [HTMLElement, T] | undefined {
+  for (let el = target instanceof Element ? target : (target as Node | null)?.parentElement ?? null; el && el !== zone; el = el.parentElement) {
+    const c = map.get(el);
+    if (c) return [el as HTMLElement, c];
+  }
+}
+
+/** Where the pointer is on row `r`: its top / bottom fraction `edge` mean before / after it, the rest null. */
+function edgeOf(e: DragEvent, r: Element, edge: number): 'before' | 'after' | null {
+  const b = r.getBoundingClientRect(), y = (e.clientY - b.top) / b.height;
+  return y < edge ? 'before' : y > 1 - edge ? 'after' : null;
+}
 
 /**
- * Drop under the pointer and the element showing it. A task row's top and bottom quarters mean before and after it; the
- * rest of it, a whole folder or file row (merged ones too) and a whole filter match mean into the row. Empty space (or the
- * create row) means the root. Folder and file rows have no edge zones: next to them, an item could only go into their parent
- * (they are ordered by name), which made half of every folder row drop elsewhere.
+ * Makes `zone` take any dropped task or node link (see `dragged`): `at` names the drop under the pointer and the element
+ * showing it; `act` turns the link's target into an op (null: nothing to do; a string: why it cannot be done).
  */
-function dropAt(e: DragEvent, tree: HTMLElement): { mark: HTMLElement; cls: string; to: Drop } {
-  // Some engines target drag events at text nodes, which have no `closest`
-  const at = e.target instanceof Element ? e.target : (e.target as Node | null)?.parentElement;
-  const r = at?.closest<HTMLElement>('.row'), c = r && drops.get(r);
-  if (!r || !c) return { mark: tree, cls: 'drop-into', to: { into: null } };
-  const b = r.getBoundingClientRect(), y = (e.clientY - b.top) / b.height, edge = y < .25 ? 'before' : y > .75 ? 'after' : null;
-  if (edge && !c.flat && c.e.t && !c.e.merged) return { mark: r, cls: `drop-${edge}`, to: { sibling: c.e, up: c.up, after: edge === 'after' } };
-  return { mark: r, cls: 'drop-into', to: { into: c.e } };
+function dropZone<D>(zone: HTMLElement, at: (e: DragEvent) => { mark: HTMLElement; cls: string; to: D }, act: (src: Target, to: D) => Op | string | null) {
+  zone.classList.add('drop-zone');
+  zone.addEventListener('dragover', e => {
+    if (!e.dataTransfer?.types.some(t => t === 'text/uri-list' || t === 'text/plain')) return;
+    e.preventDefault();
+    const d = at(e);
+    markDrop(d.mark, d.cls);
+  });
+  zone.addEventListener('dragleave', e => { if (!zone.contains(e.relatedTarget as Node | null)) markDrop(null); });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    markDrop(null);
+    const src = dragged(e.dataTransfer!), r = src ? act(src, at(e).to) : 'This link names no task or group of this database';
+    if (typeof r === 'string') toast(r);
+    else if (r) run(r);
+  });
 }
 
 /** Shows the drop indicator on `el` (none: hidden). */
@@ -623,32 +631,87 @@ function markDrop(el: HTMLElement | null, cls = '') {
   el?.classList.add(cls);
 }
 
-/**
- * Task or tree node a dropped link names by its path (`/view/<anchor>`, `/group/<path>`; any origin, so links from other tabs
- * work too), and the link itself. A node merged with its task names the task (the library moves it as its node).
- */
-function dragged(dt: DataTransfer): { id?: string; path?: string; url: string } | null {
-  const url = (dt.getData('text/uri-list') || dt.getData('text/plain')).split(/\r?\n/).find(l => l.trim() && !l.startsWith('#'))?.trim();
-  if (!url) return null;
-  let r;
-  try { r = route(new URL(url, location.href).pathname); } catch { return null; }
-  if (r.sel) return { id: r.sel, url };
-  const n = r.node ? findNode(db.tree, r.node) : undefined;
-  return n ? { ...n.task ? { id: n.task } : { path: n.path }, url } : null;
+/** Task or node a dropped link names (its first URI; see `resolveLink` for the forms). */
+function dragged(dt: DataTransfer): Target | undefined {
+  const l = (dt.getData('text/uri-list') || dt.getData('text/plain')).split(/\r?\n/).find(l => l.trim() && !l.startsWith('#'));
+  return l ? resolveLink(db, l, bases) : undefined;
 }
 
-/** Link of the tree row being dragged and the task its row sits under: the old parent a moved file's link leaves (`from`). */
-let dragFrom: { url: string; parent?: string } | null = null;
+/** Task or node dragged from this page and the task its row sits under: the old parent a moved node's link leaves (`from`). */
+let dragFrom: { src: Target; parent?: string } | null = null;
+
+/**
+ * Every task and node link is draggable (a plain `<a>`). Inside VSCode its URI becomes the file's (`diskLink` under the
+ * root's URI), which names the database exactly and opens the file when dropped on the editor area.
+ */
+document.addEventListener('dragstart', e => {
+  const a = e.target instanceof Element ? e.target.closest<HTMLElement>('a[data-id], a[data-node]') : null;
+  if (!a || !e.dataTransfer) return;
+  const id = a.dataset.id, to: Target = id ? { id } : { path: a.dataset.node! }, n = 'path' in to ? findNode(db.tree, to.path) : undefined;
+  dragFrom = { src: n?.task ? { id: n.task } : to, parent: rowAt(drops, a)?.[1].up?.t?.id };
+  const l = embed && diskLink(to), [f, anchor] = l ? l.split('#') : [];
+  if (!l) return;
+  const uri = `${document.body.dataset.rootUri}/${f.split('/').map(encodeURIComponent).join('/')}${anchor ? '#' + encodeURIComponent(anchor) : ''}`;
+  e.dataTransfer.setData('text/uri-list', uri);
+  e.dataTransfer.setData('text/plain', uri);
+});
+document.addEventListener('dragend', () => { dragFrom = null; });
+
+// ---- Drag and drop: outlines (sidebar, group pages) ----
+
+/** Where an outline drop goes: into an entry (null: the root), or next to a task row under its parent entry `up`. */
+type Drop = { into: Entry | null } | { sibling: Entry; up?: Entry; after: boolean };
+
+/**
+ * Drop under the pointer and the element showing it. A task row's top and bottom quarters mean before and after it; the
+ * rest of it, a whole folder or file row (merged ones too) and a whole filter match mean into the row. Empty space (or the
+ * create row) means `base` (null: the root). Folder and file rows have no edge zones: next to them, an item could only go into their parent
+ * (they are ordered by name), which made half of every folder row drop elsewhere.
+ */
+function dropAt(e: DragEvent, zone: HTMLElement, base: Entry | null): { mark: HTMLElement; cls: string; to: Drop } {
+  const hit = rowAt(drops, e.target, zone);
+  if (!hit) return { mark: zone, cls: 'drop-into', to: { into: base } };
+  const [r, c] = hit, edge = edgeOf(e, r, .25);
+  if (edge && !c.flat && c.e.t && !c.e.merged) return { mark: r, cls: `drop-${edge}`, to: { sibling: c.e, up: c.up, after: edge === 'after' } };
+  return { mark: r, cls: 'drop-into', to: { into: c.e } };
+}
 
 /** The `move` for a drop, or null for a drop onto itself: the target is a task row's task, else a node (the root: ''). */
-function moveOp(src: { id?: string; path?: string; url: string }, to: Drop): Op | null {
-  const at = 'sibling' in to ? to.up : to.into, from = dragFrom?.url === src.url ? dragFrom.parent : undefined;
+function moveOp(src: Target, to: Drop): Op | null {
+  const at = 'sibling' in to ? to.up : to.into, from = dragFrom && 'id' in src && 'id' in dragFrom.src && dragFrom.src.id === src.id ? dragFrom.parent : undefined;
   const op: Extract<Op, { op: 'move' }> = {
-    op: 'move', ...src.id !== undefined ? { id: src.id, from } : { path: src.path },
+    op: 'move', ...'id' in src ? { id: src.id, from } : { path: src.path },
     ...at?.t ? { parent: at.t.id } : { near: at?.near ?? '' },
     ...'sibling' in to ? { sibling: to.sibling.t!.id, after: to.after } : {},
   };
   return op.id === op.parent || op.id === op.sibling || (op.path !== undefined && op.path === op.near) ? null : op;
+}
+
+// ---- Drag and drop: link lists ----
+
+/** Makes link group `el` (of `t`'s link `kind`) take dropped tasks: before or after an item's upper or lower half, else at the end (see `linkOp`). */
+function linkZone(el: HTMLElement, t: Task, kind: string): HTMLElement {
+  dropZone(el, (e): { mark: HTMLElement; cls: string; to: { sibling?: string; after?: boolean } } => {
+    const hit = rowAt(linkItems, e.target, el), edge = hit && (edgeOf(e, hit[0], .5) ?? 'after');
+    return hit ? { mark: hit[0], cls: `drop-${edge}`, to: { sibling: hit[1], after: edge === 'after' } } : { mark: el, cls: 'drop-into', to: {} };
+  }, (src, to) => linkOp(t, kind, src, to));
+  return el;
+}
+
+/**
+ * The op for dropping `src` into `t`'s list of link `kind` next to `sibling`'s item (none: at the end): a new link; for a
+ * task already listed, a Subtask nested as a heading moves (`move`), an item `t` declares moves (`link` reorder), and an
+ * item declared by the other task stays (only its own list orders it).
+ */
+function linkOp(t: Task, kind: string, src: Target, to: { sibling?: string; after?: boolean }): Op | string | null {
+  if (!('id' in src)) return 'Only tasks can be linked';
+  const id = src.id;
+  if (id === t.id || id === to.sibling) return null;
+  const e = db.edges.find(e => (e.from === t.id && e.to === id && e.type === kind) || (e.to === t.id && e.from === id && (e.reverse ?? `${e.type} (reverse)`) === kind));
+  if (!e) return { op: 'link', from: t.id, type: kind, to: id, ...to };
+  if (e.heading) return e.from === t.id ? { op: 'move', id, parent: t.id, ...to } : 'This link comes from heading nesting; move the heading instead';
+  if (!(e.from === t.id ? e.at : e.back)) return 'The other task declares this link; reorder it in its own list';
+  return to.sibling ? { op: 'link', from: t.id, type: kind, to: id, ...to } : null;
 }
 
 const nodeIcon = (n: TreeNode) => h('span', { className: 'icon' }, n.folder ? '📁' : '📄');
@@ -950,9 +1013,10 @@ function live(t: Task, slots: Slot[]) {
   // Removal: none for Subtask/Parent (moved via the tree and files). A link declared by this task (as the edge's `from`,
   // or as `to` stating it back) is deleted here only, so a declaration by the other task survives and the row turns
   // incoming; an incoming one is unlinked by editing the other task
+  const withItem = (id: string, el: HTMLElement) => { linkItems.set(el, id); return el; };
   const li = ({ other, e }: { other: string; e: Edge }) => {
     const out = e.from === t.id, own = out ? e.at : e.back;
-    return h('li', {},
+    return withItem(other, h('li', {},
       db.tasks[other] ? taskRefControls(db.tasks[other]) : taskRef(other), ' ',
       e.type !== SUBTASK && (own
         ? h('button', {
@@ -962,7 +1026,7 @@ function live(t: Task, slots: Slot[]) {
         : h('button', {
           className: 'bad', title: `Unlink: removes this link from the linked task (declared at ${e.at.file}:${e.at.line + 1})`,
           onclick: () => run({ op: 'unlink', from: e.from, type: e.type, to: e.to }),
-        }, icon('unlink'))));
+        }, icon('unlink')))));
   };
 
   // One target-picker row per link kind, appended as the last list item instead of a separate form with a type combobox.
@@ -990,8 +1054,8 @@ function live(t: Task, slots: Slot[]) {
     subTitle, subTypes));
   // One group per link kind; only kinds this task's type declares get an add row. Incoming one-directional kinds
   // (Parent included) are created from the other task's page
-  const group = (kind: string, focus: boolean) => h('div', { className: 'link-group' }, h('b', {}, kind),
-    columns(h('ul', {}, ...(byKind.get(kind) ?? []).map(li), kind === SUBTASK ? subAddLi : kind in linkTypes && addRow(kind, focus))));
+  const group = (kind: string, focus: boolean) => linkZone(h('div', { className: 'link-group' }, h('b', {}, kind),
+    columns(h('ul', {}, ...(byKind.get(kind) ?? []).map(li), kind === SUBTASK ? subAddLi : kind in linkTypes && addRow(kind, focus)))), t, kind);
 
   // Every kind gets exactly one place: a group (kinds with a list block in the file first, in file order; then Subtask,
   // the format's kinds and any other linked ones) or, while empty and unopened, a reveal button after all groups
@@ -1043,15 +1107,22 @@ function nodePage(n: TreeNode): HTMLElement {
   outline(n.kids, 0, all);
   // `--depth` indents the widget (CSS); the toggle sits left of it, like the link lists' bullets
   prune(all, folds.page, n.path);
+  // Drops: entries' parents as in the sidebar; the top level's parent and empty space are the page's own node (or its task)
+  const top: Entry = n.task ? { key: '', depth: -1, near: n.path, t: db.tasks[n.task], merged: n } : { key: '', depth: -1, near: n.path, n };
+  const up = new Map<Entry, Entry>(), path: Entry[] = [];
+  for (const e of all) { path.length = e.depth; up.set(e, path[e.depth - 1] ?? top); path[e.depth] = e; }
   const items = visible(all, k => folds.page.has(k)).map(({ e, kids }) => {
     const li = h('li', {}, twisty(!folds.page.has(e.key), kids, v => { if (v) folds.page.delete(e.key); else folds.page.add(e.key); render(); }),
       e.n ? nodeLink(e.n, { className: `ref node${e.n.done ? ' done' : ''}` }, nodeIcon(e.n), titleSpan(base(e.n.path))) : taskRefControls(e.t!));
     li.style.setProperty('--depth', String(e.depth));
+    drops.set(li, { e, up: up.get(e) });
     return li;
   });
+  const zone = h('div', { className: 'link-group outline' }, items.length ? columns(h('ul', {}, ...items)) : h('p', { className: 'muted' }, 'Nothing here yet.'));
+  dropZone(zone, e => dropAt(e, zone, top), moveOp);
   return h('div', { className: 'editor-main' },
     h('div', { className: 'title-row', title: n.file ?? n.path + '/' }, nodeIcon(n), h('span', { className: 'task-title' }, base(n.path)), copyButton({ path: n.path })),
-    items.length ? h('div', { className: 'link-group outline' }, columns(h('ul', {}, ...items))) : h('p', { className: 'muted' }, 'Nothing here yet.'));
+    zone);
 }
 
 // ---- Graph tab ----
@@ -1244,7 +1315,7 @@ function render() {
 }
 
 setInterval(() => document.querySelectorAll<HTMLElement>('[data-started]').forEach(el => { el.textContent = clock(Date.now() - Number(el.dataset.started)); }), 1000);
-db = await api.state();
+[db, bases] = await Promise.all([api.state(), api.bases()]);
 if (embed) { tab = embed === 'graph' ? 'Graph' : embed === 'time' ? 'Time' : 'Tasks'; sel = document.body.dataset.task ?? null; node = document.body.dataset.node ?? null; }
 else ({ tab, sel = null, node = null } = route());
 render();

@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDb, findNode, Plandown, parseFormat, parseMarkdown } from '../index.js';
+import { buildDb, findNode, Plandown, parseFormat, parseMarkdown, resolveLink } from '../index.js';
 import { caretSnap, caretStep, clip, cut, enterText, fromHtml, groupTexts, markMask, listEdit, rewrap, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
@@ -663,4 +663,39 @@ test('editor paste: HTML to Markdown', () => {
     '- a\n\t- b\n3. c\n\t1. d\n\t2. e\n\nx\n\n1. f');
   // Code editors: the plain text is the source
   assert.equal(md(H('div', { style: 'white-space: pre;' }, H('div', {}, H('span', { style: 'font-weight: bold' }, '**x**')))), null);
+});
+
+test('link: placed next to a sibling; an own item moves there with its nested content', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-'));
+  writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n\nBlocks:\n- [T] Blocked by\n\nBlocked by:\n- [T] Blocks\n');
+  writeFileSync(join(d, 'a.md'), ['# [T] A', '', 'Blocks:', '- [T] B', '  note', '- [T] C', '', '# [T] B', '# [T] C', '# [T] D', '# [T] E'].join('\n') + '\n');
+  const m = await Plandown.open(d);
+  await m.apply({ op: 'link', from: '[T] A', type: 'Blocks', to: '[T] D', sibling: '[T] B' });
+  await m.apply({ op: 'link', from: '[T] A', type: 'Blocks', to: '[T] B', sibling: '[T] C', after: true });
+  assert.equal(read(d, 'a.md').split('\n\n# [T] B')[0], '# [T] A\n\nBlocks:\n- [T] D\n- [T] C\n- [T] B\n  note');
+  await assert.rejects(m.apply({ op: 'link', from: '[T] A', type: 'Blocks', to: '[T] B' }));
+  // Subtask: an unlabeled list counts; the new list gets its own label
+  await m.apply({ op: 'link', from: '[T] A', type: 'Subtask', to: '[T] E' });
+  await m.apply({ op: 'link', from: '[T] A', type: 'Subtask', to: '[T] D', sibling: '[T] E' });
+  assert.deepEqual(m.db.edges.filter(e => e.from === '[T] A' && e.type === 'Subtask').map(e => e.to), ['[T] D', '[T] E']);
+});
+
+test('resolveLink: page links, tab URIs and file paths name tasks and nodes', async () => {
+  const m = await Plandown.open(DEMO), db = m.db, root = DEMO.replace(/\/$/, '');
+  const t = Object.values(db.tasks).find(t => !findNode(db.tree, t.home.file.replace(/(\.plandown)?\.md$/, ''))?.task)!;
+  const node = db.tree.find(n => !n.task)!;
+  const ws = root.slice(0, root.lastIndexOf('/')), rel = root.slice(ws.length + 1);
+  assert.deepEqual(resolveLink(db, `http://127.0.0.1:4848/view/${encodeURIComponent(t.anchor)}`), { id: t.id });
+  assert.deepEqual(resolveLink(db, `view/${t.anchor}`), { id: t.id });
+  assert.deepEqual(resolveLink(db, `vscode-webview://x/group/${node.path}`), { path: node.path });
+  assert.deepEqual(resolveLink(db, `file://${root}/.plandown-tasks/x?root=${encodeURIComponent(root)}&id=${encodeURIComponent(t.id)}`, [root]), { id: t.id });
+  assert.equal(resolveLink(db, `file:///other/.plandown-tasks/x?root=%2Fother&id=${encodeURIComponent(t.id)}`, [root]), undefined);
+  assert.deepEqual(resolveLink(db, `${t.home.file}#${t.anchor}`), { id: t.id });
+  assert.deepEqual(resolveLink(db, `file://${root}/${t.home.file.split('/').map(encodeURIComponent).join('/')}#${t.anchor}`, [root]), { id: t.id });
+  assert.deepEqual(resolveLink(db, `${rel}/${t.home.file}#${t.anchor}`, [root, ws]), { id: t.id });
+  assert.deepEqual(resolveLink(db, `${root}/${node.file ?? node.path}`, [root]), { path: node.path });
+  // Absolute paths need the root (and must lie in it)
+  assert.equal(resolveLink(db, `${root}/${t.home.file}`), undefined);
+  assert.equal(resolveLink(db, `/elsewhere/${t.home.file}`, [root]), undefined);
+  assert.equal(resolveLink(db, 'https://example.com/'), undefined);
 });

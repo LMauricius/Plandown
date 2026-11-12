@@ -15,7 +15,7 @@ export type Op =
   | { op: 'group'; name: string; near?: string }
   | { op: 'delete'; id: string }
   | { op: 'move'; id?: string; path?: string; parent?: string; near?: string; sibling?: string; after?: boolean; from?: string }
-  | { op: 'link'; from: string; type: string; to: string }
+  | { op: 'link'; from: string; type: string; to: string; sibling?: string; after?: boolean }
   | { op: 'unlink'; from: string; type: string; to: string }
   | { op: 'start' | 'stop' | 'lap'; id: string }
   | { op: 'log'; id: string; hours: number };
@@ -477,15 +477,40 @@ function moveNode(ctx: Ctx, op: Extract<Op, { op: 'move' }>): Plan {
   return { edits, id: n.task ?? to, moves, mkdir: near && !ctx.db.folders.includes(near) ? near : undefined };
 }
 
+/**
+ * Adds `to` to `from`'s list of link `type`: next to `sibling`'s item in such a list when given (before it, or `after`),
+ * else at the end of the home's list. Reordering: when `from` already declares the link with an item in such a list and
+ * `sibling` is given, that item (nested content included) moves next to `sibling`'s instead, re-indented and re-marked
+ * as the target list's items.
+ */
 function link(ctx: Ctx, op: Extract<Op, { op: 'link' }>): Plan {
   const a = need(ctx, op.from), b = need(ctx, op.to), type = op.type;
   if (a.id === b.id) throw new Error('A task cannot link to itself');
   if (typeof type !== 'string') throw new Error('Link type must be a string');
   if (type !== SUBTASK && type !== PARENT && !(b.type in (ctx.db.format.types[a.type]?.links[type] ?? {})))
     throw new Error(`Link "${type}" of [${a.type}] cannot target [${b.type}]`);
+
+  // Items of `from`'s lists of this type (Subtask: unlabeled ones too), wherever `from` occurs
+  const lists = ctx.occ.get(a.id)!.flatMap(o => o.node.lists).filter(l => (l.label ?? SUBTASK) === type);
+  const item = (t: Task) => ctx.occ.get(t.id)!.find(o => o.node.kind === 'bullet' && lists.includes(o.node.list!));
+  const sib = op.sibling !== undefined ? need(ctx, op.sibling) : undefined, so = sib && item(sib), at = so && (op.after ? so.node.block.end : so.node.block.start);
+  const own = sib && item(b);
+  if (own && so) {
+    if (own === so) throw new Error(`${b.id} is already there`);
+    const ol = own.node.list!, nl = so.node.list!, d = indentOf(nl.bullet) - indentOf(ol.bullet);
+    let end = own.node.block.end;
+    while (end > own.node.line + 1 && !own.pf.lines[end - 1].trim()) end--;
+    const lines = own.pf.lines.slice(own.node.line, end).map((l, i) =>
+      i === 0 ? nl.bullet + l.replace(BULLET, '$4') : d >= 0 ? ' '.repeat(d) + l : l.slice(Math.min(-d, indentOf(l))));
+    // Insertion first: at the removal's start it stays in front of it (`applyEdits` sorts ties by order)
+    return { edits: [{ file: so.pf.file, start: at!, end: at!, lines }, removeItem(own.pf, own.node)], id: a.id };
+  }
   if (ctx.db.edges.some(e => (e.from === a.id && e.to === b.id && e.type === type) || (e.from === b.id && e.to === a.id && e.reverse === type)))
     throw new Error('These tasks are already linked that way');
-  return { edits: [addItem(home(ctx, a), type === SUBTASK ? null : type, b.type, b.title)], id: a.id };
+  return {
+    edits: [so ? { file: so.pf.file, start: at!, end: at!, lines: [`${so.node.list!.bullet}[${b.type}] ${b.title}`] } : addItem(home(ctx, a), type === SUBTASK ? null : type, b.type, b.title)],
+    id: a.id,
+  };
 }
 
 function unlink(ctx: Ctx, op: Extract<Op, { op: 'unlink' }>): Plan {
