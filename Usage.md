@@ -138,6 +138,17 @@ The rest of the editor acts immediately:
 
 The title, the description and text properties share one editor. It shows formatted text; click into it to edit, and the text stays exactly where it is. Markdown markers (such as `**` for bold or `##` for a heading) appear beside the formatted text while the cursor is in it. A toolbar appears above the field, or below it when there is no room above, with buttons for common formatting on the left and a ✓ on the right that finishes editing.
 
+Formatting applies to the selected text instead of replacing it, whether you click a button or type a marker over the selection. Each marker toggles its style, so pressing it again removes the style:
+
+- `*` or `_` steps through italic, bold, bold italic and plain text; **B** and **I** (Ctrl+B, Ctrl+I) switch bold or italic alone.
+- `~` or `-` strikes the text through (always written as `~~`).
+- `` ` `` makes inline code, or a code block when the selection spans several lines.
+- `$` marks a formula.
+- `[` turns the text into a link.
+- `#` cycles the heading level and `>` makes a quote (both apply to whole lines, and only in multi-line fields).
+
+Inside a code block, typed markers replace the selection as usual (except `` ` ``).
+
 Line breaks follow Markdown. A single newline inside a paragraph is shown as a space, so text written with hard-wrapped lines flows as one paragraph. When you edit such a paragraph, it is saved with its newlines where the editor wraps it on screen; paragraphs you did not touch keep their lines. A line ending with a backslash (`\`) or with two or more spaces breaks the line, which is what Shift+Enter inserts; a `↵` marker shows where it is.
 
 A fenced code block tagged `mermaid` is drawn as a [Mermaid](https://mermaid.js.org) diagram. Its code stays hidden; the **Source** button below the diagram shows it for editing, and the diagram follows your changes as you type. While the code has an error, the last working diagram stays dimmed and hovering it shows the error message.

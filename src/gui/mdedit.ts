@@ -187,8 +187,8 @@ function emClose(src: string, from: number, to: number, d: string): number {
 
 /**
  * Inline elements of `[from, to)`: code spans, links `[text](url)`, `**`/`__` strong, `*`/`_` em, `~~` strike.
- * Unclosed delimiters stay plain text. shortcut: a subset of CommonMark (no `***` openers, no nested brackets in links,
- * no autolinks); extend here if real notes need more.
+ * A `***` opener is strong around em (`***a***`). Unclosed delimiters stay plain text. shortcut: a subset of CommonMark
+ * (no nested brackets in links, no autolinks); extend here if real notes need more.
  */
 export function inline(src: string, from: number, to: number): Inl[] {
   const out: Inl[] = [];
@@ -211,7 +211,8 @@ export function inline(src: string, from: number, to: number): Inl[] {
       continue;
     }
     if (c !== '*' && c !== '_' && c !== '~') continue;
-    const r = run(src, i, to, c);
+    // `***` opens the outer strong; its third char opens the inner em on the next round
+    const r0 = run(src, i, to, c), r = c !== '~' && r0 === 3 ? 2 : r0;
     const ok = (c === '~' ? r === 2 : r <= 2) && i + r < to && !/\s/.test(src[i + r]) && (c !== '_' || !/\w/.test(src[i - 1] ?? ''));
     const j = ok ? emClose(src, i + r, to, c.repeat(r)) : -1;
     if (j >= 0) {
@@ -291,6 +292,74 @@ export function tableEdit(src: string, at: number, key: 'Enter' | 'Tab', shift =
   if (k >= all.length) return add(z);
   const c = all[k], [a, b] = blank(c) ? [Math.min(c.open + 1, c.close), Math.min(c.open + 1, c.close)] : [c.open, c.close];
   return [at, at, '', a, b];
+}
+
+// ---- Restyling (pure) ----
+
+/** Edit of `restyle`: replace `[from, to)` with `text`, then select `[selA, selB]`. */
+export type Restyle = [number, number, string, number, number];
+
+/**
+ * Applies an inline marker to source `[a, b)`, trimmed of edge whitespace (`* x*` is no emphasis); the selection
+ * stays on the same text. Existing markers count when they enclose it right outside, or at its edges (selected along).
+ * - `*`, `_`: emphasis steps none > italic > bold > both (`***x***`) > none; `B`, `I` toggle bold, italic. The
+ *   delimiter char already in use is kept.
+ * - `~`, `` ` ``, `$`: toggle `~~` strike, a code span, `$` math. A new code span's ticks outnumber the runs inside it.
+ * shortcut: markers are matched as runs, not elements: emphasis nested inside another one (`**a *b***`) counts the
+ * outer run too; use `inline` if that matters.
+ */
+export function inlineEdit(src: string, a: number, b: number, key: string): Restyle {
+  if (src.slice(a, b).trim()) { while (/\s/.test(src[a])) a++; while (/\s/.test(src[b - 1])) b--; }
+  /** [inner, outer]: lengths of the runs of `c` both selection edges have inside, and both have right outside. */
+  const sides = (c: string) => {
+    const fwd = (i: number, end: number) => { let k = i; while (k < end && src[k] === c) k++; return k - i; };
+    const bwd = (i: number, start: number) => { let k = i; while (k > start && src[k - 1] === c) k--; return i - k; };
+    return [Math.min(fwd(a, b), bwd(b, a), (b - a) >> 1), Math.min(bwd(a, 0), fwd(b, src.length))];
+  };
+  const emph = '*_BI'.includes(key), has = (c: string) => (c === '*' || c === '_') && sides(c).some(Boolean);
+  const c = !emph ? key : [src[a - 1], src[a]].find(has) ?? (key === '_' ? '_' : '*');
+  const [ri, ro] = sides(c), n = ri + ro, text = src.slice(a + ri, b - ri);
+  let d = '', pad = '';
+  if (emph) { const m = Math.min(n, 3); d = c.repeat(key === 'B' ? m ^ 2 : key === 'I' ? m ^ 1 : (m + 1) % 4); }
+  else if (n) d = '';
+  else if (c === '`') { d = '`'.repeat(Math.max(0, ...(text.match(/`+/g) ?? []).map(r => r.length)) + 1); pad = /^`|`$/.test(text) ? ' ' : ''; }
+  else d = c === '~' ? '~~' : c;
+  const from = a - ro, at = from + d.length + pad.length;
+  return [from, b + ro, d + pad + text + pad + d, at, at + text.length];
+}
+
+/** Block prefixes `lineEdit` toggles, with the pattern recognizing each one (after indentation). */
+const PREFIX: Record<string, [string, RegExp]> = {
+  ul: ['- ', /^[-*+] (?!\[[ xX]\] )/],
+  ol: ['1. ', /^\d{1,9}[.)] /],
+  task: ['- [ ] ', /^[-*+] \[[ xX]\] /],
+  quote: ['> ', /^> ?/],
+};
+const ANY_LIST = /^(?:[-*+] (?:\[[ xX]\] )?|\d{1,9}[.)] )/;
+
+/**
+ * Rewrites the whole lines `[a, b)` touches and selects them: list/quote kinds toggle (removed when every line has it,
+ * otherwise set, replacing another list kind), `h` cycles the heading level none > 1 > 2 > 3 > none, `fence` toggles
+ * a ``` fence (removed when the first and last lines are fences).
+ */
+export function lineEdit(src: string, a: number, b: number, kind: string): Restyle {
+  const e = src.indexOf('\n', b);
+  a = a && src.lastIndexOf('\n', a - 1) + 1; b = e < 0 ? src.length : e;
+  const ls = src.slice(a, b).split('\n');
+  let out: string[];
+  if (kind === 'fence') out = ls.length > 1 && FENCE.test(ls[0]) && FENCE.test(ls.at(-1)!) ? ls.slice(1, -1) : ['```', ...ls, '```'];
+  else if (kind === 'h') {
+    const lvl = HEADING.exec(ls[0])?.[1].length ?? 0, mark = lvl < 3 ? '#'.repeat(lvl + 1) + ' ' : '';
+    out = ls.map(l => mark + l.replace(HEADING, ''));
+  } else {
+    const [mark, re] = PREFIX[kind], all = ls.every(l => re.test(l.trimStart()));
+    out = ls.map(l => {
+      const ind = /^[ \t]*/.exec(l)![0], rest = l.slice(ind.length);
+      return all ? ind + rest.replace(re, '') : ind + mark + (kind === 'quote' ? rest : rest.replace(ANY_LIST, ''));
+    });
+  }
+  const text = out.join('\n');
+  return [a, b, text, a, a + text.length];
 }
 
 // ---- Rewrapping (pure) ----
@@ -1149,14 +1218,20 @@ function confirm(st: State) {
   else (document.activeElement as HTMLElement | null)?.blur();
 }
 
-/** Toggles inline delimiters around the selection (removes them if the selection is already wrapped). */
-function wrap(st: State, d: string) {
+/**
+ * Applies a marker to the selection: `link`, a line kind of `lineEdit` (a code span over several lines is a fence),
+ * otherwise `inlineEdit`.
+ */
+function style(st: State, k: string) {
   const p = st.cur, sel = p && getSel(p.el);
   if (!p || !sel) return;
-  const [a, b] = sel, n = d.length;
-  if (p.src.slice(a - n, a) === d && p.src.slice(b, b + n) === d) splice(st, p, a - n, b + n, p.src.slice(a, b), a - n, b - n);
-  else splice(st, p, a, b, d + p.src.slice(a, b) + d, a + n, b + n);
+  if (k === 'link') return link(st);
+  const [a, b] = sel, many = k === '`' && p.src.slice(a, b).includes('\n');
+  splice(st, p, ...(k in PREFIX || k === 'h' || k === 'fence' || many ? lineEdit(p.src, a, b, many ? 'fence' : k) : inlineEdit(p.src, a, b, k)));
 }
+
+/** Markers typed over a selection, with the `style` each applies instead of replacing it. */
+const KEYS: Record<string, string> = { '*': '*', _: '_', '~': '~', '-': '~', '`': '`', $: '$', '#': 'h', '>': 'quote', '[': 'link' };
 
 function link(st: State) {
   const p = st.cur, sel = p && getSel(p.el);
@@ -1165,45 +1240,11 @@ function link(st: State) {
   splice(st, p, a, b, `[${text}](https://)`, url, url + 8);
 }
 
-/** Block prefixes the toolbox toggles, with the pattern recognizing each one (after indentation). */
-const PREFIX: Record<string, [string, RegExp]> = {
-  ul: ['- ', /^[-*+] (?!\[[ xX]\] )/],
-  ol: ['1. ', /^\d{1,9}[.)] /],
-  task: ['- [ ] ', /^[-*+] \[[ xX]\] /],
-  quote: ['> ', /^> ?/],
-};
-const ANY_LIST = /^(?:[-*+] (?:\[[ xX]\] )?|\d{1,9}[.)] )/;
-
-/**
- * Rewrites the lines the selection touches: list/quote kinds toggle (removed when every line has it, otherwise
- * set, replacing another list kind), `h` cycles the heading level none > 1 > 2 > 3 > none, `fence` wraps in ```.
- */
-function lines(st: State, kind: string) {
-  const p = st.cur, sel = p && getSel(p.el);
-  if (!p || !sel) return;
-  const src = p.src, a = src.lastIndexOf('\n', sel[0] - 1) + 1, e = src.indexOf('\n', sel[1]), b = e < 0 ? src.length : e;
-  const ls = src.slice(a, b).split('\n');
-  let out: string[];
-  if (kind === 'fence') out = ['```', ...ls, '```'];
-  else if (kind === 'h') {
-    const lvl = HEADING.exec(ls[0])?.[1].length ?? 0, mark = lvl < 3 ? '#'.repeat(lvl + 1) + ' ' : '';
-    out = ls.map(l => mark + l.replace(HEADING, ''));
-  } else {
-    const [mark, re] = PREFIX[kind], all = ls.every(l => re.test(l.trimStart()));
-    out = ls.map(l => {
-      const ind = /^[ \t]*/.exec(l)![0], rest = l.slice(ind.length);
-      return all ? ind + rest.replace(re, '') : ind + mark + (kind === 'quote' ? rest : rest.replace(ANY_LIST, ''));
-    });
-  }
-  const text = out.join('\n');
-  splice(st, p, a, b, text, a, a + text.length);
-}
-
 /** Inserts a 2x2 table template after the caret's line (replacing it when blank), blank lines separating it from text. */
 function table(st: State) {
   const p = st.cur, sel = p && getSel(p.el);
   if (!p || !sel) return;
-  const src = p.src, e = src.indexOf('\n', sel[1]), b = e < 0 ? src.length : e, a = src.lastIndexOf('\n', b - 1) + 1;
+  const src = p.src, e = src.indexOf('\n', sel[1]), b = e < 0 ? src.length : e, a = b && src.lastIndexOf('\n', b - 1) + 1;
   const blank = !src.slice(a, b).trim(), pre = blank ? '' : '\n\n', post = e >= 0 && src.slice(b + 1).split('\n', 1)[0].trim() ? '\n' : '';
   const at = (blank ? a : b) + pre.length + 2;
   splice(st, p, blank ? a : b, b, pre + '| A | B |\n| --- | --- |\n|   |   |' + post, at, at + 1);
@@ -1213,17 +1254,17 @@ function table(st: State) {
 
 /** Controls: [label, title, action, block-mode only]. */
 const TOOLS: [string, string, (st: State) => void, boolean][] = [
-  ['B', 'Bold (Ctrl+B)', st => wrap(st, '**'), false],
-  ['I', 'Italic (Ctrl+I)', st => wrap(st, '*'), false],
-  ['S', 'Strikethrough', st => wrap(st, '~~'), false],
-  ['</>', 'Code', st => wrap(st, '`'), false],
-  ['🔗', 'Link (Ctrl+click opens)', link, false],
-  ['H', 'Heading level', st => lines(st, 'h'), true],
-  ['•', 'Bullet list', st => lines(st, 'ul'), true],
-  ['1.', 'Numbered list', st => lines(st, 'ol'), true],
-  ['☐', 'Checklist', st => lines(st, 'task'), true],
-  ['❝', 'Quote', st => lines(st, 'quote'), true],
-  ['{ }', 'Code block', st => lines(st, 'fence'), true],
+  ['B', 'Bold (Ctrl+B)', st => style(st, 'B'), false],
+  ['I', 'Italic (Ctrl+I)', st => style(st, 'I'), false],
+  ['S', 'Strikethrough (~)', st => style(st, '~'), false],
+  ['</>', 'Code (`)', st => style(st, '`'), false],
+  ['🔗', 'Link ([, Ctrl+click opens)', link, false],
+  ['H', 'Heading level (#)', st => style(st, 'h'), true],
+  ['•', 'Bullet list', st => style(st, 'ul'), true],
+  ['1.', 'Numbered list', st => style(st, 'ol'), true],
+  ['☐', 'Checklist', st => style(st, 'task'), true],
+  ['❝', 'Quote (>)', st => style(st, 'quote'), true],
+  ['{ }', 'Code block', st => style(st, 'fence'), true],
   ['▦', 'Table', table, true],
 ];
 
@@ -1473,7 +1514,7 @@ function listen(st: State, p: Part) {
       if (tableMove(e)) { part.classList.remove('nav'); return; }
       setTimeout(() => { part.classList.remove('nav'); fix(); });
     }
-    else if (mod && (k === 'b' || k === 'i')) { e.preventDefault(); wrap(st, k === 'b' ? '**' : '*'); }
+    else if (mod && (k === 'b' || k === 'i')) { e.preventDefault(); style(st, k === 'b' ? 'B' : 'I'); }
     else if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? history(st, p, p.redo, p.undo) : history(st, p, p.undo, p.redo); }
     else if (mod && k === 'y') { e.preventDefault(); history(st, p, p.redo, p.undo); }
   });
@@ -1484,10 +1525,17 @@ function listen(st: State, p: Part) {
       e.preventDefault();
       if (e.inputType === 'historyUndo') history(st, p, p.undo, p.redo); else history(st, p, p.redo, p.undo);
     } else if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') { e.preventDefault(); if (multi) insertBreak(e.inputType === 'insertLineBreak'); }
-    // Deleting and typing over a selection keep partly covered markers (`cut`); drag moves and IME edits stay native
+    // Deleting and typing over a selection keep partly covered markers (`cut`); drag moves and IME edits stay native.
+    // A marker typed over a selection styles it (`KEYS`); line kinds only in block mode, none inside code but ticks.
     else if (!e.cancelable || e.isComposing) return;
     else if (e.inputType.startsWith('delete') && e.inputType !== 'deleteByDrag') { e.preventDefault(); del(e); }
-    else if (e.inputType === 'insertText' && !getSelection()?.isCollapsed) { e.preventDefault(); insert(e.data ?? ''); }
+    else if (e.inputType === 'insertText' && !getSelection()?.isCollapsed) {
+      e.preventDefault();
+      const t = e.data ?? '', k = KEYS[t], s = getSel(part);
+      const ok = k && s && (o.mode === 'block' || (k !== 'h' && k !== 'quote'))
+        && (k === '`' || !/^(code|fence)$/.test(tokenize(p.src).find(l => l.end >= s[0])!.block));
+      if (ok) style(st, k); else insert(t);
+    }
   });
 
   // Paste: plain text is Markdown. HTML is converted (`fromHtml`) unless it is our own copy, whose plain text is the

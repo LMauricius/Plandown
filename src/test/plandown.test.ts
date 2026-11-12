@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDb, findNode, Plandown, parseFormat, parseMarkdown, resolveLink } from '../index.js';
-import { caretSnap, caretStep, clip, cut, enterText, fromHtml, groupTexts, markMask, listEdit, rewrap, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
+import { caretSnap, caretStep, clip, cut, enterText, fromHtml, groupTexts, inlineEdit, lineEdit, markMask, listEdit, rewrap, tableEdit, tokenize, toHtml, type HNode } from '../gui/mdedit.js';
 
 const DEMO = fileURLToPath(new URL('../../examples/demo/', import.meta.url));
 const copy = () => { const d = mkdtempSync(join(tmpdir(), 'plandown-')); cpSync(DEMO, d, { recursive: true }); return d; };
@@ -509,6 +509,35 @@ test('editor tables: GFM rows, cells, alignment, escapes and table ends', () => 
   assert.deepEqual(t[0].cells!.map(c => src.slice(c.start, c.open)), ['| ', ' | ', ' |']);
   assert.deepEqual(tokenize('a | b\n|-|').map(l => l.block), ['p', 'p']);
   assert.deepEqual(tokenize('a\n---').map(l => l.block), ['p', 'p']);
+});
+
+test('editor restyling: inline markers and line kinds toggle around the selection', () => {
+  // `[` `]` mark the selection, before and after
+  const ed = (src: string, k: string, f = inlineEdit) => {
+    const a = src.indexOf('['), b = src.indexOf(']') - 1, s = src.replace(/[[\]]/g, ''), e = f(s, a, b, k);
+    const out = s.slice(0, e[0]) + e[2] + s.slice(e[1]);
+    return out.slice(0, e[3]) + '[' + out.slice(e[3], e[4]) + ']' + out.slice(e[4]);
+  };
+  const steps = ['a [x ]b', 'a *[x]* b', 'a **[x]** b', 'a ***[x]*** b', 'a [x] b'];
+  for (let i = 1; i < steps.length; i++) assert.equal(ed(steps[i - 1], '*'), steps[i]);
+  assert.equal(ed('[**x**]', '*'), '***[x]***');
+  assert.equal(ed('_[x]_', '*'), '__[x]__');
+  assert.equal(ed('*[x]*', 'B'), '***[x]***');
+  assert.equal(ed('***[x]***', 'I'), '**[x]**');
+  assert.equal(ed('*a* [ b ]*c*', '*'), '*a*  *[b]* *c*');
+  assert.equal(ed('[x]', '~'), '~~[x]~~');
+  assert.equal(ed('~~[x]~~', '~'), '[x]');
+  assert.equal(ed('[a`b]', '`'), '``[a`b]``');
+  assert.equal(ed('[`a]', '`'), '`` [`a] ``');
+  assert.equal(ed('`[x]`', '`'), '[x]');
+  assert.equal(ed('[x]', '$'), '$[x]$');
+  assert.equal(ed('a\n[b]', 'h', lineEdit), 'a\n[# b]');
+  assert.equal(ed('[### b]', 'h', lineEdit), '[b]');
+  assert.equal(ed('\n[b]', 'quote', lineEdit), '\n[> b]');
+  assert.equal(ed('[a\nb]', 'fence', lineEdit), '[```\na\nb\n```]');
+  assert.equal(ed('[```\na\n```]', 'fence', lineEdit), '[a]');
+  const t = tokenize('***a***')[0].inl;
+  assert.deepEqual([t[0].kind, t[0].kids[0].kind, t[0].end], ['strong', 'em', 7]);
 });
 
 test('editor table keys: cell moves, appended rows and ending the table', () => {
