@@ -59,15 +59,16 @@ export function typeIcon(type: string, color: string | undefined, done: boolean)
 
 /**
  * Type marker of task rows: a 1-2 character file decoration badge on the right, which stays visible while the label is
- * shortened. Uncolored: a decoration's color would tint the label too. The row's `resourceUri` carries the type, so
- * this provider is stateless.
+ * shortened. Done rows (query `done`) are grayed: the decoration's color tints label and badge, the only label styling
+ * tree rows have. The row's `resourceUri` carries type and done state, so this provider is stateless.
  */
 export const typeDecorations: vscode.FileDecorationProvider = {
   provideFileDecoration(uri) {
     if (uri.scheme !== TYPE_SCHEME) return;
     // VSCode rejects badges over 2 UTF-16 units: two characters, or one if either is astral (emoji)
     const type = uri.path.slice(1), cps = [...type], badge = cps.slice(0, 2).join('');
-    return new vscode.FileDecoration(badge.length <= 2 ? badge : cps[0], type);
+    const color = uri.query === 'done' ? new vscode.ThemeColor('disabledForeground') : undefined;
+    return new vscode.FileDecoration(badge.length <= 2 ? badge : cps[0], type || undefined, color);
   },
 };
 
@@ -136,7 +137,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
    * Root: folder name. Node: folder/file icon and base name, click opens its page. Task (and merged node): title, type and
    * `spent/effort h` as description, Done checkbox, click opens its tab. Clicks also expand the row (the item rides along).
    * Task rows (and merged nodes) carry their type marker (see `typeDecorations`) and type icon (replacing a merged node's folder/file icon). Done
-   * titles are crossed out with combining strokes (tree labels have no text styling). Ids follow the path from the root, so expansion survives refreshes.
+   * titles are crossed out with combining strokes (tree labels have no text styling) and grayed (see `typeDecorations`). Ids follow the path from the root, so expansion survives refreshes.
    */
   getTreeItem(item: Item): vscode.TreeItem {
     const { root } = item, db = root.pd.db, none = vscode.TreeItemCollapsibleState.None, closed = vscode.TreeItemCollapsibleState.Collapsed;
@@ -152,7 +153,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
       ti = new vscode.TreeItem(basename(n.path), n.kids.length || n.tasks.length ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${n.path}`, contextValue: n.task ? 'nodeTask' : 'node', iconPath: new vscode.ThemeIcon(n.folder ? 'folder' : 'file'), tooltip: n.file ?? n.path + '/' });
       if (!n.task) ti.command = { command: 'plandown.openNode', title: 'Open', arguments: [root, n.path, item] };
-      if (!n.task && n.done) { ti.label = strike(basename(n.path)); ti.accessibilityInformation = { label: `${basename(n.path)}, done` }; }
+      if (!n.task && n.done) { ti.label = strike(basename(n.path)); ti.resourceUri = vscode.Uri.from({ scheme: TYPE_SCHEME, path: '/', query: 'done' }); ti.accessibilityInformation = { label: `${basename(n.path)}, done` }; }
     } else {
       ti = new vscode.TreeItem('', !item.leaf && hasSubtasks ? closed : none);
       Object.assign(ti, { id: `${root.uri.fsPath}\0${item.near}\0${[...item.up, id].join('\0')}`, contextValue: 'task' });
@@ -170,7 +171,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
     else if (done) ti.contextValue += ' done';
     ti.command = { command: 'plandown.open', title: 'Open', arguments: [root, t.id, item] };
     ti.iconPath = typeIcon(t.type, db.format.types[t.type]?.color, done);
-    ti.resourceUri = vscode.Uri.from({ scheme: TYPE_SCHEME, path: '/' + t.type });
+    ti.resourceUri = vscode.Uri.from({ scheme: TYPE_SCHEME, path: '/' + t.type, query: done ? 'done' : '' });
     return ti;
   }
 
