@@ -64,18 +64,23 @@
         { "command": "plandown.create", "group": "navigation@3", "when": "plandown.active" }
       ],
       "view/title": [
-        { "command": "plandown.create", "group": "navigation@1", "when": "view == plandown.tree" },
-        { "command": "plandown.createGroup", "group": "navigation@2", "when": "view == plandown.tree" },
-        { "command": "plandown.filter", "group": "navigation@3", "when": "view == plandown.tree && !plandown.filtered" },
-        { "command": "plandown.clearFilter", "group": "navigation@3", "when": "view == plandown.tree && plandown.filtered" },
-        { "command": "plandown.refresh", "group": "navigation@4", "when": "view == plandown.tree" },
-        { "command": "plandown.openBrowser", "group": "navigation@5", "when": "view == plandown.tree" }
+        { "command": "plandown.create", "group": "navigation@1", "when": "view == plandown.tree && (!plandown.multi || plandown.filtered)" },
+        { "command": "plandown.createGroup", "group": "navigation@2", "when": "view == plandown.tree && (!plandown.multi || plandown.filtered)" },
+        { "command": "plandown.graph", "group": "navigation@3", "when": "view == plandown.tree && (!plandown.multi || plandown.filtered)" },
+        { "command": "plandown.time", "group": "navigation@4", "when": "view == plandown.tree && (!plandown.multi || plandown.filtered)" },
+        { "command": "plandown.filter", "group": "navigation@5", "when": "view == plandown.tree && !plandown.filtered" },
+        { "command": "plandown.clearFilter", "group": "navigation@5", "when": "view == plandown.tree && plandown.filtered" },
+        { "command": "plandown.refresh", "group": "navigation@6", "when": "view == plandown.tree" },
+        { "command": "plandown.openBrowser", "group": "navigation@7", "when": "view == plandown.tree && (!plandown.multi || plandown.filtered)" }
       ],
       "view/item/context": [
         { "command": "plandown.done", "group": "inline@0", "when": "view == plandown.tree && viewItem =~ /^(task|nodeTask)$/" },
         { "command": "plandown.undone", "group": "inline@0", "when": "view == plandown.tree && viewItem =~ /^(task|nodeTask) done$/" },
         { "command": "plandown.create", "group": "inline@1", "when": "view == plandown.tree" },
-        { "command": "plandown.createGroup", "group": "inline@2", "when": "view == plandown.tree && viewItem =~ /^node/" },
+        { "command": "plandown.createGroup", "group": "inline@2", "when": "view == plandown.tree && viewItem =~ /^(node|root)/" },
+        { "command": "plandown.graph", "group": "inline@3", "when": "view == plandown.tree && viewItem == root" },
+        { "command": "plandown.time", "group": "inline@4", "when": "view == plandown.tree && viewItem == root" },
+        { "command": "plandown.openBrowser", "group": "inline@5", "when": "view == plandown.tree && viewItem == root" },
         { "command": "plandown.openPinned", "group": "navigation@1", "when": "view == plandown.tree && viewItem =~ /^(task|node|nodeTask)( done)?$/" },
         { "command": "plandown.copyLink", "group": "9_cutcopypaste@1", "when": "view == plandown.tree && viewItem =~ /^(task|node|nodeTask)( done)?$/" }
       ]

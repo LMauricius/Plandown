@@ -104,6 +104,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
       }
     }
     roots.sort((a, b) => a.uri.fsPath < b.uri.fsPath ? -1 : 1);
+    // Several roots: create/view/browser buttons move from the view title to the root rows (section headers)
+    vscode.commands.executeCommand('setContext', 'plandown.multi', roots.length > 1);
     tree.refresh();
     showTimers();
     setPaths();

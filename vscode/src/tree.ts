@@ -4,7 +4,8 @@
  * Children are produced lazily, as VSCode asks for them.
  */
 import * as vscode from 'vscode';
-import { basename } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import type { Op, TreeNode } from 'plandown' with { 'resolution-mode': 'import' };
 import type { Apply, Root } from './extension.js';
 import type { Page } from './panels.js';
@@ -22,6 +23,12 @@ const TYPE_SCHEME = 'plandown-type';
 const THEMES = {
   light: { surface: '#ffffff', fg: '#1d2430', accent: '#0b7f7a', gloss: '#ffffffb3' },
   dark: { surface: '#1c2128', fg: '#e4e8ee', accent: '#4cc2b8', gloss: '#ffffff1a' },
+};
+/** Root row icon: the activity bar's symbolic logo. An image icon can't follow the theme, so `currentColor` becomes VSCode's default icon colors. */
+const LOGO = readFileSync(join(__dirname, 'symbolic.svg'), 'utf8');
+const ROOT_ICON = {
+  light: vscode.Uri.parse(`data:image/svg+xml;utf8,${encodeURIComponent(LOGO.replaceAll('currentColor', '#424242'))}`),
+  dark: vscode.Uri.parse(`data:image/svg+xml;utf8,${encodeURIComponent(LOGO.replaceAll('currentColor', '#c5c5c5'))}`),
 };
 const FONT = `'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif`;
 
@@ -134,7 +141,8 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
   }
 
   /**
-   * Root: folder name. Node: folder/file icon and base name, click opens its page. Task (and merged node): title, type and
+   * Root (only with several roots): a section header like the Source Control view's repository rows: Plandown logo and
+   * folder name; its inline actions (see package.json) replace the view title's create/graph/timeline/browser buttons. Node: folder/file icon and base name, click opens its page. Task (and merged node): title, type and
    * `spent/effort h` as description, Done checkbox, click opens its tab. Clicks also expand the row (the item rides along).
    * Task rows (and merged nodes) carry their type marker (see `typeDecorations`) and type icon (replacing a merged node's folder/file icon). Done
    * titles are crossed out with combining strokes (tree labels have no text styling) and grayed (see `typeDecorations`). Ids follow the path from the root, so expansion survives refreshes.
@@ -143,7 +151,7 @@ export class TaskTree implements vscode.TreeDataProvider<Item>, vscode.TreeDragA
     const { root } = item, db = root.pd.db, none = vscode.TreeItemCollapsibleState.None, closed = vscode.TreeItemCollapsibleState.Collapsed;
     if (item.kind === 'root') {
       const ti = new vscode.TreeItem(basename(root.uri.fsPath), vscode.TreeItemCollapsibleState.Expanded);
-      return Object.assign(ti, { id: root.uri.fsPath, iconPath: new vscode.ThemeIcon('database'), tooltip: root.uri.fsPath, contextValue: 'root' });
+      return Object.assign(ti, { id: root.uri.fsPath, iconPath: ROOT_ICON, tooltip: root.uri.fsPath, contextValue: 'root' });
     }
     const id = item.kind === 'node' ? item.node.task : item.id;
     const hasSubtasks = !!id && db.edges.some(e => e.type === SUBTASK && e.from === id);
