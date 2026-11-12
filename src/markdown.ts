@@ -59,7 +59,8 @@ export interface ParsedFile {
   diagnostics: Diagnostic[];
 }
 
-const HEADING = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+// No level cap: descriptions are edited relative to their task heading, so saved sub-headings may pass level 6
+const HEADING = /^(#+)[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 export const BULLET = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
 // property block opening: a ```yaml / ~~~yml fence (any fence length)
 const YAML_FENCE = /^[ \t]*(`{3,}|~{3,})[ \t]*ya?ml[ \t]*$/i;
@@ -117,8 +118,26 @@ export function gaps(node: Node): Range[] {
   return Array.from({ length: node.spans.length + 1 }, (_, i) => ({ start: b[2 * i], end: b[2 * i + 1] }));
 }
 
-/** Description texts of an occurrence, one per gap. */
-export const bodyTexts = (pf: ParsedFile, node: Node) => gaps(node).map(r => rangeText(pf, r));
+/** Heading level of an occurrence (its `#` count; 0 for a bullet). */
+export const levelOf = (n: Node) => /^#*/.exec(n.prefix)![0].length;
+
+/**
+ * Shifts the ATX headings of `text` outside fences by `d` levels. Descriptions are stored at absolute levels but read and
+ * written relative to their task heading (`# Notes` under a `##` task is `### Notes` on disk).
+ */
+export function shiftHeads(text: string, d: number): string {
+  if (!d) return text;
+  let fence: string | null = null;
+  return text.split('\n').map(l => {
+    if (fence) { if (closesFence(l, fence)) fence = null; return l; }
+    if ((fence = fenceRun(l))) return l;
+    const h = /^#+(?=[ \t])/.exec(l)?.[0].length;
+    return h ? '#'.repeat(h + d) + l.slice(h) : l;
+  }).join('\n');
+}
+
+/** Description texts of an occurrence, one per gap, headings relative to the occurrence's own. */
+export const bodyTexts = (pf: ParsedFile, node: Node) => gaps(node).map(r => shiftHeads(rangeText(pf, r), -levelOf(node)));
 
 /** Text of a body range, trimmed of surrounding blank lines. */
 export const rangeText = (pf: ParsedFile, r: Range) => pf.lines.slice(r.start, r.end).join('\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();

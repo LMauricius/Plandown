@@ -115,6 +115,8 @@ Undeclared properties are kept but reported as warnings; values of the wrong typ
 
 The description is the text after the heading (and its property block). It runs up to the next task heading or the next heading of the same or a higher level, so ordinary sub-headings such as `### Notes` are sub-chapters of the description.
 
+The GUI edits sub-headings relative to the task's heading: under a `## [Task] Title`, the file's `### Notes` appears as `# Notes`, and is written back two levels deeper. Plandown therefore reads headings of any depth; a `####### Detail` line (seven `#`) is a sub-heading too, although other Markdown viewers show it as plain text.
+
 Lists that contain tasks are not part of the description text; they declare subtasks and links, as described below. The description may continue after them, and the GUI shows each list's links at the place where the list stands.
 
 ## Subtasks and links

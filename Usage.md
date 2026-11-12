@@ -145,7 +145,7 @@ Formatting applies to the selected text instead of replacing it, whether you cli
 - `` ` `` makes inline code, or a code block when the selection spans several lines.
 - `$` marks a formula.
 - `[` turns the text into a link.
-- `#` cycles the heading level and `>` makes a quote (both apply to whole lines, and only in multi-line fields).
+- `#` cycles the heading level and `>` makes a quote (both apply to whole lines, and only in multi-line fields). Heading levels in a description count from the task's own heading, so its first sub-chapter level is `#`.
 
 Inside a code block, typed markers replace the selection as usual (except `` ` ``).
 

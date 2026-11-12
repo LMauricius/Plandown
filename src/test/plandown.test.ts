@@ -251,12 +251,22 @@ test('edits: refuse to write over files changed on disk', async () => {
   assert.ok(read(d, 'bugs.md').endsWith('external\n'));
 });
 
+test('body: headings relative to the task heading, fences untouched, no level cap', async () => {
+  const d = mkdtempSync(join(tmpdir(), 'plandown-'));
+  writeFileSync(join(d, 'a.md'), '# [Task] A\n## [Task] S\nIntro\n\n#### Deep\n```\n## code\n```\n');
+  const m = await Plandown.open(d);
+  assert.deepEqual(m.db.tasks['[Task] S'].body, ['Intro\n\n## Deep\n```\n## code\n```']);
+  await m.apply({ op: 'update', id: '[Task] S', body: ['# One\n\n##### Five\n```\n# code\n```'] });
+  assert.equal(read(d, 'a.md'), '# [Task] A\n## [Task] S\n### One\n\n####### Five\n```\n# code\n```\n');
+  assert.deepEqual(m.db.tasks['[Task] S'].body, ['# One\n\n##### Five\n```\n# code\n```'], 'level 7 still a sub-heading');
+});
+
 test('body: text gaps around task lists, sub-chapters included, edited gap by gap', async () => {
   const d = mkdtempSync(join(tmpdir(), 'plandown-'));
   writeFileSync(join(d, 'plandown-format.md'), '# [T] t\n\nBlocks:\n- [T] Blocks\n');
   writeFileSync(join(d, 'a.md'), '# [T] A\nIntro\n\n- [T] B\n  Bullet text\n\nMid\n\n## Notes\nMore\n\nBlocks:\n- [T] C\n\nTail\n\n## [T] D\n# [T] B\nAbout B.\n\n# [T] C\n');
   const m = await Plandown.open(d);
-  assert.deepEqual(m.db.tasks['[T] A'].body, ['Intro', { links: ['Subtask'] }, 'Mid\n\n## Notes\nMore', { links: ['Blocks'] }, 'Tail']);
+  assert.deepEqual(m.db.tasks['[T] A'].body, ['Intro', { links: ['Subtask'] }, 'Mid\n\n# Notes\nMore', { links: ['Blocks'] }, 'Tail']);
   assert.deepEqual(m.db.tasks['[T] B'].body, ['About B.'], 'text nested under a bullet is not its description');
   assert.ok(links(m, '[T] A').includes('Subtask [T] D'), 'task sub-heading still nests');
 

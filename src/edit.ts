@@ -4,7 +4,7 @@
  * Edits only touch the lines an operation concerns; everything else in the files stays byte-identical.
  */
 import { Document, parseDocument, isMap, isScalar } from 'yaml';
-import { BULLET, DOC_END, gaps, indentOf, rangeText, sameMarker, type Node, type ParsedFile } from './markdown.js';
+import { BULLET, DOC_END, gaps, indentOf, levelOf, rangeText, sameMarker, shiftHeads, type Node, type ParsedFile } from './markdown.js';
 import { FORMAT_FILE, PARENT, SUBTASK } from './format.js';
 import { taskId, type Db, type Occ, type Task } from './db.js';
 import { baseName, fileStem, findNode, namesTask } from './tree.js';
@@ -173,7 +173,8 @@ function propsEdit({ pf, node }: Occ, props: Record<string, unknown>): Edit | nu
 }
 
 /**
- * Replaces the changed description gaps (`texts[i]` is the text before the i-th task-list block); blank lines keep
+ * Replaces the changed description gaps (`texts[i]` is the text before the i-th task-list block, headings relative to
+ * the task's, as `bodyTexts` reads them); blank lines keep
  * text and lists apart. Fewer texts than gaps leave the trailing gaps alone (lists appended since the client read
  * the task); more texts mean lists were removed meanwhile, which cannot be mapped back.
  */
@@ -182,7 +183,7 @@ function bodyEdits({ pf, node }: Occ, texts: unknown): Edit[] {
   const gs = gaps(node);
   if (texts.length > gs.length) throw new Error("The task's lists changed meanwhile; revert and edit again");
   return texts.flatMap((text, i) => {
-    const r = gs[i], body = text.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd();
+    const r = gs[i], body = shiftHeads(text.replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').trimEnd(), levelOf(node));
     if (body === rangeText(pf, r)) return [];
     const lines = body ? body.split('\n').map(l => l.trim() ? l : '') : [];
     const prev = i > 0, next = i < node.spans.length || r.end < pf.lines.length;
@@ -266,9 +267,6 @@ type HeadSlot = { file: string; line: number; level: number };
 
 /** Where a moved item lands: a heading slot, or a reference bullet with list marker `bullet` (`  - `). */
 type Slot = HeadSlot | { file: string; line: number; bullet: string };
-
-/** Heading level of a heading occurrence (its `#` count). */
-const levelOf = (n: Node) => /^#*/.exec(n.prefix)![0].length;
 
 /** Deepest heading level in a heading occurrence's block: nesting the block deeper must keep it within level 6. */
 const deepest = ({ pf, node }: Occ) => Math.max(...pf.heads.filter(h => h.line >= node.block.start && h.line < node.block.end).map(h => h.level));

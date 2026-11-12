@@ -59,7 +59,7 @@ export interface Editor {
 
 // ---- Tokenizer (pure) ----
 
-const HEADING = /^(#{1,6})[ \t]+/, QUOTE = /^[ \t]*>[ \t]?/, FENCE = /^[ \t]*(`{3,}|~{3,})/;
+const HEADING = /^(#+)[ \t]+/, QUOTE = /^[ \t]*>[ \t]?/, FENCE = /^[ \t]*(`{3,}|~{3,})/;
 const LIST = /^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+(?:\[([ xX])\][ \t]+)?/;
 const PIPE = /(?:^|[^\\])\|/, DELIM = /^:?-+:?$/;
 
@@ -129,7 +129,7 @@ export function tokenize(src: string): Line[] {
     }
 
     let l: Line, m: RegExpExecArray | null;
-    if ((m = HEADING.exec(text))) l = line(`h${m[1].length}` as Line['block'], start + m[0].length);
+    if ((m = HEADING.exec(text))) l = line(`h${Math.min(m[1].length, 6)}` as Line['block'], start + m[0].length);
     else if ((m = LIST.exec(text))) {
       // A tab is one nesting level (2 columns), as Tab inserts it
       l = line(/\d/.test(m[2]) ? 'ol' : 'li', start + m[0].length, Math.floor(m[1].replace(/\t/g, '  ').length / 2));
